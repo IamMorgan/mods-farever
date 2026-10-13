@@ -1,7 +1,7 @@
 ## Mods for the game Farever
 
-All mods are written using [hlx-core](https://github.com/hlx-framework/hlx-core/releases).
-All mods are written for [Better Mod Settings](https://github.com/xWink/farever-mods/tree/main/better-mod-settings).
+- All mods are written using [hlx-core](https://github.com/hlx-framework/hlx-core/releases).
+- All mods are written for [Better Mod Settings](https://github.com/xWink/farever-mods/tree/main/better-mod-settings).
 
 ## LICENSE
 
