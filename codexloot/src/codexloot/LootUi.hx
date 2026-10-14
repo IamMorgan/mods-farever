@@ -10,8 +10,33 @@ class LootUi {
         return "<0.01%";
     }
 
-    /** A Codex button for an item, built the way the game builds them (CodexData.createItemNode), without registering anything. */
-    static function makeButton(item:Dynamic, parent:Dynamic):Dynamic {
+    static var maxLevelCache:Int = -1;
+
+    /** The hero's maximum level (the game's Const.Hero.MaxLevel), or 0 when it cannot be read. */
+    static function maxLevel():Int {
+        if (maxLevelCache >= 0) return maxLevelCache;
+        maxLevelCache = 0;
+        try {
+            var hero = HlxRuntime.resolveStaticField(HlxRuntime.resolveType("Const"), "Hero");
+            maxLevelCache = Std.int(G.num(G.field(hero, "MaxLevel")));
+        } catch (_:Dynamic) {}
+        return maxLevelCache;
+    }
+
+    /** The tooltip of an item. With `level` > 0 the item is created at that level, as a drop of that level would be. */
+    static function tooltip(item:Dynamic, level:Int):Dynamic {
+        var real:Dynamic = null;
+        if (level > 0) {
+            try {
+                var drop = {count: 1, flags: null, item: G.str(G.field(item, "id")), itemFlags: null, lootLevel: level, lootTableFlags: null, maxRarity: null, minRarity: null, rarity: null};
+                real = G.callStatic("st.Item", "create", [G.str(G.field(item, "id")), drop]);
+            } catch (_:Dynamic) { real = null; }
+        }
+        return G.callStatic("ui.Tooltip", "fromItem", [item, real]);
+    }
+
+    /** A Codex button for an item, built the way the game builds them (CodexData.createItemNode), without registering anything. `level` > 0: the tooltip shows the item at that level. */
+    static function makeButton(item:Dynamic, parent:Dynamic, level:Int):Dynamic {
         var node = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("data.CodexNode"), 0, []);
         HlxRuntime.setField(node, "name", G.str(G.field(item, "id")));
         HlxRuntime.setField(node, "data", item);
@@ -19,7 +44,7 @@ class LootUi {
         HlxRuntime.setField(node, "clickable", false);
         HlxRuntime.setField(node, "forcedRevealed", true);
         try HlxRuntime.setField(node, "progressThresholds", G.callStatic("st.player.Progress", "getItemProgressThreshold", [item])) catch (_:Dynamic) {}
-        var tip = function():Dynamic return G.callStatic("ui.Tooltip", "fromItem", [item, null]);
+        var tip = function():Dynamic return tooltip(item, level);
         HlxRuntime.setField(node, "getTooltip", tip);
 
         var button = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("ui.win.codex.CodexButton"), 2, [node, parent]);
@@ -140,7 +165,7 @@ class LootUi {
             var button = buttons.get(id);
             if (button == null) {
                 if (added >= maxItems) continue;
-                try button = makeButton(entry.item, icons) catch (_:Dynamic) button = null;
+                try button = makeButton(entry.item, icons, 0) catch (_:Dynamic) button = null;
                 if (button == null) continue;
                 buttons.set(id, button);
                 added++;
@@ -160,7 +185,7 @@ class LootUi {
                 for (entry in heroic) {
                     if (added >= maxItems) break;
                     var button:Dynamic = null;
-                    try button = makeButton(entry.item, icons) catch (_:Dynamic) {}
+                    try button = makeButton(entry.item, icons, maxLevel()) catch (_:Dynamic) {}
                     if (button == null) continue;
                     if (first) {
                         first = false;
