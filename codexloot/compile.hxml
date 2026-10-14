@@ -1,0 +1,6 @@
+-lib hlx-runtime
+-D hl-ver=1.16.0
+-cp src
+-main codexloot.CodexLoot
+-dce full
+-hl build/codexloot/codexloot.hl

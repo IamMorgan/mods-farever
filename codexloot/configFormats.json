@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "displayName": "Codex Loot",
+  "configs": [
+    {
+      "type": "title",
+      "label": "Monster loot in the Codex"
+    },
+    {
+      "key": "enabled",
+      "type": "checkbox",
+      "label": "Enabled"
+    },
+    {
+      "key": "unitTags",
+      "type": "checkbox",
+      "label": "Boss / Elite / Spark tags in the monster list",
+      "tooltip": {
+        "enabled": true,
+        "tooltipText": "Writes Boss, Elite or Spark at the bottom of the monster's frame in the list."
+      }
+    },
+    {
+      "key": "levelFilter",
+      "type": "checkbox",
+      "label": "Hide loot limited to other monster levels",
+      "tooltip": {
+        "enabled": true,
+        "tooltipText": "Off (default) = show all loot of the monster. On = hide entries the game would not drop at the monster's level."
+      }
+    },
+    {
+      "key": "maxItems",
+      "type": "slider",
+      "label": "Max extra items",
+      "min": 10,
+      "max": 200,
+      "step": 10,
+      "tooltip": {
+        "enabled": true,
+        "tooltipText": "Upper bound for the icons the mod adds to the window, most likely drops first."
+      }
+    }
+  ]
+}
