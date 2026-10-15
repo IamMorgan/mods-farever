@@ -1,6 +1,6 @@
 package macromod;
 
-typedef MacroStep = {key:Int, delay:Int};
+typedef MacroStep = {skillId:String, delay:Int};
 
 typedef MacroDef = {
     var hotkey:Dynamic;
@@ -9,7 +9,7 @@ typedef MacroDef = {
     var steps:Array<MacroStep>;
 }
 
-/** Turns the flat settings object (m1_name, m1_s1_key, ...) into macro definitions. */
+/** Turns the flat settings object (m1_name, m1_s1_skill, ...) into macro definitions. */
 class MacroDefs {
     public static inline var MACROS = 3;
     public static inline var STEPS = 10;
@@ -28,7 +28,8 @@ class MacroDefs {
             var steps = [];
             for (s in 1...STEPS + 1) {
                 var delay:Dynamic = Reflect.field(config, prefix + "_s" + s + "_delay");
-                steps.push({key: keyCode(Reflect.field(config, prefix + "_s" + s + "_key")),
+                var skillId:Dynamic = Reflect.field(config, prefix + "_s" + s + "_skill");
+                steps.push({skillId: Std.isOfType(skillId, String) ? StringTools.trim(skillId) : "",
                     delay: Std.isOfType(delay, Int) || Std.isOfType(delay, Float) ? Std.int(delay) : 100});
             }
             out.push({

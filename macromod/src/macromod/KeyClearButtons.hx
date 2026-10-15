@@ -45,6 +45,27 @@ class KeyClearButtons implements RowDecorator {
         HlxRuntime.callResolved(HlxRuntime.resolveMember(HlxRuntime.resolveType("h2d.Graphics"), "endFill"), [g]);
     }
 
+    /** The red square with a light X. Drawn with h2d.Graphics; if that isn't possible, the
+        click area's own background colour and a text "X" stand in for it. */
+    static function drawCross(added:Dynamic, click:Dynamic):Void {
+        try {
+            var g = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Graphics"), 1, [added]);
+            polygon(g, 0xDA594F, [0.0, 0.0, SIZE, 0.0, SIZE, SIZE, 0.0, SIZE]);
+            polygon(g, 0xF7E4DA, [3.0, 4.5, 4.5, 3.0, 12.0, 10.5, 10.5, 12.0]); // one diagonal
+            polygon(g, 0xF7E4DA, [10.5, 3.0, 12.0, 4.5, 4.5, 12.0, 3.0, 10.5]); // the other
+            return;
+        } catch (_:Dynamic) {}
+        HlxRuntime.setField(click, "backgroundColor", 0xFFDA594F);
+        try {
+            var font = GameAccess.staticCall("hxd.res.DefaultFont", "get", []);
+            var text = GameAccess.create("h2d.Text", [font, added]);
+            GameAccess.call("h2d.Text", "set_text", text, ["X"]);
+            GameAccess.call("h2d.Text", "set_textColor", text, [0xF7E4DA]);
+            var w = GameAccess.number(GameAccess.call("h2d.Text", "get_textWidth", text), 6);
+            GameAccess.call("h2d.Object", "setPosition", text, [(SIZE - w) / 2, 1.0]);
+        } catch (_:Dynamic) {}
+    }
+
     public function decorate(key:String, button:Dynamic):Dynamic {
         var added:Dynamic = null;
         try {
@@ -66,14 +87,11 @@ class KeyClearButtons implements RowDecorator {
             HlxRuntime.setField(addedProperties, "horizontalAlign", right);
             HlxRuntime.setField(addedProperties, "verticalAlign", middle);
 
-            var g = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Graphics"), 1, [added]);
-            polygon(g, 0xDA594F, [0.0, 0.0, SIZE, 0.0, SIZE, SIZE, 0.0, SIZE]);
-            polygon(g, 0xF7E4DA, [3.0, 4.5, 4.5, 3.0, 12.0, 10.5, 10.5, 12.0]); // one diagonal
-            polygon(g, 0xF7E4DA, [10.5, 3.0, 12.0, 4.5, 4.5, 12.0, 3.0, 10.5]); // the other
-
             var click = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Interactive"), 4, [SIZE, SIZE, added, null]);
             HlxRuntime.setField(click, "onClick", (_:Dynamic) -> onClear(key, button));
-
+            try HlxRuntime.callResolved(HlxRuntime.resolveMember(HlxRuntime.resolveType("h2d.Interactive"), "set_cursor"),
+                [click, GameAccess.current("hxd.Cursor", "Button")]) catch (_:Dynamic) {}
+            drawCross(added, click);
             if (reflow != null) HlxRuntime.callResolved(reflow, [flow]);
             return added;
         } catch (_:Dynamic) {

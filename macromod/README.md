@@ -1,6 +1,6 @@
 ## Farever Macros
 
-Chain key presses with delays into macros and start them with one hotkey. Three independent macros, up to ten steps each, all configurable from the in-game mod settings.
+Chain your action-bar skills with delays into macros and start them with one hotkey. Three independent macros, up to ten steps each, all configurable from the in-game mod settings.
 
 ### Installation instructions
 
@@ -13,7 +13,9 @@ For manual installation:
 ### Main features
 
 - **Three independent macros:** Each macro has its own name, activation key, mode and up to ten steps. All three can run at the same time.
-- **Steps with delays:** Every step is a key plus the delay (60-5000 ms) before the next step. Empty steps are skipped. The minimum delay is 60 ms so every key press is registered by the game.
+- **Skills picked from a panel:** Click *Choose* under a step and pick the skill from a panel of your action-bar icons (weapon skills and class skills). The step shows the skill's name in your client's language; the small red X next to it clears the step.
+- **Steps with delays:** Every step is a skill plus the delay (60-5000 ms) before the next step. Empty steps are skipped. Skills are used the same way as pressing their key: the next step starts after its delay, once the previous skill has been used and finished casting. Skills still on cooldown are skipped. Mount, dash and block are not offered.
+- **AoE skills:** Ground-aimed skills are activated twice (aim, then confirm at the mouse), or, with *AoE skills aim at the nearest enemy* on, land straight on the nearest enemy within the skill's range.
 - **Press (Toggle) or Hold:** In Toggle mode press the activation key to start the macro and press it again to stop. In Hold mode the macro runs only while the key is held down.
 - **Repeat in loop:** Run the steps once, or loop them until you stop the macro.
 - **Hotkey modifiers:** Activation keys accept Ctrl, Shift or Alt combinations, with Farever's strict matching: Ctrl+1 does not also trigger a plain 1.
@@ -26,14 +28,28 @@ For manual installation:
 1. Open Esc > Mod Settings > Farever Macros.
 2. Under "M1 Activation Key" click the key button and press the key (or a combination) that should start the macro.
 3. Pick the mode: Press (Toggle) or Hold. Tick "Repeat in loop" if the macro should keep going.
-4. Set "Step 1 Key" and "Step 1 Delay (ms)", then the next steps. Leave unused steps at "Not set".
+4. Under "M1 Step 1" click *Choose* and click a skill icon, then set "M1 Step 1 Delay (ms)". Do the same for the next steps; leave unused steps empty.
 5. Close the settings and press the activation key in game.
 
 ### Notes
 
-- Macros send key presses to Farever's own key input, the same way the keyboard does. They do nothing outside the game.
+- Macros request skills through Farever's own skill input, the same way a skill key does. They do nothing outside the game.
 - Background hotkeys use a small native plugin (*macro_keys.hdll*, included, Windows x64 only). It only answers whether a key is down right now: it installs no hook and records nothing. If the file is missing or blocked by your antivirus, hotkeys simply work only while the game window is in focus.
 - Macros run inside the game's own update loop, so they keep running in the background only as long as Farever itself keeps updating while it is not in focus.
+- Skills that must be held down are stopped by the game right after they start, because their key isn't physically held.
+
+### Changelog
+
+#### 1.2.1
+
+- **Steps are skills, not keys:** each step uses a skill instead of simulating a key press. Skills are requested through Farever's own skill input, so the game handles auto-target, checks and its short request queue exactly as for a real key press.
+- **Skill picker:** the new *Choose* button under every step opens a panel with the icons of your action-bar skills (weapon skills on the first row, class skills on the second). Hover an icon for the skill's name; click outside the panel, *Cancel* or Esc to close it. Mount, dash and block are not offered.
+- **Skill names in your language:** a step shows the skill's name in the client's language. Steps saved by older versions as skill ids are switched to names automatically.
+- **Red X for steps:** a small red X next to every step's skill name clears the step.
+- **AoE skills:** ground-aimed skills are activated twice (aim, then confirm at the mouse position). With *AoE skills aim at the nearest enemy* on, they land straight on the nearest enemy (the same target a normal skill picks), within the skill's range.
+- **Reliable sequencing:** the next step starts after its delay once the previous skill has been used and finished casting; skills still on cooldown are skipped instead of holding the macro up.
+- **Independent macros:** each macro keeps its own progress, so one macro waiting for its skill never holds up another.
+- **Settings:** step rows are now named *M1 Step 1*, *M2 Step 1*... so every row is unique.
 
 
 ## LICENSE
