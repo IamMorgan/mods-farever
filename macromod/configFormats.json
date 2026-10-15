@@ -4,13 +4,27 @@
   "configs": [
     {
       "type": "title",
+      "label": "General"
+    },
+    {
+      "key": "notWhileRunning",
+      "type": "checkbox",
+      "label": "Don't use while running (pause macros while moving: W/A/S/D held)"
+    },
+    {
+      "key": "aoeNearestTarget",
+      "type": "checkbox",
+      "label": "AoE skills aim at the nearest enemy (same target as a normal skill). Off: aim at the mouse, then confirm"
+    },
+    {
+      "type": "title",
       "label": "Macro 1"
     },
     {
       "key": "m1_name",
       "type": "text",
       "label": "Name",
-      "placeholder": "Rotation"
+      "placeholder": "Rotation 1"
     },
     {
       "key": "m1_hotkey",
@@ -37,131 +51,201 @@
       "label": "Macro 1 - Steps"
     },
     {
-      "key": "m1_s1_key",
-      "type": "keybinding",
-      "label": "M1 Step 1 Key"
+      "key": "m1_s1_skill",
+      "type": "text",
+      "label": "M1 Step 1",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s1_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s1_delay",
       "type": "slider",
-      "label": "Step 1 Delay (ms)",
+      "label": "M1 Step 1 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s2_key",
-      "type": "keybinding",
-      "label": "M1 Step 2 Key"
+      "key": "m1_s2_skill",
+      "type": "text",
+      "label": "M1 Step 2",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s2_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s2_delay",
       "type": "slider",
-      "label": "Step 2 Delay (ms)",
+      "label": "M1 Step 2 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s3_key",
-      "type": "keybinding",
-      "label": "M1 Step 3 Key"
+      "key": "m1_s3_skill",
+      "type": "text",
+      "label": "M1 Step 3",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s3_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s3_delay",
       "type": "slider",
-      "label": "Step 3 Delay (ms)",
+      "label": "M1 Step 3 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s4_key",
-      "type": "keybinding",
-      "label": "M1 Step 4 Key"
+      "key": "m1_s4_skill",
+      "type": "text",
+      "label": "M1 Step 4",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s4_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s4_delay",
       "type": "slider",
-      "label": "Step 4 Delay (ms)",
+      "label": "M1 Step 4 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s5_key",
-      "type": "keybinding",
-      "label": "M1 Step 5 Key"
+      "key": "m1_s5_skill",
+      "type": "text",
+      "label": "M1 Step 5",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s5_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s5_delay",
       "type": "slider",
-      "label": "Step 5 Delay (ms)",
+      "label": "M1 Step 5 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s6_key",
-      "type": "keybinding",
-      "label": "M1 Step 6 Key"
+      "key": "m1_s6_skill",
+      "type": "text",
+      "label": "M1 Step 6",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s6_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s6_delay",
       "type": "slider",
-      "label": "Step 6 Delay (ms)",
+      "label": "M1 Step 6 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s7_key",
-      "type": "keybinding",
-      "label": "M1 Step 7 Key"
+      "key": "m1_s7_skill",
+      "type": "text",
+      "label": "M1 Step 7",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s7_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s7_delay",
       "type": "slider",
-      "label": "Step 7 Delay (ms)",
+      "label": "M1 Step 7 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s8_key",
-      "type": "keybinding",
-      "label": "M1 Step 8 Key"
+      "key": "m1_s8_skill",
+      "type": "text",
+      "label": "M1 Step 8",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s8_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s8_delay",
       "type": "slider",
-      "label": "Step 8 Delay (ms)",
+      "label": "M1 Step 8 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s9_key",
-      "type": "keybinding",
-      "label": "M1 Step 9 Key"
+      "key": "m1_s9_skill",
+      "type": "text",
+      "label": "M1 Step 9",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s9_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s9_delay",
       "type": "slider",
-      "label": "Step 9 Delay (ms)",
+      "label": "M1 Step 9 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m1_s10_key",
-      "type": "keybinding",
-      "label": "M1 Step 10 Key"
+      "key": "m1_s10_skill",
+      "type": "text",
+      "label": "M1 Step 10",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m1_s10_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m1_s10_delay",
       "type": "slider",
-      "label": "Step 10 Delay (ms)",
+      "label": "M1 Step 10 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
@@ -174,7 +258,7 @@
       "key": "m2_name",
       "type": "text",
       "label": "Name",
-      "placeholder": "Buffs"
+      "placeholder": "Rotation 2"
     },
     {
       "key": "m2_hotkey",
@@ -201,131 +285,201 @@
       "label": "Macro 2 - Steps"
     },
     {
-      "key": "m2_s1_key",
-      "type": "keybinding",
-      "label": "M2 Step 1 Key"
+      "key": "m2_s1_skill",
+      "type": "text",
+      "label": "M2 Step 1",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s1_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s1_delay",
       "type": "slider",
-      "label": "Step 1 Delay (ms)",
+      "label": "M2 Step 1 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s2_key",
-      "type": "keybinding",
-      "label": "M2 Step 2 Key"
+      "key": "m2_s2_skill",
+      "type": "text",
+      "label": "M2 Step 2",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s2_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s2_delay",
       "type": "slider",
-      "label": "Step 2 Delay (ms)",
+      "label": "M2 Step 2 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s3_key",
-      "type": "keybinding",
-      "label": "M2 Step 3 Key"
+      "key": "m2_s3_skill",
+      "type": "text",
+      "label": "M2 Step 3",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s3_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s3_delay",
       "type": "slider",
-      "label": "Step 3 Delay (ms)",
+      "label": "M2 Step 3 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s4_key",
-      "type": "keybinding",
-      "label": "M2 Step 4 Key"
+      "key": "m2_s4_skill",
+      "type": "text",
+      "label": "M2 Step 4",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s4_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s4_delay",
       "type": "slider",
-      "label": "Step 4 Delay (ms)",
+      "label": "M2 Step 4 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s5_key",
-      "type": "keybinding",
-      "label": "M2 Step 5 Key"
+      "key": "m2_s5_skill",
+      "type": "text",
+      "label": "M2 Step 5",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s5_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s5_delay",
       "type": "slider",
-      "label": "Step 5 Delay (ms)",
+      "label": "M2 Step 5 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s6_key",
-      "type": "keybinding",
-      "label": "M2 Step 6 Key"
+      "key": "m2_s6_skill",
+      "type": "text",
+      "label": "M2 Step 6",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s6_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s6_delay",
       "type": "slider",
-      "label": "Step 6 Delay (ms)",
+      "label": "M2 Step 6 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s7_key",
-      "type": "keybinding",
-      "label": "M2 Step 7 Key"
+      "key": "m2_s7_skill",
+      "type": "text",
+      "label": "M2 Step 7",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s7_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s7_delay",
       "type": "slider",
-      "label": "Step 7 Delay (ms)",
+      "label": "M2 Step 7 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s8_key",
-      "type": "keybinding",
-      "label": "M2 Step 8 Key"
+      "key": "m2_s8_skill",
+      "type": "text",
+      "label": "M2 Step 8",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s8_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s8_delay",
       "type": "slider",
-      "label": "Step 8 Delay (ms)",
+      "label": "M2 Step 8 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s9_key",
-      "type": "keybinding",
-      "label": "M2 Step 9 Key"
+      "key": "m2_s9_skill",
+      "type": "text",
+      "label": "M2 Step 9",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s9_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s9_delay",
       "type": "slider",
-      "label": "Step 9 Delay (ms)",
+      "label": "M2 Step 9 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m2_s10_key",
-      "type": "keybinding",
-      "label": "M2 Step 10 Key"
+      "key": "m2_s10_skill",
+      "type": "text",
+      "label": "M2 Step 10",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m2_s10_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m2_s10_delay",
       "type": "slider",
-      "label": "Step 10 Delay (ms)",
+      "label": "M2 Step 10 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
@@ -338,7 +492,7 @@
       "key": "m3_name",
       "type": "text",
       "label": "Name",
-      "placeholder": "Consumables"
+      "placeholder": "Rotation 3"
     },
     {
       "key": "m3_hotkey",
@@ -365,131 +519,201 @@
       "label": "Macro 3 - Steps"
     },
     {
-      "key": "m3_s1_key",
-      "type": "keybinding",
-      "label": "M3 Step 1 Key"
+      "key": "m3_s1_skill",
+      "type": "text",
+      "label": "M3 Step 1",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s1_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s1_delay",
       "type": "slider",
-      "label": "Step 1 Delay (ms)",
+      "label": "M3 Step 1 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s2_key",
-      "type": "keybinding",
-      "label": "M3 Step 2 Key"
+      "key": "m3_s2_skill",
+      "type": "text",
+      "label": "M3 Step 2",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s2_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s2_delay",
       "type": "slider",
-      "label": "Step 2 Delay (ms)",
+      "label": "M3 Step 2 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s3_key",
-      "type": "keybinding",
-      "label": "M3 Step 3 Key"
+      "key": "m3_s3_skill",
+      "type": "text",
+      "label": "M3 Step 3",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s3_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s3_delay",
       "type": "slider",
-      "label": "Step 3 Delay (ms)",
+      "label": "M3 Step 3 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s4_key",
-      "type": "keybinding",
-      "label": "M3 Step 4 Key"
+      "key": "m3_s4_skill",
+      "type": "text",
+      "label": "M3 Step 4",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s4_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s4_delay",
       "type": "slider",
-      "label": "Step 4 Delay (ms)",
+      "label": "M3 Step 4 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s5_key",
-      "type": "keybinding",
-      "label": "M3 Step 5 Key"
+      "key": "m3_s5_skill",
+      "type": "text",
+      "label": "M3 Step 5",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s5_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s5_delay",
       "type": "slider",
-      "label": "Step 5 Delay (ms)",
+      "label": "M3 Step 5 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s6_key",
-      "type": "keybinding",
-      "label": "M3 Step 6 Key"
+      "key": "m3_s6_skill",
+      "type": "text",
+      "label": "M3 Step 6",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s6_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s6_delay",
       "type": "slider",
-      "label": "Step 6 Delay (ms)",
+      "label": "M3 Step 6 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s7_key",
-      "type": "keybinding",
-      "label": "M3 Step 7 Key"
+      "key": "m3_s7_skill",
+      "type": "text",
+      "label": "M3 Step 7",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s7_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s7_delay",
       "type": "slider",
-      "label": "Step 7 Delay (ms)",
+      "label": "M3 Step 7 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s8_key",
-      "type": "keybinding",
-      "label": "M3 Step 8 Key"
+      "key": "m3_s8_skill",
+      "type": "text",
+      "label": "M3 Step 8",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s8_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s8_delay",
       "type": "slider",
-      "label": "Step 8 Delay (ms)",
+      "label": "M3 Step 8 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s9_key",
-      "type": "keybinding",
-      "label": "M3 Step 9 Key"
+      "key": "m3_s9_skill",
+      "type": "text",
+      "label": "M3 Step 9",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s9_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s9_delay",
       "type": "slider",
-      "label": "Step 9 Delay (ms)",
+      "label": "M3 Step 9 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
     },
     {
-      "key": "m3_s10_key",
-      "type": "keybinding",
-      "label": "M3 Step 10 Key"
+      "key": "m3_s10_skill",
+      "type": "text",
+      "label": "M3 Step 10",
+      "placeholder": "(click Choose below)"
+    },
+    {
+      "key": "m3_s10_pick",
+      "type": "button",
+      "label": "Pick a skill from your action bars",
+      "buttonText": "Choose"
     },
     {
       "key": "m3_s10_delay",
       "type": "slider",
-      "label": "Step 10 Delay (ms)",
+      "label": "M3 Step 10 Delay (ms)",
       "min": 60,
       "max": 5000,
       "step": 10
