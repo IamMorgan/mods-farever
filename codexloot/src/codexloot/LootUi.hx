@@ -6,8 +6,9 @@ class LootUi {
         var v = p * 100;
         if (v >= 10) return Std.string(Math.round(v)) + "%";
         if (v >= 1) return Std.string(Math.round(v * 10) / 10) + "%";
-        if (v >= 0.01) return Std.string(Math.round(v * 100) / 100) + "%";
-        return "<0.01%";
+        if (v >= 0.1) return Std.string(Math.round(v * 100) / 100) + "%";
+        if (v >= 0.001) return Std.string(Math.round(v * 1000) / 1000) + "%";
+        return "<0.001%";
     }
 
     static var maxLevelCache:Int = -1;
@@ -56,29 +57,65 @@ class LootUi {
     }
 
     static var font:Dynamic;
+    static var searched:Dynamic;
     static var fontSize:Float = 0;
 
-    /** A font for our texts: a font the Codex window already uses if possible, the engine's default font otherwise. */
-    public static function prepare(sheet:Dynamic, button:Dynamic):Bool {
-        if (font != null) return true;
-        var candidates:Array<Dynamic> = [G.field(sheet, "dropHeader"), G.field(sheet, "description"), G.field(button, "currentProgress")];
+    /** True when the font has a glyph for `code` (h2d.Font.glyphs). */
+    static function hasGlyph(f:Dynamic, code:Int):Bool {
+        // haxe.ds.IntMap.exists is inlined in HashLink, so ask the font itself: a missing letter gives its default char
         try {
-            for (name in Reflect.fields(sheet)) {
-                var v = G.field(sheet, name);
-                if (G.typeName(v).indexOf("Text") >= 0) candidates.push(v);
-            }
-        } catch (_:Dynamic) {}
-        for (candidate in candidates) {
-            var f = G.field(candidate, "font");
-            if (f != null) {
-                font = f;
-                fontSize = G.num(G.field(f, "size"));
-                return true;
-            }
+            var c = G.call("h2d.Font", "getChar", [f, code]);
+            return c != null && c != G.field(f, "defaultChar");
+        } catch (_:Dynamic) return false;
+    }
+
+    /** True when our font can draw every letter of `text` (else the caller falls back to English). */
+    public static function canDraw(text:String):Bool {
+        if (font == null) return false;
+        for (i in 0...text.length) {
+            var c = text.charCodeAt(i);
+            if (c != null && c > 0x7F && !hasGlyph(font, c)) return false;
         }
+        return true;
+    }
+
+    /** A font used by a text of the window that can also draw Cyrillic; else any font found there. */
+    static function findFont(root:Dynamic):Dynamic {
+        var any:Dynamic = null;
+        var stack = [root];
+        var seen = 0;
+        while (stack.length > 0 && seen < 3000) {
+            var node = stack.pop();
+            seen++;
+            if (node == null) continue;
+            if (G.typeName(node).indexOf("Text") >= 0) {
+                var f = G.field(node, "font");
+                if (f != null) {
+                    if (hasGlyph(f, 0x0411) && hasGlyph(f, 0x25)) return f; // "Б" and "%"
+                    if (any == null) any = f;
+                }
+            }
+            for (child in G.children(node)) stack.push(child);
+        }
+        return any;
+    }
+
+    /** A font for our texts: a font the Codex window already uses (one with Cyrillic if possible), the engine's default font otherwise. */
+    public static function prepare(sheet:Dynamic, button:Dynamic):Bool {
+        if (font != null && (hasGlyph(font, 0x0411) || searched == sheet)) return true;
+        searched = sheet; // one search per Codex window
+        var f:Dynamic = null;
+        try f = findFont(sheet) catch (_:Dynamic) {}
+        if (f == null) try f = findFont(G.field(sheet, "parent")) catch (_:Dynamic) {}
+        if (f != null && (font == null || hasGlyph(f, 0x0411))) {
+            font = f;
+            fontSize = G.num(G.field(f, "size"));
+            return true;
+        }
+        if (font != null) return true;
         try {
-            var f = G.callStatic("hxd.res.DefaultFont", "get", []);
-            if (f != null) { font = f; fontSize = 0; return true; }
+            var d = G.callStatic("hxd.res.DefaultFont", "get", []);
+            if (d != null) { font = d; fontSize = 0; return true; }
         } catch (_:Dynamic) {}
         return false;
     }
@@ -134,16 +171,53 @@ class LootUi {
         HlxRuntime.setField(props, "offsetY", -3);
     }
 
-    static function isRussian(sheet:Dynamic):Bool {
-        var t = G.str(G.field(G.field(sheet, "dropHeader"), "text"));
-        for (i in 0...t.length) {
-            var c = t.charCodeAt(i);
-            if (c != null && c >= 0x400 && c <= 0x4FF) return true;
-        }
-        return false;
+    /** A block of items under its own caption; `fallback` is the English caption for a font without Cyrillic. Returns the new count of added icons. */
+    static function block(sheet:Dynamic, icons:Dynamic, anyButton:Dynamic, title:String, fallback:String, color:Int,
+            entries:Array<LootCalc.LootEntry>, level:Int, added:Int, maxItems:Int):Int {
+        if (entries.length == 0) return added;
+        try {
+            var ready = prepare(sheet, anyButton);
+            if (ready) {
+                var caption = outlined(icons, canDraw(title) ? title : fallback, color, 18.0);
+                HlxRuntime.setField(G.call("h2d.Flow", "getProperties", [icons, caption]), "lineBreak", true);
+            }
+            var first = true;
+            for (entry in entries) {
+                if (added >= maxItems) break;
+                var button:Dynamic = null;
+                try button = makeButton(entry.item, icons, level) catch (_:Dynamic) {}
+                if (button == null) continue;
+                if (first) {
+                    first = false;
+                    try HlxRuntime.setField(G.call("h2d.Flow", "getProperties", [icons, button]), "lineBreak", true) catch (_:Dynamic) {}
+                }
+                added++;
+                try { if (ready) tag(button, entry.chance < 0 ? "?" : percent(entry.chance), color, 12.0); } catch (_:Dynamic) {}
+            }
+        } catch (_:Dynamic) {}
+        return added;
     }
 
-    public static function apply(sheet:Dynamic, normal:Array<LootCalc.LootEntry>, heroic:Array<LootCalc.LootEntry>, maxItems:Int):Void {
+    static inline var SCROLL_BAR = 16;
+    /** Icon grids already moved off the scroll bar, with the padding the mod set. */
+    static var padded:Array<{grid:Dynamic, value:Int}> = [];
+
+    /** The Codex panel's scroll bar is drawn over the right edge of the icon grid: keep the icons left of it. */
+    static function keepClearOfScrollBar(icons:Dynamic):Void {
+        try {
+            var current = Std.int(G.num(G.field(icons, "paddingRight")));
+            for (p in padded) if (p.grid == icons) {
+                if (current == p.value) return; // still ours
+                padded.remove(p); // the game restyled the grid: pad it again
+                break;
+            }
+            if (padded.length > 20) padded.shift();
+            padded.push({grid: icons, value: current + SCROLL_BAR});
+            G.call("h2d.Flow", "set_paddingRight", [icons, current + SCROLL_BAR]);
+        } catch (_:Dynamic) {}
+    }
+
+    public static function apply(sheet:Dynamic, normal:Array<LootCalc.LootEntry>, heroic:Array<LootCalc.LootEntry>, world:Array<LootCalc.LootEntry>, maxItems:Int):Void {
         var icons = G.field(sheet, "dropsIcons");
         if (icons == null) return;
 
@@ -158,6 +232,7 @@ class LootUi {
         }
 
         var added = 0;
+        keepClearOfScrollBar(icons);
 
         // ---- normal loot: reuse the game's buttons, add the missing ones
         for (entry in normal) {
@@ -173,29 +248,9 @@ class LootUi {
             try { if (prepare(sheet, button)) tag(button, percent(entry.chance), 0xFFFFFF, 12.0); } catch (_:Dynamic) {}
         }
 
-        // ---- heroic mode loot: its own block under a caption
-        if (heroic.length > 0) {
-            try {
-                var ready = prepare(sheet, anyButton);
-                if (ready) {
-                    var caption = outlined(icons, isRussian(sheet) ? "Героический режим" : "Heroic mode", 0xFFB347, 18.0);
-                    HlxRuntime.setField(G.call("h2d.Flow", "getProperties", [icons, caption]), "lineBreak", true);
-                }
-                var first = true;
-                for (entry in heroic) {
-                    if (added >= maxItems) break;
-                    var button:Dynamic = null;
-                    try button = makeButton(entry.item, icons, maxLevel()) catch (_:Dynamic) {}
-                    if (button == null) continue;
-                    if (first) {
-                        first = false;
-                        try HlxRuntime.setField(G.call("h2d.Flow", "getProperties", [icons, button]), "lineBreak", true) catch (_:Dynamic) {}
-                    }
-                    added++;
-                    try { if (ready) tag(button, percent(entry.chance), 0xFFB347, 12.0); } catch (_:Dynamic) {}
-                }
-            } catch (_:Dynamic) {}
-        }
+        // ---- heroic mode loot and world loot (equipment): their own blocks under a caption
+        added = block(sheet, icons, anyButton, SettingsText.heroicCaption(), "Heroic mode", 0xFFB347, heroic, maxLevel(), added, maxItems);
+        added = block(sheet, icons, anyButton, SettingsText.worldCaption(), "Equipment (world loot)", 0x9FD7FF, world, 0, added, maxItems);
 
         // ---- the Codex hides the loot until the monster's rank is high enough; that is only cosmetic, so show it
         try {

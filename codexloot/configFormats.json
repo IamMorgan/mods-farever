@@ -1,45 +1,54 @@
 {
-  "schemaVersion": 1,
-  "displayName": "Codex Loot",
   "configs": [
     {
       "type": "title",
       "label": "Monster loot in the Codex"
     },
     {
-      "key": "enabled",
       "type": "checkbox",
-      "label": "Enabled"
+      "label": "Enabled",
+      "key": "enabled"
     },
     {
-      "key": "unitTags",
+      "tooltip": {
+        "tooltipText": "Writes Boss, Elite or Spark at the bottom of the monster's frame in the list.",
+        "enabled": true
+      },
       "type": "checkbox",
       "label": "Boss / Elite / Spark tags in the monster list",
-      "tooltip": {
-        "enabled": true,
-        "tooltipText": "Writes Boss, Elite or Spark at the bottom of the monster's frame in the list."
-      }
+      "key": "unitTags"
     },
     {
-      "key": "levelFilter",
+      "tooltip": {
+        "tooltipText": "Typing in the Codex search keeps the monsters whose name or whose loot (any item, including equipment) contains the text.",
+        "enabled": true
+      },
+      "type": "checkbox",
+      "label": "Search finds monsters by the name of their loot",
+      "key": "lootSearch"
+    },
+    {
+      "tooltip": {
+        "tooltipText": "Off (default) = show all loot of the monster. On = hide entries the game would not drop at the monster's level.",
+        "enabled": true
+      },
       "type": "checkbox",
       "label": "Hide loot limited to other monster levels",
-      "tooltip": {
-        "enabled": true,
-        "tooltipText": "Off (default) = show all loot of the monster. On = hide entries the game would not drop at the monster's level."
-      }
+      "key": "levelFilter"
     },
     {
-      "key": "maxItems",
+      "min": 10,
+      "tooltip": {
+        "tooltipText": "Upper bound for the icons the mod adds to the window, most likely drops first.",
+        "enabled": true
+      },
+      "max": 500,
+      "step": 10,
       "type": "slider",
       "label": "Max extra items",
-      "min": 10,
-      "max": 200,
-      "step": 10,
-      "tooltip": {
-        "enabled": true,
-        "tooltipText": "Upper bound for the icons the mod adds to the window, most likely drops first."
-      }
+      "key": "maxItems"
     }
-  ]
+  ],
+  "schemaVersion": 1,
+  "displayName": "Codex Loot"
 }
