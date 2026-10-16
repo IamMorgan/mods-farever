@@ -10,6 +10,7 @@ import macromod.SkillMatch.SkillRef;
 typedef MacroConfig = {
     var notWhileRunning:Bool;
     var aoeNearestTarget:Bool;
+    var combatOnly:Bool;
     var m1_name:String; var m1_hotkey:Dynamic; var m1_mode:String; var m1_repeat:Bool;
     var m1_s1_skill:String; var m1_s1_delay:Int; var m1_s2_skill:String; var m1_s2_delay:Int;
     var m1_s3_skill:String; var m1_s3_delay:Int; var m1_s4_skill:String; var m1_s4_delay:Int;
@@ -44,6 +45,7 @@ class MacroMod {
     static var config:MacroConfig = {
         notWhileRunning: false,
         aoeNearestTarget: false,
+        combatOnly: false,
         m1_name: "Macro 1", m1_hotkey: 0, m1_mode: "Press (Toggle)", m1_repeat: false,
         m1_s1_skill: "", m1_s1_delay: 100, m1_s2_skill: "", m1_s2_delay: 100,
         m1_s3_skill: "", m1_s3_delay: 100, m1_s4_skill: "", m1_s4_delay: 100,
@@ -87,13 +89,16 @@ class MacroMod {
         sequencer = new Sequencer(keys, skills);
         applyConfig();
 
-        // The red X next to each activation key button ...
+        // The red X next to each activation key button ... (rows are found by their label, in
+        // either language: the page may still be in the other one until it is rewritten)
         var keyLabels = new Map<String, String>();
-        for (m in 1...MacroDefs.MACROS + 1) keyLabels.set("M" + m + " Activation Key", "m" + m + "_hotkey");
+        for (russian in [false, true])
+            for (m in 1...MacroDefs.MACROS + 1) keyLabels.set(SettingsText.keyLabel(m, russian), "m" + m + "_hotkey");
         clearButtons = new KeyRowScanner(new GameScene("ui.comp.Button"), new KeyClearButtons(clearKey), keyLabels);
         // ... and next to each step's skill name.
         var stepLabels = new Map<String, String>();
-        for (m in 1...MacroDefs.MACROS + 1) for (s in 1...MacroDefs.STEPS + 1) stepLabels.set(stepLabel(m, s), stepField(m, s));
+        for (russian in [false, true])
+            for (m in 1...MacroDefs.MACROS + 1) for (s in 1...MacroDefs.STEPS + 1) stepLabels.set(SettingsText.stepLabel(m, s, russian), stepField(m, s));
         stepRows = new KeyRowScanner(new GameScene("ui.comp.InputBox"), new StepRowDecorator(new KeyClearButtons(clearStep), onStepRow), stepLabels);
 
         for (m in 1...MacroDefs.MACROS + 1) {
@@ -112,8 +117,6 @@ class MacroMod {
         );
     }
 
-    /** Row labels; must match configFormats.json. Unique per macro, so each row is found exactly. */
-    static function stepLabel(m:Int, s:Int):String return "M" + m + " Step " + s;
     static function stepField(m:Int, s:Int):String return "m" + m + "_s" + s + "_skill";
 
     /** The "X" of an activation key: back to Not set (0), and the key button shows it at once. */
@@ -169,7 +172,7 @@ class MacroMod {
             x = G.number(G.call("h2d.Scene", "get_mouseX", sceneRoot), x);
             y = G.number(G.call("h2d.Scene", "get_mouseY", sceneRoot), y);
         } catch (_:Dynamic) {}
-        picker.show(sceneRoot, "Choose a skill for M" + macroNumber + " Step " + step, entries, x, y, entry -> {
+        picker.show(sceneRoot, SettingsText.pickerTitle(macroNumber, step, russian), entries, x, y, entry -> {
             skills.picks.set(entry.name, entry.kind);
             PickStore.save(skills.picks);
             setStep(field, entry.name);
@@ -180,6 +183,7 @@ class MacroMod {
         sequencer.stopAll(); // a running macro restarts with the new settings
         sequencer.macros = MacroDefs.fromConfig(config);
         sequencer.pauseWhileMoving = config.notWhileRunning;
+        sequencer.combatOnly = config.combatOnly;
         skills.aoeAutoAim = config.aoeNearestTarget;
         skills.invalidate();
     }
@@ -191,6 +195,8 @@ class MacroMod {
         var hero = GameSkills.localHero();
         if (hero == null) hero = try HlxRuntime.resolveField(instance, "hero") catch (_:Dynamic) null;
         sequencer.hero = hero;
+        sequencer.inCombat = hero != null && G.field(hero, "isInCombat") == true;
+        try localizeSettings() catch (_:Dynamic) {}
         var now = haxe.Timer.stamp();
         try skills.update(now) catch (_:Dynamic) {}
         try sequencer.update(now) catch (_:Dynamic) {}
@@ -215,6 +221,44 @@ class MacroMod {
         }
         picker.update();
         return Continue;
+    }
+
+    static var russian = false;
+    static var localizedLanguage:String = null;
+    static var nextLanguageCheck = 0.0;
+
+    /**
+     * Writes this mod's settings page (configFormats.json, re-read by Better Mod Settings each
+     * time its window opens) in the client's language, and keeps the stored macro modes in the
+     * same language as the dropdown shows. Checked once a second: the game's language option is
+     * only known once the game has loaded its options, and can change while it runs.
+     */
+    static function localizeSettings():Void {
+        var now = haxe.Timer.stamp();
+        if (now < nextLanguageCheck) return;
+        nextLanguageCheck = now + 1;
+        var language = G.text(G.current("Options", "language"));
+        if (language == "") language = G.text(G.staticCall("hxd.System", "get_lang", []));
+        if (language == "" || language == localizedLanguage) return;
+        localizedLanguage = language;
+        russian = SettingsText.isRussian(language);
+        picker.russian = russian;
+        var path = "hlx/mods/" + HlxRuntime.moduleName() + "/configFormats.json";
+        var text = SettingsText.json(russian, MacroDefs.MACROS, MacroDefs.STEPS);
+        var current = try sys.io.File.getContent(path) catch (_:Dynamic) "";
+        if (current != text) {
+            // Vortex deploys a link to its own copy: replace the link, never write into that copy.
+            try sys.FileSystem.deleteFile(path) catch (_:Dynamic) {}
+            sys.io.File.saveContent(path, text);
+        }
+        var changed = false;
+        for (m in 1...MacroDefs.MACROS + 1) {
+            var field = "m" + m + "_mode";
+            var value:Dynamic = Reflect.field(config, field);
+            var mode = SettingsText.modes(russian)[SettingsText.modeIndex(value)];
+            if (value != mode) { Reflect.setField(config, field, mode); changed = true; }
+        }
+        if (changed) config.save(); // the mode itself is unchanged: no need to restart macros
     }
 
     @:hlx.prefix(GameApp.dispose)

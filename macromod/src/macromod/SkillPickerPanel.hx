@@ -13,6 +13,9 @@ import macromod.HotbarSkills.HotbarSkill;
  * h2d.Graphics, whose drawing methods take optional (by-reference) arguments.
  */
 class SkillPickerPanel {
+    /** Panel texts in the client's language; set by the mod. */
+    public var russian = false;
+
     static inline var CELL = 56.0;
     static inline var GAP = 6.0;
     static inline var PAD = 10.0;
@@ -158,7 +161,7 @@ class SkillPickerPanel {
             text(panel, title, 0xFFF3D6, PAD, PAD);
             var rowY = PAD + LINE + GAP;
             if (rows.length == 0) {
-                text(panel, "No skills found on your action bars.", 0xE0D8CD, PAD, rowY, width - PAD * 2);
+                text(panel, SettingsText.noSkills(russian), 0xE0D8CD, PAD, rowY, width - PAD * 2);
                 rowY += LINE;
             }
             for (r in rows) {
@@ -168,7 +171,7 @@ class SkillPickerPanel {
             }
             caption = text(panel, "", 0xFFE7A8, PAD, rowY, width - PAD * 2);
             var cancel = box(panel, width - PAD - 80, height - PAD - LINE - 4, 80, LINE + 4, CANCEL_BG);
-            text(cancel, "Cancel", 0xFFF3D6, 8, 2);
+            text(cancel, SettingsText.cancel(russian), 0xFFF3D6, 8, 2);
             G.set(cancel, "onClick", (_:Dynamic) -> hide());
             try G.call("h2d.Interactive", "set_cursor", cancel, [G.current("hxd.Cursor", "Button")]) catch (_:Dynamic) {}
 

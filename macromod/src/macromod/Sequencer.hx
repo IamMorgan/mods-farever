@@ -8,6 +8,7 @@ private class Runner {
     public var next = 0;        // index of the next step to activate
     public var nextAt = 0.0;    // when to activate it
     public var busyUntil = 0.0; // longest wait for the game to use the previous step's skill
+    public var waitingForCombat = false; // started (or kept running) out of combat: plays from step 1 once combat starts
     public function new(index:Int) this.index = index;
 }
 
@@ -32,6 +33,12 @@ class Sequencer {
     /** When true, no macro step fires while the character is moving (any WASD key held);
         already-running macros simply pause and resume once movement stops. */
     public var pauseWhileMoving = false;
+    /** When true, macros play only while the hero is in combat. The hotkey still starts and stops
+        a macro at any time; out of combat a started macro waits, and each time combat starts it
+        plays again from its first step. */
+    public var combatOnly = false;
+    /** Updated by the mod every frame: the hero's in-combat state (ent.Unit.isInCombat). */
+    public var inCombat = false;
     /** Updated by the mod every frame; which hero a step's skill is activated on. */
     public var hero:Dynamic;
     var io:KeyIO;      // activation hotkeys only: steps use skills, they don't simulate key presses
@@ -56,7 +63,14 @@ class Sequencer {
                 if (runner.running) stop(runner); else start(def, runner, now);
             }
         }
-        if (!runner.running || now < runner.nextAt || (pauseWhileMoving && isMoving())) return;
+        if (!runner.running) return;
+        if (combatOnly && !inCombat) { runner.waitingForCombat = true; return; }
+        if (runner.waitingForCombat) {
+            runner.waitingForCombat = false;
+            runner.next = 0;
+            runner.nextAt = now;
+        }
+        if (now < runner.nextAt || (pauseWhileMoving && isMoving())) return;
         // The previous step isn't finished (queued, aiming, casting): a new request would cut it off.
         if (skills.isBusy(runner.index) && now < runner.busyUntil) return;
         fire(def, runner, now);
@@ -67,6 +81,7 @@ class Sequencer {
     function start(def:MacroDef, runner:Runner, now:Float):Void {
         if (!hasSkills(def)) return;
         runner.running = true;
+        runner.waitingForCombat = false;
         runner.next = 0;
         runner.nextAt = now;
     }
