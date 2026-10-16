@@ -213,6 +213,34 @@ class SequencerTest {
         check("independent: macro 2 runs all its steps while macro 1 waits",
             got15.indexOf("b1") >= 0 && got15.indexOf("b2") >= 0 && got15.indexOf("a2") < 0, got15.join(","));
 
+        // Combat only: the hotkey works out of combat, but the macro plays only in combat,
+        // waits when combat ends and plays again from step 1 in the next fight.
+        c = make(def(false, true, [["fireball", 100], ["heal", 100]]));
+        c.seq.combatOnly = true;
+        run(c, 300, [1]);
+        check("combat only: hotkey starts the macro out of combat", c.seq.isRunning(0));
+        check("combat only: nothing played out of combat", c.skills.log.length == 0, c.skills.log.join(","));
+        c.seq.inCombat = true;
+        run(c, 150);
+        check("combat only: plays once combat starts", ids(c.skills).join(",") == "fireball,heal", c.skills.log.join(","));
+        c.seq.inCombat = false;
+        var before = c.skills.log.length;
+        run(c, 300);
+        check("combat only: out of combat it waits, not stops", c.seq.isRunning(0) && c.skills.log.length == before, c.skills.log.join(","));
+        c.seq.inCombat = true;
+        run(c, 50);
+        check("combat only: next fight plays from step 1", ids(c.skills)[before] == "fireball", c.skills.log.join(","));
+        c.seq.inCombat = false;
+        run(c, 300, [1]);
+        check("combat only: hotkey stops it out of combat", !c.seq.isRunning(0));
+        c.seq.inCombat = true;
+        before = c.skills.log.length;
+        run(c, 300);
+        check("combat only: stopped macro stays stopped in combat", c.skills.log.length == before, c.skills.log.join(","));
+        c = make(def(false, false, [["fireball", 100]]));
+        run(c, 300, [1]);
+        check("combat only off: works out of combat", ids(c.skills).join(",") == "fireball", c.skills.log.join(","));
+
         Sys.println(failures == 0 ? "ALL PASSED" : failures + " FAILED");
         Sys.exit(failures == 0 ? 0 : 1);
     }

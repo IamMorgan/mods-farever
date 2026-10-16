@@ -17,6 +17,8 @@ For manual installation:
 - **Steps with delays:** Every step is a skill plus the delay (60-5000 ms) before the next step. Empty steps are skipped. Skills are used the same way as pressing their key: the next step starts after its delay, once the previous skill has been used and finished casting. Skills still on cooldown are skipped. Mount, dash and block are not offered.
 - **AoE skills:** Ground-aimed skills are activated twice (aim, then confirm at the mouse), or, with *AoE skills aim at the nearest enemy* on, land straight on the nearest enemy within the skill's range.
 - **Press (Toggle) or Hold:** In Toggle mode press the activation key to start the macro and press it again to stop. In Hold mode the macro runs only while the key is held down.
+- **Active only in combat (optional):** With this setting on, the activation key still starts and stops a macro at any time, but a started macro plays only while your character is in combat. When the fight ends it waits (it is not stopped), and in the next fight it plays again from its first step.
+- **Settings in your language:** The settings page follows the client's language (English or Russian).
 - **Repeat in loop:** Run the steps once, or loop them until you stop the macro.
 - **Hotkey modifiers:** Activation keys accept Ctrl, Shift or Alt combinations, with Farever's strict matching: Ctrl+1 does not also trigger a plain 1.
 - **Clear buttons:** A small red X next to every key button resets the key to "Not set" and updates the button right away. Right-clicking a key button works too.
@@ -29,16 +31,24 @@ For manual installation:
 2. Under "M1 Activation Key" click the key button and press the key (or a combination) that should start the macro.
 3. Pick the mode: Press (Toggle) or Hold. Tick "Repeat in loop" if the macro should keep going.
 4. Under "M1 Step 1" click *Choose* and click a skill icon, then set "M1 Step 1 Delay (ms)". Do the same for the next steps; leave unused steps empty.
-5. Close the settings and press the activation key in game.
+5. Optional: under "General" tick *Active only in combat* if macros should play only during fights.
+6. Close the settings and press the activation key in game.
 
 ### Notes
 
+- In a Russian client the settings rows are named in Russian (for example *М1: шаг 1* instead of *M1 Step 1*). Switching the game language keeps all saved macros.
+- *Active only in combat* uses the game's own in-combat state of your character.
 - Macros request skills through Farever's own skill input, the same way a skill key does. They do nothing outside the game.
 - Background hotkeys use a small native plugin (*macro_keys.hdll*, included, Windows x64 only). It only answers whether a key is down right now: it installs no hook and records nothing. If the file is missing or blocked by your antivirus, hotkeys simply work only while the game window is in focus.
 - Macros run inside the game's own update loop, so they keep running in the background only as long as Farever itself keeps updating while it is not in focus.
 - Skills that must be held down are stopped by the game right after they start, because their key isn't physically held.
 
 ### Changelog
+
+#### 1.2.2
+
+- **Active only in combat:** a new option in *General*. When it is on, a started macro plays only while your character is in combat: out of combat it waits, and each new fight it plays again from its first step. The activation key starts and stops it as usual. Off: macros work as before.
+- **Settings in your language:** the settings page and the skill picker are shown in the client's language (English or Russian). Saved macros, keys and modes are kept when the language changes.
 
 #### 1.2.1
 

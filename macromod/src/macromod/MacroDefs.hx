@@ -34,7 +34,7 @@ class MacroDefs {
             }
             out.push({
                 hotkey: Reflect.field(config, prefix + "_hotkey"),
-                hold: Reflect.field(config, prefix + "_mode") == "Hold",
+                hold: SettingsText.modeIndex(Reflect.field(config, prefix + "_mode")) == 1,
                 repeat: Reflect.field(config, prefix + "_repeat") == true,
                 steps: steps
             });
