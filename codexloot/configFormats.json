@@ -20,6 +20,15 @@
     },
     {
       "tooltip": {
+        "tooltipText": "Adds a Chests tab to the Codex window: every chest item (Hero Weapon Cache, Chaotic Gear Cache...) with where to get it, its contents and the chance of each item. The Codex tab is the game's own Codex.",
+        "enabled": true
+      },
+      "type": "checkbox",
+      "label": "Chests tab in the Codex",
+      "key": "chestsTab"
+    },
+    {
+      "tooltip": {
         "tooltipText": "Typing in the Codex search keeps the monsters whose name or whose loot (any item, including equipment) contains the text.",
         "enabled": true
       },

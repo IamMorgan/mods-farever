@@ -1,6 +1,6 @@
 ## Codex Loot
 
-Shows the **complete drop list** of every monster in the Farever Codex, with the **drop chance** on each item, separate blocks for **heroic mode** loot and **equipment (world loot)**, a **search by loot name** in the Codex monster list, and **Boss / Elite / Spark** tags.
+Shows the **complete drop list** of every monster in the Farever Codex, with the **drop chance** on each item, separate blocks for **heroic mode** loot and **equipment (world loot)**, a **search by loot name** in the Codex monster list, and **Boss / Elite / Spark** tags. A new **Chests tab** lists every chest item of the game (Hero Weapon Cache, Chaotic Gear Cache...) with where to buy it, what is inside and the chance of each item.
 
 ### Installation instructions
 
@@ -12,6 +12,9 @@ For manual installation:
 - Copy the `hlx` folder from the archive into the Farever game folder
 
 ### Main features
+
+- **Chests tab:** the Codex window has two tabs under it: **Codex** (the game's own Codex, opened by default) and **Chests**. The Chests page looks like the Monsters page: the list of chests on the left (hover a chest for its name and description), in the middle what the chest is, **where to get it** (the merchant, the towns, the price), how it opens and its **contents with the chance of each item**, on the right a picture of the chest. All chest items are listed: Hero Weapon / Gear Cache, Chaotic (Demonic) Gear / Weapon / Gift Cache, Mysterious Cache... World chests (part of the map) and dungeon reward chests are not items and are not listed. The list is read from the game's data, so chests added by a game update appear by themselves.
+- **Search in the Chests tab:** the field above the chest list filters the chests by the name of an item they can contain, letter by letter, **in English and in Russian** whatever the client's language; the matching items are highlighted in the contents.
 
 - **Full loot list:** Open *Esc > Codex > Monsters* and pick a monster. Under *Trophies* the window lists every item the monster can drop, not only the items the Codex already knows about. The added items are normal Codex buttons: hover an item for the game's own tooltip.
 - **Drop chance on every item:** The chance is written in percent on the lower edge of each icon (for example `40%`, `3.5%`, `0.1%`), in white with a black outline so it stays readable on any icon.
@@ -30,6 +33,7 @@ For manual installation:
 | --- | --- | --- |
 | Enabled | on | Turns the whole mod on or off. |
 | Boss / Elite / Spark tags in the monster list | on | Shows or hides the tags in the monster list. |
+| Chests tab in the Codex | on | Adds the Chests tab (and the tab bar under the Codex window). |
 | Search finds monsters by the name of their loot | on | The Codex search also keeps monsters that can drop an item whose name contains the text. |
 | Hide loot limited to other monster levels | off | Off: show all loot of the monster. On: hide entries the game would not drop at the monster's level. |
 | Max extra items | 200 | Upper bound for the number of icons the mod adds to the window (most likely drops first), 10-500. |
@@ -49,6 +53,13 @@ The mod follows the game's own loot rules:
 - The percentage is the chance for one kill under normal conditions. Player reputation, activity difficulty and luck are not applied.
 - Monster classes come from the monster's own flags, looked up by name in the game's data: **Boss** = `Boss`, **Spark** = `Spark`, **Elite** = `Elite` or `Unique`.
 
+### How the chests work
+
+- A chest is an item with an *open* action in the game's data. Opening it rolls its loot table at a level (your level, kept inside the chest's level range; without a range the item's level), offers up to *max items* of the rolled items and lets you keep one (mode *Chose*); a chest with a weighted table (the Chaotic Gift Cache) gives one random item.
+- Chests whose table is limited to your class (*WithAffinity*) show the items for the class of the hero you play. The chance is the chance to be among the offered items: with 12 possible items and 2 offered it is 2 / 12 = 17%. Items you already own are put last by the game, which the mod does not take into account.
+- Who sells a chest is not in the game's data (it is in the shop lists of the hub NPCs), so the mod has it written down: Hero Weapon / Gear Cache from the Glory merchant (100 Medals of Glory), Chaotic Gear Cache (level 25) from Rumi (100 Medals of Glory), Chaotic Gear / Weapon Cache (10 Nightblood) and Gift Cache (5 Nightblood) from Mira, in the hubs of the three regions. A chest nobody sells (the Mysterious Cache) says so.
+- English and Russian names for the search come from the game's own files (the base data and `lang/export_ru.xml`).
+
 ### Notes
 
 - The mod only changes the Codex window on your screen. It does not change loot, monsters or the game's data and sends nothing over the network.
@@ -56,6 +67,13 @@ The mod follows the game's own loot rules:
 - The mod hooks the Codex window (`setSelectedUnit`, `updateUnitNodes`, `matchSearch`), the loading of spawn points (`HSpawner.add`, `HSpawner.clear`) and the game's update loop (to follow the client's language), and reads the game's data sheets by name. If a game update renames these, the mod does nothing (it never crashes the game) until it is updated.
 
 ### Changelog
+
+#### 1.2.0
+
+- **New: Chests tab** in the Codex window (tabs *Codex* / *Chests* under the window; the Codex tab, the game's own Codex, is shown by default). Every chest item with where to get it, how it opens, its contents and the chance of each item, a picture of the chest, and a search by item name in English and Russian.
+- The Boss / Elite / Spark tags and the captions on the Codex window now use the Cyrillic font of the Codex, so they are written in Russian in a Russian client (they were always English before).
+- New setting *Chests tab in the Codex*.
+- Test mode for development: the mod listens for commands only while the folder `hlx/config/codexloot/test` exists (it is not in the archive).
 
 #### 1.1.0
 
