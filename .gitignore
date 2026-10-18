@@ -1,3 +1,6 @@
 # build outputs and packaged archives
 build/
 /dist/
+
+# game content extracted for offline tests (not ours to publish)
+buildcalc/simtest/scripts.json
