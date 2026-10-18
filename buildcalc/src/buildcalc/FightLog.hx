@@ -22,6 +22,9 @@ class FightLog {
     static var foreign = 0;
     static var errors = 0;
     static var lastSkipped = "";
+    /** The hero, looked up twice a second (not for every result of the world). */
+    static var heroNow:Dynamic = null;
+    static inline var MAX_HITS = 20000;
 
     /** Hook ent.Unit.rpcReceiveDamage__impl (instance: the target): every damage result in the world. */
     public static function damage(target:Dynamic, result:Dynamic):Void {
@@ -38,14 +41,11 @@ class FightLog {
 
     static function record(target:Dynamic, result:Dynamic, isHeal:Bool):Void {
         seen++;
-        var hero = GameData.hero();
+        var hero = heroNow;
         if (hero == null) return;
         var src = sourceOf(result);
-        if (src != hero) {
-            foreign++;
-            lastSkipped = G.typeName(src) + " -> " + G.typeName(target);
-            return;
-        }
+        if (src != hero) { foreign++; return; }
+        if (hits.length >= MAX_HITS) return;
         var now = haxe.Timer.stamp();
         // heals (a pet's passive healing) neither start a fight nor keep it going: only damage dealt does
         if (isHeal && (hits.length == 0 || now - last > IDLE)) return;
@@ -87,8 +87,9 @@ class FightLog {
         var now = haxe.Timer.stamp();
         if (now < nextCheck) return;
         nextCheck = now + 0.5;
+        heroNow = GameData.hero();
         if (hits.length > 0 && now - last > IDLE) {
-            var hero = GameData.hero();
+            var hero = heroNow;
             DebugLog.guard("fight log", () -> saveFight(hero));
         }
     }
