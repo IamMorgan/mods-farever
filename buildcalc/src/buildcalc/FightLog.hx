@@ -54,6 +54,18 @@ class FightLog {
         wasInCombat = inCombat;
     }
 
+    /** Test mode: what the hero's combat meter holds now; with `write` the fight is saved as it is. */
+    public static function probe(write:Bool):Dynamic {
+        var hero = GameData.hero();
+        if (hero == null) return {hero: false};
+        var stats = G.field(hero, "combatStats");
+        var out:Dynamic = {hero: true, results: G.len(G.field(stats, "damages")), history: G.len(G.field(hero, "combatDamageHistory")),
+            inCombat: G.field(hero, "isInCombat") == true, start: G.num(G.field(hero, "combatStartTime")), end: G.num(G.field(hero, "combatEndTime")),
+            active: active, tracked: lastCount, files: sys.FileSystem.exists(DIR) ? sys.FileSystem.readDirectory(DIR).length : -1};
+        if (write) { save(hero, 3); out.saved = sys.FileSystem.exists(DIR) ? sys.FileSystem.readDirectory(DIR).length : -1; }
+        return out;
+    }
+
     static function save(hero:Dynamic, observed:Float = 0):Void {
         var c = new Combat(hero, observed);
         if (!c.ok) { DebugLog.line("fight log: no fight to save (too short or empty)"); return; }

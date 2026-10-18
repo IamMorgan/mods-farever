@@ -96,6 +96,10 @@ class TestMode {
                 State.save();
                 if (!BuildTab.startCalc(hero, s, opts)) { answer({id: id, cmd: name, ok: false, error: "the calculation did not start (see the log)"}); return; }
                 waiting = {id: id, cmd: name};
+            case "fight":
+                var info:Dynamic = FightLog.probe(Reflect.field(cmd, "write") == true);
+                info.id = id; info.cmd = name; info.ok = true;
+                answer(info);
             case "saveTemplate":
                 var slot = Std.int(Reflect.field(cmd, "slot"));
                 BuildTab.saveToTemplate(slot);
