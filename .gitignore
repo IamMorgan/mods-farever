@@ -4,3 +4,6 @@ build/
 
 # game content extracted for offline tests (not ours to publish)
 buildcalc/simtest/scripts.json
+
+# offline tests of the calculator (local only)
+buildcalc/simtest/
