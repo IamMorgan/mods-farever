@@ -21,6 +21,7 @@ class FightLog {
     static var seen = 0;
     static var foreign = 0;
     static var errors = 0;
+    static var getSource:hlx.runtime.ResolvedMember = null;
     static var lastSkipped = "";
     /** The hero, looked up twice a second (not for every result of the world). */
     static var heroNow:Dynamic = null;
@@ -72,7 +73,11 @@ class FightLog {
     /** Who dealt the result: its source unit, a summon or a pet counted for its owner. */
     static function sourceOf(result:Dynamic):Dynamic {
         var u:Dynamic = null;
-        try u = G.call("st.skill.DamageResult", "get_source", [result]) catch (_:Dynamic) {}
+        // the getter is looked up once: this runs for every damage result of the world
+        try {
+            if (getSource == null) getSource = G.member("st.skill.DamageResult", "get_source", false);
+            u = HlxRuntime.callResolved(getSource, [result]);
+        } catch (_:Dynamic) {}
         if (u == null) u = G.field(G.field(result, "ctx"), "sourceUnit");
         for (_ in 0...5) {
             var owner = G.field(u, "summonOwner");
