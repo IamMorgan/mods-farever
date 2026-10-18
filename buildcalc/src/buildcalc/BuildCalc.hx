@@ -41,11 +41,27 @@ class BuildCalc {
         DebugLog.guard("CharacterUI.init", () -> BuildTab.build(instance));
     }
 
+    /** The arsenal weapon shown by the calculator (Views.asArsenal): worn, for the game's item tooltip. */
+    @:hlx.prefix(st.Equipment.isEquipped)
+    static function beforeIsEquipped(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
+        return Views.shownInArsenal(item) ? SkipWith(true) : Continue;
+    }
+
+    /** ... and worn in the arsenal slot (Slot_Weapon2), so the tooltip takes that slot's share (affixFactor 0.4). */
+    @:hlx.prefix(st.Equipment.getEquipSlot)
+    static function beforeGetEquipSlot(instance:Dynamic, item:Dynamic):HlxPrefixResult<String> {
+        if (!Views.shownInArsenal(item)) return Continue;
+        var name:Dynamic = null;
+        try name = G.at(HlxRuntime.resolveStaticField(G.type("DataCache"), "EQUIPMENT_SLOTS"), 1) catch (_:Dynamic) {}
+        return name == null ? Continue : SkipWith(name);
+    }
+
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
         DebugLog.guard("language", followLanguage);
         DebugLog.guard("layout report", BuildTab.report);
         DebugLog.guard("calculation", BuildTab.tick);
+        DebugLog.guard("test mode", () -> TestMode.tick(instance));
 
         DebugLog.flush();
         return Continue;

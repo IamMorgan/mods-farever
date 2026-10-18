@@ -151,7 +151,8 @@ class GameEnv implements SimEnv {
     }
 
     function itemPart(inst:Inst, item:Candidate, e:SEffect, ratio:Float):Float {
-        var key = "sim|" + item.id + "|" + inst.rank + "|" + inst.info.id + "|" + e.uid;
+        // by the candidate (its key), not its id: an owned +3 censer and a created +5 one have other item data
+        var key = "sim|" + item.key + "|" + inst.rank + "|" + inst.info.id + "|" + e.uid;
         if (itemPartCache.exists(key)) return itemPartCache.get(key);
         var v = 0.0;
         try {
