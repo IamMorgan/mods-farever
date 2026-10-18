@@ -44,7 +44,7 @@ class G {
 
     static var members = new Map<String, hlx.runtime.ResolvedMember>();
 
-    static function member(typeName:String, name:String, isStatic:Bool):hlx.runtime.ResolvedMember {
+    public static function member(typeName:String, name:String, isStatic:Bool):hlx.runtime.ResolvedMember {
         var key = (isStatic ? "s:" : "m:") + typeName + "#" + name;
         lock.acquire();
         var m = members.get(key);
