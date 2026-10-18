@@ -2,7 +2,8 @@ package codexloot;
 
 import codexloot.LootMath.Row;
 
-typedef ChestEntry = {item:Dynamic, chance:Float}
+/** `mine` = the hero is offered this item (false: an item of another class, listed for completeness). */
+typedef ChestEntry = {item:Dynamic, chance:Float, mine:Bool}
 
 typedef ChestLootResult = {
     var entries:Array<ChestEntry>;
@@ -22,6 +23,8 @@ typedef ChestLootResult = {
     var pool:Int;
     /** The hero's items were filtered by class, but no hero is known (items of every class are listed). */
     var anyClass:Bool;
+    /** The list also holds items of other classes (not offered to this hero). */
+    var hasOthers:Bool;
 }
 
 /** The rules of a chest's loot that need no game data (see ChestLoot). */

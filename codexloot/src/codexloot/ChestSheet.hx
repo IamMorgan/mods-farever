@@ -21,6 +21,46 @@ class ChestSheet {
     /** The Codex window the sheet is in. */
     static var owner:Dynamic;
     static var computed = new Map<String, ChestMath.ChestLootResult>();
+    /** The frame drawn around the selected chest of the list. */
+    static var frame:Dynamic;
+    static inline var FRAME_COLOR = 0xFFDC15;
+    static inline var FRAME_WIDTH = 3.0;
+
+    /** For the test mode: the buttons of the list with their selected state and style classes. */
+    public static function debugButtons():Array<Dynamic> {
+        var out:Array<Dynamic> = [];
+        for (e in entries) {
+            var dom = G.field(e.button, "dom");
+            var classes:Array<String> = [];
+            try {
+                var it = G.call("domkit.Properties", "getClasses", [dom]);
+                var iter = HlxRuntime.resolveField(it, "iterator");
+                var i = Reflect.callMethod(it, iter, []);
+                while (i.hasNext()) classes.push(Std.string(i.next()));
+            } catch (x:Dynamic) classes.push("?" + Std.string(x));
+            out.push({id: ChestData.idOf(e.chest), selected: G.field(e.button, "selected"), hasSelectedClass: try G.call("domkit.Properties", "hasClass", [dom, "selected"]) catch (_:Dynamic) null, classes: classes});
+        }
+        return out;
+    }
+
+    /** For the test mode: the click of the mouse on the button of a chest. */
+    public static function debugClick(id:String):Bool {
+        for (e in entries) if (ChestData.idOf(e.chest) == id) {
+            var f = G.field(e.button, "onButtonClicked");
+            if (f == null) return false;
+            Reflect.callMethod(null, f, [null]);
+            return true;
+        }
+        return false;
+    }
+
+    /** For the test mode: the fonts of the description text. */
+    public static function debugFonts():Dynamic {
+        var d = G.field(sheet, "description");
+        var f = G.field(d, "font");
+        return {text: {name: G.str(G.field(f, "name")), size: G.num(G.field(f, "size")), scaleX: G.num(G.field(d, "scaleX")), lineHeight: G.num(G.field(f, "lineHeight")), letterSpacing: G.num(G.field(d, "letterSpacing"))},
+            bold: boldFont == null ? null : {name: G.str(G.field(boldFont, "name")), size: G.num(G.field(boldFont, "size")), lineHeight: G.num(G.field(boldFont, "lineHeight"))}};
+    }
 
     public static function owns(instance:Dynamic):Bool return marker != null && instance != null && G.field(instance, "codexData") == marker;
 
@@ -35,6 +75,30 @@ class ChestSheet {
         try G.call(G.typeName(obj), "set_visible", [obj, visible]) catch (_:Dynamic) {
             try HlxRuntime.setField(obj, "visible", visible) catch (_:Dynamic) {}
         }
+    }
+
+    /** Puts a frame around the selected chest's button (the game's list style has no selected look for these buttons). */
+    static function highlight(button:Dynamic):Void {
+        if (frame != null) try G.call("h2d.Object", "remove", [frame]) catch (_:Dynamic) {}
+        frame = null;
+        if (button == null) return;
+        try {
+            var w = G.num(G.field(button, "calculatedWidth"));
+            var h = G.num(G.field(button, "calculatedHeight"));
+            if (w <= 0) w = 78;
+            if (h <= 0) h = 78;
+            var g = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Graphics"), 1, [button]);
+            G.call("h2d.Graphics", "beginFill", [g, FRAME_COLOR, 1.0]);
+            var t = FRAME_WIDTH;
+            G.call("h2d.Graphics", "drawRect", [g, 0.0, 0.0, w, t]);
+            G.call("h2d.Graphics", "drawRect", [g, 0.0, h - t, w, t]);
+            G.call("h2d.Graphics", "drawRect", [g, 0.0, t, t, h - 2 * t]);
+            G.call("h2d.Graphics", "drawRect", [g, w - t, t, t, h - 2 * t]);
+            G.call("h2d.Graphics", "endFill", [g]);
+            var props = G.call("h2d.Flow", "getProperties", [button, g]);
+            HlxRuntime.setField(props, "isAbsolute", true);
+            frame = g;
+        } catch (_:Dynamic) {}
     }
 
     static function setText(text:Dynamic, value:String):Void {
@@ -135,6 +199,7 @@ class ChestSheet {
         if (list == null) return;
         G.call("h2d.Flow", "removeChildren", [list]);
         entries = [];
+        frame = null; // removed with the buttons
         var text = searchText(s);
         for (chest in ChestData.chests()) {
             try {
@@ -157,10 +222,13 @@ class ChestSheet {
         if (s == null) return;
         var drops = G.field(s, "dropsIcons");
         if (drops != null) G.call("h2d.Flow", "removeChildren", [drops]);
+        var chosen:Dynamic = null;
         for (e in entries) {
             var on = chest != null && e.chest == chest;
             try G.call("ui.UIElement", "set_selected", [e.button, on]) catch (_:Dynamic) {}
+            if (on) chosen = e.button;
         }
+        highlight(chosen);
         setImage(s, chest);
         if (chest == null) {
             selectedId = "";
@@ -177,11 +245,58 @@ class ChestSheet {
         var name = ChestData.nameOf(chest);
         setText(G.field(s, "loreTitle"), ""); // the name is in the banner; a long name would wrap over the text below
         setText(G.field(s, "unitType"), name);
-        setText(G.field(s, "description"), ChestData.describe(chest, loot).join("<br/>"));
+        var desc = G.field(s, "description");
+        giveBoldFont(desc);
+        setText(desc, ChestData.describe(chest, loot).join("<br/>"));
         show(G.field(s, "dropsPanel"), true);
         show(G.field(s, "unlockDropsText"), false);
         fillDrops(s, drops, loot, searchText(s));
         relayout(s);
+    }
+
+    static var boldFont:Dynamic;
+
+    /** The bold font of the game that can draw Cyrillic, of the family and the size of the `like` font (a font the text uses). */
+    static function findBoldFont(root:Dynamic, like:Dynamic):Dynamic {
+        var family = G.str(G.field(like, "name")).split(" ")[0].toLowerCase();
+        var wanted = G.num(G.field(like, "size")) + 2; // the bold glyphs come out smaller than the italic ones of the same nominal size
+        var best:Dynamic = null;
+        var bestScore = 1e9;
+        var stack = [root];
+        var seen = 0;
+        while (stack.length > 0 && seen < 6000) {
+            var node = stack.pop();
+            seen++;
+            if (node == null) continue;
+            var f = G.field(node, "font");
+            var name = f == null ? "" : G.str(G.field(f, "name")).toLowerCase();
+            if (name.indexOf("bold") >= 0 && G.call("h2d.Font", "hasChar", [f, 0x0411]) == true) {
+                var size = G.num(G.field(f, "size"));
+                var score = Math.abs(size - wanted) + (size < wanted ? 0.5 : 0.0) + (name.indexOf(family) == 0 ? 0 : 100); // not smaller than the text
+                if (score < bestScore) { best = f; bestScore = score; }
+            }
+            for (c in G.children(node)) stack.push(c);
+        }
+        return best;
+    }
+
+    /** The description's HTML text writes <b>..</b> with the font its loadFont returns for "bold": the game gives it none. */
+    static function giveBoldFont(text:Dynamic):Void {
+        if (text == null) return;
+        try {
+            var like = G.field(text, "font");
+            if (like == null) return; // the text has no font yet: the page is selected again a few frames later
+            var exact = boldFont != null && G.str(G.field(boldFont, "name")).toLowerCase().indexOf(G.str(G.field(like, "name")).split(" ")[0].toLowerCase()) == 0;
+            if (!exact) {
+                // the whole scene: the Codex window may not be on it yet, and the HUD and other windows use bold fonts too
+                var top:Dynamic = HlxRuntime.resolveStaticField(HlxRuntime.resolveType("ui.BaseUI"), "current");
+                top = G.field(top, "s2d");
+                var found = top == null ? null : findBoldFont(top, like);
+                if (found != null) boldFont = found;
+            }
+            var f = boldFont;
+            if (f != null) HlxRuntime.setField(text, "loadFont", (name:String) -> name == "bold" ? f : null);
+        } catch (_:Dynamic) {}
     }
 
     /** The title of the window's top banner: the Chests page (init gave it the name of the icon of the page). */
@@ -204,19 +319,22 @@ class ChestSheet {
     static function fillDrops(s:Dynamic, drops:Dynamic, loot:ChestMath.ChestLootResult, text:String):Void {
         if (drops == null) return;
         var any:Dynamic = null;
-        var made:Array<{button:Dynamic, item:Dynamic, chance:Float}> = [];
+        var made:Array<{button:Dynamic, item:Dynamic, chance:Float, mine:Bool}> = [];
         for (e in loot.entries) {
             try {
                 var button = LootUi.makeButton(e.item, drops, loot.level, loot.minRarity);
                 if (any == null) any = button;
-                made.push({button: button, item: e.item, chance: e.chance});
+                made.push({button: button, item: e.item, chance: e.chance, mine: e.mine});
             } catch (_:Dynamic) {}
         }
         if (any != null && LootUi.prepare(s, any))
             for (m in made) try LootUi.tag(m.button, LootUi.percent(m.chance), 0xFFFFFF, 12.0) catch (_:Dynamic) {}
-        // while searching, the items that match are the ones to look at
-        if (text != "")
-            for (m in made) try { if (!ChestNames.matches(m.item, text)) HlxRuntime.setField(m.button, "alpha", 0.3); } catch (_:Dynamic) {}
+        // items of other classes are dimmed; while searching, the items that match are the ones to look at
+        for (m in made) {
+            var alpha = m.mine ? 1.0 : 0.5;
+            if (text != "" && !ChestNames.matches(m.item, text)) alpha = 0.3;
+            if (alpha < 1.0) try HlxRuntime.setField(m.button, "alpha", alpha) catch (_:Dynamic) {}
+        }
         try G.call("h2d.Flow", "reflow", [drops]) catch (_:Dynamic) {}
     }
 
@@ -248,6 +366,7 @@ class ChestSheet {
         sheet = null;
         entries = [];
         image = null;
+        frame = null;
         selectedId = "";
         computed = new Map();
     }

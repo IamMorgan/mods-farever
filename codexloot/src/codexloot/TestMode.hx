@@ -11,9 +11,11 @@ package codexloot;
  *  - status: the Codex window, its tab, the chests listed, the selected chest, the hero.
  *  - open / close: opens the Codex window as the game does / closes it.
  *  - tab {tab: "codex" | "chests"}: switches the tab as a click on it does.
- *  - select {id}: selects a chest of the list. search {text}: types in the search of the chest list.
+ *  - select {chest}: selects a chest of the list. search {text}: types in the search of the chest list.
  *  - dump: every chest with its name, where to get it and its contents (the chance of each item) for the hero now.
  *  - names {text}: which chests the search finds for that text (and how long the first search took).
+ *  - buttons: the buttons of the chest list (selected state, style classes). layers: the scene's layers, the window's parents, the tab bar's place.
+ *  - click {chest}: clicks the button of a chest as the mouse does. textfonts: the fonts of the description. movebar {index}: moves the tab bar among the scene's children.
  *  - screenshot {file}: the game's 2D scene (all its windows) saved as a PNG in the test folder.
  */
 class TestMode {
@@ -94,7 +96,7 @@ class TestMode {
                 CodexTabs.switchTo(Std.string(Reflect.field(cmd, "tab")) == "chests");
                 answer({id: id, cmd: name, ok: true, status: status()});
             case "select":
-                var chest = chestById(Std.string(Reflect.field(cmd, "id")));
+                var chest = chestById(Std.string(Reflect.field(cmd, "chest")));
                 if (chest == null || !CodexTabs.inChestMode()) { answer({id: id, cmd: name, ok: false, error: "no such chest, or the Chests tab is not shown"}); return; }
                 ChestSheet.select(chest);
                 answer({id: id, cmd: name, ok: true, status: status()});
@@ -123,13 +125,13 @@ class TestMode {
                 }
                 answer({id: id, cmd: name, ok: true, parts: out});
             case "itemnames":
-                var item = Sheets.get("item").get(Std.string(Reflect.field(cmd, "id")));
+                var item = Sheets.get("item").get(Std.string(Reflect.field(cmd, "chest")));
                 answer({id: id, cmd: name, ok: item != null, names: item == null ? null : ChestNames.of(item)});
             case "fonts":
                 var w = codexWindow();
                 var list:Array<Dynamic> = [];
                 var seen:Array<Dynamic> = [];
-                var stack:Array<Dynamic> = [w];
+                var stack:Array<Dynamic> = [G.field(app, "s2d")];
                 var n = 0;
                 while (stack.length > 0 && n < 4000) {
                     var o = stack.pop();
@@ -143,6 +145,17 @@ class TestMode {
                     for (c in G.children(o)) stack.push(c);
                 }
                 answer({id: id, cmd: name, ok: true, used: LootUi.font == null ? null : {name: G.str(G.field(LootUi.font, "name")), cyr: G.call("h2d.Font", "hasChar", [LootUi.font, 0x0411])}, fonts: list});
+            case "movebar":
+                CodexTabs.debugMove(Std.parseInt(Std.string(Reflect.field(cmd, "index"))));
+                answer({id: id, cmd: name, ok: true, layers: layers()});
+            case "textfonts":
+                answer({id: id, cmd: name, ok: true, fonts: ChestSheet.debugFonts()});
+            case "buttons":
+                answer({id: id, cmd: name, ok: true, buttons: ChestSheet.debugButtons()});
+            case "layers":
+                answer({id: id, cmd: name, ok: true, layers: layers()});
+            case "click":
+                answer({id: id, cmd: name, ok: ChestSheet.debugClick(Std.string(Reflect.field(cmd, "chest"))), buttons: ChestSheet.debugButtons()});
             case "screenshot":
                 var file = Reflect.field(cmd, "file") != null ? Std.string(Reflect.field(cmd, "file")) : "screen.png";
                 screenshot(DIR + "/" + file);
@@ -150,6 +163,43 @@ class TestMode {
             default:
                 answer({id: id, cmd: name, ok: false, error: "unknown command"});
         }
+    }
+
+    static function describeObject(o:Dynamic):Dynamic {
+        return {type: G.typeName(o), x: G.num(G.field(o, "x")), y: G.num(G.field(o, "y")), scaleX: G.num(G.field(o, "scaleX")), absX: G.num(G.field(o, "absX")), absY: G.num(G.field(o, "absY")),
+            visible: G.field(o, "visible"), kids: G.len(G.field(o, "children"))};
+    }
+
+    static function layers():Dynamic {
+        var scene = G.field(app, "s2d");
+        var list:Array<Dynamic> = [];
+        var kids = G.children(scene);
+        for (i in 0...kids.length) {
+            var d = describeObject(kids[i]);
+            Reflect.setField(d, "index", i);
+            list.push(d);
+        }
+        var chain:Array<Dynamic> = [];
+        var w:Dynamic = codexWindow();
+        var window = w == null ? null : describeObject(w);
+        if (w != null) {
+            Reflect.setField(window, "calculatedHeight", G.num(G.field(w, "calculatedHeight")));
+            Reflect.setField(window, "calculatedWidth", G.num(G.field(w, "calculatedWidth")));
+            Reflect.setField(window, "matA", G.num(G.field(w, "matA")));
+            Reflect.setField(window, "matD", G.num(G.field(w, "matD")));
+            Reflect.setField(window, "overflow", G.str(G.field(w, "overflow")));
+            var p = G.field(w, "parent");
+            while (p != null) { chain.push(describeObject(p)); p = G.field(p, "parent"); }
+        }
+        var ui = baseUi();
+        var named:Dynamic = {};
+        for (n in ["root", "rootTips", "rootOverlay", "rootCursor", "rootBG"]) {
+            var o = G.field(ui, n);
+            var idx = -1;
+            for (i in 0...kids.length) if (kids[i] == o) idx = i;
+            Reflect.setField(named, n, o == null ? null : {index: idx, type: G.typeName(o)});
+        }
+        return {scene: list, window: window, windowParents: chain, ui: named, tabs: CodexTabs.debug()};
     }
 
     static function screenshot(path:String):Void {

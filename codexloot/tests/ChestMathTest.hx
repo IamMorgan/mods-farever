@@ -17,7 +17,7 @@ class ChestMathTest {
     static function near(a:Float, b:Float):Bool return Math.abs(a - b) < 1e-9;
 
     static function loot(?maxItems:Int, weighted = false, affinity = false, ownedLast = false, level = 25):ChestLootResult
-        return {entries: [], level: level, maxItems: maxItems, weighted: weighted, affinity: affinity, ownedLast: ownedLast, minRarity: "", pool: 0, anyClass: false};
+        return {entries: [], level: level, maxItems: maxItems, weighted: weighted, affinity: affinity, ownedLast: ownedLast, minRarity: "", pool: 0, anyClass: false, hasOthers: false};
 
     static function main():Void {
         // the level a chest is rolled at
@@ -59,8 +59,10 @@ class ChestMathTest {
         check("english: offer", SettingsText.chestHow(loot(2, false, true)) == "Opening it offers 2 random items of the list (only for your class): you keep one. Item level: 25.", SettingsText.chestHow(loot(2, false, true)));
         check("english: weighted", SettingsText.chestHow(loot(1, true, false, false, 0)) == "Opening it gives one random item of the list.");
         check("english: owned last and rarity", SettingsText.chestHow(loot(2, false, false, true), "Epic").indexOf("Rarity: Epic or better.") > 0);
-        check("english: price", SettingsText.chestPrice(100, "Medal of Glory") == "Price: 100 x Medal of Glory.");
-        check("english: where", SettingsText.chestWhere(["A", "B"]) == "Where: A, B.");
+        check("english: price", SettingsText.chestPrice([{price: 100, currency: "Medal of Glory"}]) == "<b>Price:</b> 100 x Medal of Glory.");
+        check("english: two costs", SettingsText.chestPrice([{price: 100, currency: "Medal of Glory"}, {price: 20, currency: "Nightblood"}]) == "<b>Price:</b> 100 x Medal of Glory + 20 x Nightblood.");
+        check("english: where", SettingsText.chestWhere(["A", "B"]) == "<b>Where:</b> A, B.");
+        check("english: sold by", SettingsText.chestSoldBy("Mira") == "<b>Sold by:</b> Mira.");
         SettingsText.russian = true;
         check("russian: offer", SettingsText.chestHow(loot(2, false, true)).indexOf("предлагаются 2 предмета из списка (только для вашего класса)") > 0, SettingsText.chestHow(loot(2, false, true)));
         check("russian: 5 and 21 and 12 items", [5, 21, 12, 1].map(n -> SettingsText.chestHow(loot(n))).join("|").indexOf("5 предметов") > 0
