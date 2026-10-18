@@ -10,7 +10,7 @@ class GameData {
     }
 
     public static function hero():Dynamic {
-        try return G.field(HlxRuntime.resolveStaticField(G.type("GameApp"), "inst"), "hero") catch (_:Dynamic) return null;
+        try return G.callStatic("GameApp", "getMyHero", []) catch (_:Dynamic) return null;
     }
 
     /** Skill id from a reference that may be a plain id or a record. */
