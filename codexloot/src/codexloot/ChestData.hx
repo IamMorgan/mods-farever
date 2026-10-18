@@ -1,7 +1,10 @@
 package codexloot;
 
-/** Where a chest item is sold: the NPC (a unit of the game's data), the hub towns he/she stands in, the price in a currency item. */
-typedef Seller = {unit:String, hubs:Array<String>, currency:String, price:Int}
+/** One part of a price: an amount of a currency item. */
+typedef Cost = {currency:String, price:Int}
+
+/** Where a chest item is sold: the NPC (a unit of the game's data), the hub towns he/she stands in, the price (all the costs are paid together). */
+typedef Seller = {unit:String, hubs:Array<String>, costs:Array<Cost>}
 
 /**
  * The chests of the Codex "Chests" tab: items that open into loot (item data props.gainItem, e.g. Hero Weapon Cache,
@@ -15,14 +18,16 @@ class ChestData {
     /** The hub towns of the three regions (zones of the game's data: Navelin, Tyrna, Lower Ramburg). */
     static var HUBS = ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"];
 
+    static var GLORY_100:Cost = {currency: "BadgeOfGlory", price: 100};
+
     /** chest item id -> its sellers (NPC shop lists of the hub prefabs: Glory_Merchant, Riftstalker_Intendant, DemonHuntMira_NPC_*). */
     public static var SELLERS:Map<String, Array<Seller>> = [
-        "HM_Weapon_Cache_25" => [{unit: "MedalogGloryTrader", hubs: HUBS, currency: "BadgeOfGlory", price: 100}],
-        "HM_Gear_Cache_25" => [{unit: "MedalogGloryTrader", hubs: HUBS, currency: "BadgeOfGlory", price: 100}],
-        "HM_Demon_Cache_25" => [{unit: "DemonHunterRumi", hubs: HUBS, currency: "BadgeOfGlory", price: 100}],
-        "Rift_Gear_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, currency: "Nightblood", price: 10}],
-        "Rift_Weapon_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, currency: "Nightblood", price: 10}],
-        "Rift_Gift_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, currency: "Nightblood", price: 5}]
+        "HM_Weapon_Cache_25" => [{unit: "MedalogGloryTrader", hubs: HUBS, costs: [GLORY_100]}],
+        "HM_Gear_Cache_25" => [{unit: "MedalogGloryTrader", hubs: HUBS, costs: [GLORY_100]}],
+        "HM_Demon_Cache_25" => [{unit: "DemonHunterRumi", hubs: HUBS, costs: [GLORY_100, {currency: "Nightblood", price: 20}]}],
+        "Rift_Gear_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, costs: [{currency: "Nightblood", price: 10}]}],
+        "Rift_Weapon_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, costs: [{currency: "Nightblood", price: 10}]}],
+        "Rift_Gift_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, costs: [{currency: "Nightblood", price: 5}]}]
     ];
 
     static var list:Array<Dynamic>;
@@ -82,7 +87,7 @@ class ChestData {
             for (s in sellers) {
                 lines.push(SettingsText.chestSoldBy(Sheets.name("unit", s.unit)));
                 lines.push(SettingsText.chestWhere([for (h in s.hubs) Sheets.name("zone", h)]));
-                lines.push(SettingsText.chestPrice(s.price, Sheets.name("item", s.currency)));
+                lines.push(SettingsText.chestPrice([for (c in s.costs) {price: c.price, currency: Sheets.name("item", c.currency)}]));
             }
         }
         lines.push(SettingsText.chestHow(loot, loot.minRarity == "" ? "" : Sheets.name("rarity", loot.minRarity)));

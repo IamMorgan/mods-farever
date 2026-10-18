@@ -57,7 +57,8 @@ The mod follows the game's own loot rules:
 
 - A chest is an item with an *open* action in the game's data. Opening it rolls its loot table at a level (your level, kept inside the chest's level range; without a range the item's level), offers up to *max items* of the rolled items and lets you keep one (mode *Chose*); a chest with a weighted table (the Chaotic Gift Cache) gives one random item.
 - Chests whose table is limited to your class (*WithAffinity*) show the items for the class of the hero you play. The chance is the chance to be among the offered items: with 12 possible items and 2 offered it is 2 / 12 = 17%. Items you already own are put last by the game, which the mod does not take into account.
-- Who sells a chest is not in the game's data (it is in the shop lists of the hub NPCs), so the mod has it written down: Hero Weapon / Gear Cache from the Glory merchant (100 Medals of Glory), Chaotic Gear Cache (level 25) from Rumi (100 Medals of Glory), Chaotic Gear / Weapon Cache (10 Nightblood) and Gift Cache (5 Nightblood) from Mira, in the hubs of the three regions. A chest nobody sells (the Mysterious Cache) says so.
+- **Complete contents:** a chest limited to your class offers only the items of your class, but the list shows the items of every class. The ones you can be offered have a full colour; the items of other classes are dimmed and show the chance they have for a hero of their class.
+- Who sells a chest is not in the game's data (it is in the shop lists of the hub NPCs), so the mod has it written down: Hero Weapon / Gear Cache from the Glory merchant (100 Medals of Glory), the epic Chaotic Gear Cache (level 25) from Rumi (**100 Medals of Glory + 20 Nightblood**, both are paid), the Chaotic Gear / Weapon Cache (10 Nightblood) and Gift Cache (5 Nightblood) from Mira, in the hubs of the three regions. A chest nobody sells (the Mysterious Cache) says so.
 - English and Russian names for the search come from the game's own files (the base data and `lang/export_ru.xml`).
 
 ### Notes
@@ -67,6 +68,16 @@ The mod follows the game's own loot rules:
 - The mod hooks the Codex window (`setSelectedUnit`, `updateUnitNodes`, `matchSearch`), the loading of spawn points (`HSpawner.add`, `HSpawner.clear`) and the game's update loop (to follow the client's language), and reads the game's data sheets by name. If a game update renames these, the mod does nothing (it never crashes the game) until it is updated.
 
 ### Changelog
+
+#### 1.2.1
+
+- **Chests tab fixes:**
+  - the price of the epic *Chaotic Gear Cache* (Rumi) is now complete: 100 Medals of Glory **and** 20 Nightblood (only the Medals were shown);
+  - *Sold by*, *Where* and *Price* are written in bold;
+  - the chest you pick in the list gets a gold frame;
+  - the item tooltips are drawn over the *Codex* / *Chests* tabs, not under them;
+  - the tabs touch the window without a gap;
+  - the complete contents of every chest are listed: items of all classes (the Hero Weapon Cache showed only 2 weapons, the ones of your class, now all 4), the items of other classes are dimmed.
 
 #### 1.2.0
 

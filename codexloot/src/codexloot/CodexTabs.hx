@@ -21,6 +21,8 @@ class CodexTabs {
     static inline var TEXT_NORMAL = 0xFEFEFE;
     /** The height of the Codex window in the game's style sheet (codex-window), used until the window has measured itself. */
     static inline var WINDOW_H = 750.0;
+    /** The window's frame ends a few pixels above its measured height: the bar is moved up so that the tabs touch the frame. */
+    static inline var TOUCH = -4.0;
 
     /** The Codex window the tabs belong to. */
     static var window:Dynamic;
@@ -38,6 +40,12 @@ class CodexTabs {
     public static function debug():Dynamic {
         return {error: lastError, bar: bar != null, tabs: tabs.length, appKnown: app != null, x: bar == null ? 0 : G.num(G.field(bar, "x")), y: bar == null ? 0 : G.num(G.field(bar, "y")),
             scale: bar == null ? 0 : G.num(G.field(bar, "scaleX")), visible: bar == null ? false : G.field(bar, "visible"), parent: bar == null ? "" : G.typeName(G.field(bar, "parent"))};
+    }
+
+    /** For the test mode: puts the bar at another place of the scene's children. */
+    public static function debugMove(index:Int):Void {
+        var scene = G.field(app, "s2d");
+        G.call("h2d.Object", "addChildAt", [scene, bar, index]);
     }
 
     public static function inChestMode():Bool return chestMode && window != null;
@@ -127,12 +135,26 @@ class CodexTabs {
     static function createBar(w:Dynamic):Void {
         var scene = G.field(app, "s2d");
         if (scene == null || !LootUi.prepare(w, null)) return;
-        bar = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Object"), 1, [scene]);
+        bar = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Object"), 1, [null]);
+        placeBar(scene);
         tabs = [];
         addTab(false, SettingsText.tabCodex(), 0);
         addTab(true, SettingsText.tabChests(), TAB_W + GAP);
         barRussian = SettingsText.russian;
         barRetry = LootUi.canDraw("Кодекс") ? 0 : 5;
+    }
+
+    /**
+     * The bar is the last child of the scene (a bar between the game's layers is not drawn), and the game's tooltip, overlay and cursor
+     * layers are moved behind it, in their own order, so the tooltips of the Codex are drawn over the tabs, not under them.
+     */
+    static function placeBar(scene:Dynamic):Void {
+        G.call("h2d.Object", "addChild", [scene, bar]);
+        var ui = HlxRuntime.resolveStaticField(HlxRuntime.resolveType("ui.BaseUI"), "current");
+        for (name in ["rootTips", "rootOverlay", "rootCursor"]) {
+            var layer = G.field(ui, name);
+            if (layer != null && G.field(layer, "parent") == scene) try G.call("h2d.Object", "addChild", [scene, layer]) catch (_:Dynamic) {}
+        }
     }
 
     static function attach(w:Dynamic):Void {
@@ -158,7 +180,7 @@ class CodexTabs {
         var height = G.num(G.field(window, "calculatedHeight"));
         if (height <= 0) height = WINDOW_H;
         G.call("h2d.Object", "setScale", [bar, scale]);
-        G.call("h2d.Object", "setPosition", [bar, G.num(G.field(window, "absX")) + 25 * scale, G.num(G.field(window, "absY")) + height * G.num(G.field(window, "matD"))]);
+        G.call("h2d.Object", "setPosition", [bar, G.num(G.field(window, "absX")) + 25 * scale, G.num(G.field(window, "absY")) + (height + TOUCH) * G.num(G.field(window, "matD"))]);
         HlxRuntime.setField(bar, "visible", G.field(window, "visible") != false);
         var alpha = G.num(G.field(window, "alpha"));
         HlxRuntime.setField(bar, "alpha", alpha > 0 ? alpha : 1.0);

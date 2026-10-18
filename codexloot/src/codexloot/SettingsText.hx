@@ -41,11 +41,16 @@ class SettingsText {
     public static function chestNotSold():String
         return russian ? "Ни один торговец его не продаёт: в данных игры не сказано, как его получить." : "No merchant sells it: the game's data does not say how to get it.";
 
-    public static function chestSoldBy(npc:String):String return (russian ? "Продаёт: " : "Sold by: ") + npc + ".";
+    /** The label of a line of the description in bold (the game's HTML text). */
+    static function bold(label:String):String return "<b>" + label + "</b>";
 
-    public static function chestWhere(places:Array<String>):String return (russian ? "Где: " : "Where: ") + places.join(", ") + ".";
+    public static function chestSoldBy(npc:String):String return bold(russian ? "Продаёт:" : "Sold by:") + " " + npc + ".";
 
-    public static function chestPrice(price:Int, currency:String):String return (russian ? "Цена: " : "Price: ") + price + " x " + currency + ".";
+    public static function chestWhere(places:Array<String>):String return bold(russian ? "Где:" : "Where:") + " " + places.join(", ") + ".";
+
+    /** The price: every cost is paid together ("100 x Medal of Glory + 20 x Nightblood"). */
+    public static function chestPrice(costs:Array<{price:Int, currency:String}>):String
+        return bold(russian ? "Цена:" : "Price:") + " " + [for (c in costs) c.price + " x " + c.currency].join(" + ") + ".";
 
     /** "1 предмет", "2 предмета", "5 предметов". */
     static function ruItems(n:Int):String {
@@ -68,7 +73,10 @@ class SettingsText {
         if (loot.level > 0) parts.push(russian ? "Уровень предметов: " + loot.level + "." : "Item level: " + loot.level + ".");
         if (rarityName != "") parts.push(russian ? "Редкость: " + rarityName + " или выше." : "Rarity: " + rarityName + " or better.");
         if (loot.ownedLast) parts.push(russian ? "Уже имеющиеся у вас предметы предлагаются в последнюю очередь." : "Items you already own are offered last.");
-        if (loot.anyClass) parts.push(russian ? "Герой не найден: показаны предметы всех классов." : "No hero found: items of every class are shown.");
+        if (loot.anyClass) parts.push(russian ? "Герой не найден: показаны предметы всех классов (шанс — для героя того класса, которому предмет подходит)." : "No hero found: items of every class are shown (the chance is for a hero of the class that can use the item).");
+        else if (loot.hasOthers)
+            parts.push(russian ? "Предметы других классов показаны приглушёнными: вам они не выпадут, шанс указан для героя их класса."
+                : "Items of other classes are dimmed: you are not offered them, the chance is for a hero of their class.");
         return parts.join(" ");
     }
 
