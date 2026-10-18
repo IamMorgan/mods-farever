@@ -16,6 +16,7 @@ package codexloot;
  *  - names {text}: which chests the search finds for that text (and how long the first search took).
  *  - buttons: the buttons of the chest list (selected state, style classes). layers: the scene's layers, the window's parents, the tab bar's place.
  *  - click {chest}: clicks the button of a chest as the mouse does. textfonts: the fonts of the description. movebar {index}: moves the tab bar among the scene's children.
+ *  - raw {chest}: the unfiltered loot table of a chest; table {id2}; tables {text}: loot tables by id; finditems {text}: items by id or name; mkitem {item, level, minRarity}: the item as the game makes it.
  *  - screenshot {file}: the game's 2D scene (all its windows) saved as a PNG in the test folder.
  */
 class TestMode {
@@ -61,7 +62,14 @@ class TestMode {
     static function status():Dynamic {
         var w = codexWindow();
         return {window: w != null, chestMode: CodexTabs.inChestMode(), selected: ChestSheet.selected(), listed: ChestSheet.listed(),
-            heroKnown: CodexLoot.hero != null, russian: SettingsText.russian, tabBar: CodexTabs.debug(), chests: [for (c in ChestData.chests()) ChestData.idOf(c)]};
+            heroKnown: CodexLoot.hero != null, heroApts: heroApts(), russian: SettingsText.russian, tabBar: CodexTabs.debug(), chests: [for (c in ChestData.chests()) ChestData.idOf(c)]};
+    }
+
+    static function heroApts():Array<String> {
+        var apts = G.field(G.field(G.field(G.field(CodexLoot.hero, "inf"), "props"), "aptitudes"), "length") == null ? [] : [];
+        var list = G.field(G.field(G.field(CodexLoot.hero, "inf"), "props"), "aptitudes");
+        for (i in 0...G.len(list)) apts.push(G.str(G.field(G.at(list, i), "ref")));
+        return apts;
     }
 
     static function chestById(id:String):Dynamic {
@@ -74,7 +82,31 @@ class TestMode {
         return {id: ChestData.idOf(chest), name: ChestData.nameOf(chest), rarity: G.str(G.field(chest, "rarity")),
             lines: ChestData.describe(chest, loot), level: loot.level, maxItems: loot.maxItems, weighted: loot.weighted, affinity: loot.affinity,
             ownedLast: loot.ownedLast, minRarity: loot.minRarity, pool: loot.pool,
-            items: [for (e in loot.entries) {id: G.str(G.field(e.item, "id")), name: Sheets.name("item", G.str(G.field(e.item, "id"))), chance: Math.round(e.chance * 10000) / 10000}]};
+            items: [for (e in loot.entries) {id: G.str(G.field(e.item, "id")), name: Sheets.name("item", G.str(G.field(e.item, "id"))), chance: Math.round(e.chance * 10000) / 10000, mine: e.mine,
+                shownRarity: LootUi.rarityOf(LootUi.realItem(e.item, loot.level, loot.minRarity), e.item)}]};
+    }
+
+    /** A loot table as the game's data holds it (every row, unfiltered), sub-tables included. */
+    static function rawTable(id:String, depth:Int):Dynamic {
+        var table = Sheets.get("lootTable").get(id);
+        if (table == null) return {id: id, missing: true};
+        var rows:Array<Dynamic> = [];
+        var loot = G.field(table, "loot");
+        var items = Sheets.get("item");
+        for (i in 0...G.len(loot)) {
+            var e = G.at(loot, i);
+            if (e == null) continue;
+            var itemId = G.str(G.field(e, "item"));
+            var rec = items.get(itemId);
+            var row:Dynamic = {item: itemId, name: itemId == "" ? "" : Sheets.name("item", itemId), rarity: rec == null ? "" : G.str(G.field(rec, "rarity")),
+                itemLevel: rec == null ? "" : G.str(G.field(rec, "level")), gfx: rec != null && G.field(rec, "gfx") != null,
+                proba: G.str(G.field(e, "proba")), itemMin: G.str(G.field(e, "itemMin")), itemMax: G.str(G.field(e, "itemMax")),
+                minLvl: G.str(G.field(e, "minLvl")), maxLvl: G.str(G.field(e, "maxLvl")), flags: G.str(G.field(e, "flags"))};
+            var sub = G.str(G.field(e, "lootTable"));
+            if (sub != "") Reflect.setField(row, "sub", depth > 4 ? sub : rawTable(sub, depth + 1));
+            rows.push(row);
+        }
+        return {id: id, flags: G.str(G.field(table, "flags")), rows: rows};
     }
 
     static function run(cmd:Dynamic, id:String, name:String):Void {
@@ -124,6 +156,45 @@ class TestMode {
                         h: G.num(G.field(o, "calculatedHeight")), minH: G.field(o, "minHeight"), maxH: G.field(o, "maxHeight"), visible: G.field(o, "visible"), overflow: G.str(G.field(o, "overflow"))});
                 }
                 answer({id: id, cmd: name, ok: true, parts: out});
+            case "raw":
+                var item = Sheets.get("item").get(Std.string(Reflect.field(cmd, "chest")));
+                if (item == null) { answer({id: id, cmd: name, ok: false, error: "no such item"}); return; }
+                var gain = ChestLoot.gainOf(item);
+                answer({id: id, cmd: name, ok: true, iLevel: G.str(G.field(item, "iLevel")), rarity: G.str(G.field(item, "rarity")),
+                    gain: {lootTable: G.str(G.field(gain, "lootTable")), maxItems: G.str(G.field(gain, "maxItems")), mode: G.str(G.field(gain, "mode")),
+                        rarity: G.str(G.field(G.field(gain, "rarity"), "min")) + "/" + G.str(G.field(G.field(gain, "rarity"), "max")),
+                        levelRange: G.str(G.field(G.field(gain, "levelRange"), "min")) + "-" + G.str(G.field(G.field(gain, "levelRange"), "max"))},
+                    table: rawTable(G.str(G.field(gain, "lootTable")), 0)});
+            case "finditems":
+                var text = Std.string(Reflect.field(cmd, "text")).toLowerCase();
+                var found:Array<Dynamic> = [];
+                for (iid => rec in Sheets.get("item")) {
+                    var nm = Sheets.name("item", iid);
+                    if (iid.toLowerCase().indexOf(text) < 0 && nm.toLowerCase().indexOf(text) < 0) continue;
+                    found.push({id: iid, name: nm, rarity: G.str(G.field(rec, "rarity")), level: G.str(G.field(rec, "level")), iLevel: G.str(G.field(rec, "iLevel")),
+                        type: G.str(G.field(rec, "type")), flags: G.str(G.field(rec, "flags")), gfx: G.field(rec, "gfx") != null,
+                        aptitudes: [for (i in 0...G.len(G.field(rec, "aptitudes"))) G.str(G.field(G.at(G.field(rec, "aptitudes"), i), "ref"))]});
+                }
+                found.sort((a, b) -> Reflect.compare(a.id, b.id));
+                answer({id: id, cmd: name, ok: true, count: found.length, items: found});
+            case "tables":
+                var text = Std.string(Reflect.field(cmd, "text")).toLowerCase();
+                var list:Array<Dynamic> = [];
+                for (tid => t in Sheets.get("lootTable")) if (tid.toLowerCase().indexOf(text) >= 0) list.push({id: tid, flags: G.str(G.field(t, "flags")), rows: G.len(G.field(t, "loot"))});
+                list.sort((a, b) -> Reflect.compare(a.id, b.id));
+                answer({id: id, cmd: name, ok: true, tables: list});
+            case "table":
+                answer({id: id, cmd: name, ok: true, table: rawTable(Std.string(Reflect.field(cmd, "id2")), 0)});
+            case "mkitem":
+                var iid = Std.string(Reflect.field(cmd, "item"));
+                var minR = Reflect.field(cmd, "minRarity") == null ? null : Std.string(Reflect.field(cmd, "minRarity"));
+                var lvl = Std.parseInt(Std.string(Reflect.field(cmd, "level")));
+                var drop = {count: 1, flags: null, item: iid, itemFlags: null, lootLevel: lvl, lootTableFlags: null, maxRarity: null, minRarity: minR, rarity: minR};
+                var made = G.callStatic("st.Item", "create", [iid, drop]);
+                var inf = G.field(made, "inf");
+                answer({id: id, cmd: name, ok: made != null, type: G.typeName(made), rarity: G.str(G.field(made, "rarity")), infRarity: G.str(G.field(inf, "rarity")),
+                    level: G.str(G.field(made, "level")), iLevel: G.str(G.field(made, "iLevel")), affixes: G.len(G.field(made, "affixes")),
+                    fields: [for (f in ["rarityIdx", "quality", "ilvl", "lootLevel", "stats", "customRarity"]) f + "=" + G.str(G.field(made, f))]});
             case "itemnames":
                 var item = Sheets.get("item").get(Std.string(Reflect.field(cmd, "chest")));
                 answer({id: id, cmd: name, ok: item != null, names: item == null ? null : ChestNames.of(item)});

@@ -58,7 +58,7 @@ The mod follows the game's own loot rules:
 - A chest is an item with an *open* action in the game's data. Opening it rolls its loot table at a level (your level, kept inside the chest's level range; without a range the item's level), offers up to *max items* of the rolled items and lets you keep one (mode *Chose*); a chest with a weighted table (the Chaotic Gift Cache) gives one random item.
 - Chests whose table is limited to your class (*WithAffinity*) show the items for the class of the hero you play. The chance is the chance to be among the offered items: with 12 possible items and 2 offered it is 2 / 12 = 17%. Items you already own are put last by the game, which the mod does not take into account.
 - **Complete contents:** a chest limited to your class offers only the items of your class, but the list shows the items of every class. The ones you can be offered have a full colour; the items of other classes are dimmed and show the chance they have for a hero of their class.
-- Who sells a chest is not in the game's data (it is in the shop lists of the hub NPCs), so the mod has it written down: Hero Weapon / Gear Cache from the Glory merchant (100 Medals of Glory), the epic Chaotic Gear Cache (level 25) from Rumi (**100 Medals of Glory + 20 Nightblood**, both are paid), the Chaotic Gear / Weapon Cache (10 Nightblood) and Gift Cache (5 Nightblood) from Mira, in the hubs of the three regions. A chest nobody sells (the Mysterious Cache) says so.
+- Who sells a chest is not in the game's data (it is in the shop lists of the hub NPCs), so it is written down in `sellers.json` (data file, no code): Hero Weapon / Gear Cache from the Glory merchant (100 Medals of Glory), the epic Chaotic Gear Cache (level 25) from Rumi (**100 Medals of Glory + 20 Nightblood**, both are paid), the Chaotic Gear / Weapon Cache (10 Nightblood) and Gift Cache (5 Nightblood) from Mira, in the hubs of the three regions. A chest that is not in the file says that the game's data does not tell where to get it.
 - English and Russian names for the search come from the game's own files (the base data and `lang/export_ru.xml`).
 
 ### Notes
@@ -68,6 +68,13 @@ The mod follows the game's own loot rules:
 - The mod hooks the Codex window (`setSelectedUnit`, `updateUnitNodes`, `matchSearch`), the loading of spawn points (`HSpawner.add`, `HSpawner.clear`) and the game's update loop (to follow the client's language), and reads the game's data sheets by name. If a game update renames these, the mod does nothing (it never crashes the game) until it is updated.
 
 ### Changelog
+
+#### 1.2.2
+
+- **Chest contents are complete for every level:** a chest's list now holds every item it can give at any hero level of its level range (rows with a minimum / maximum level are followed), not only the ones for the level of your hero. Items you are not offered now (another class or another level) are dimmed and show the chance they have for a hero who can get them.
+- **Rarity of the items:** the items of a chest are shown with the rarity the chest gives, not the rarity of the item in the data. The weapons of the Hero Weapon Cache are **Epic** (purple frame, Epic tooltip) instead of Rare.
+- **No chest is written in the code:** the chests, their contents and their rarity come from the game's data. The only thing the data lacks, who sells a chest and for what, is read from the file `sellers.json` next to the mod (a list of `{item, unit, hubs, costs}` with ids of the game's data); a chest that is not in the file is still listed with its complete contents, and a new chest of a game update appears by itself.
+- The dimmed-items note and the text for a chest of unknown origin say what they mean.
 
 #### 1.2.1
 

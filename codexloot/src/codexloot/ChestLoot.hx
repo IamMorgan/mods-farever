@@ -60,13 +60,14 @@ class ChestLoot {
     }
 
     /** The chance of each item to be among the offered ones, for a hero accepted by `accept` (null = no class limit). */
-    static function offeredFor(chest:Dynamic, heroLvl:Null<Int>, accept:Dynamic->Bool):{chances:Map<String, Float>, pool:Int, level:Int, maxItems:Null<Int>, weighted:Bool, topFlags:Int, minRarity:String} {
+    static function offeredFor(chest:Dynamic, heroLvl:Null<Int>, accept:Dynamic->Bool, atLevel:Null<Int> = null):{chances:Map<String, Float>, pool:Int, level:Int, maxItems:Null<Int>, weighted:Bool, topFlags:Int, minRarity:String} {
         var gain = gainOf(chest);
         var tables = Sheets.get("lootTable");
         var items = Sheets.get("item");
         var range = G.field(gain, "levelRange");
         var level = ChestMath.sourceLevel(G.field(chest, "iLevel") == null ? null : G.num(G.field(chest, "iLevel")),
             optInt(range, "min"), optInt(range, "max"), heroLvl);
+        if (atLevel != null) level = atLevel;
         var maxItems = optInt(gain, "maxItems");
         var rarity = G.field(gain, "rarity");
         var top = tables.get(G.str(G.field(gain, "lootTable")));
@@ -108,9 +109,50 @@ class ChestLoot {
     }
 
     /**
-     * The complete contents of the chest. A chest whose table is limited to the hero's class (WithAffinity) offers only the items of
-     * the hero's class, but the list shows the items of every class: the ones the hero is offered (`mine`) with their chance, the
-     * others (not `mine`) with the chance they have for a hero of the class that can use them.
+     * The levels at which the chest's loot differs: the hero's level and the levels where a row of its tables starts or stops
+     * (minLvl, maxLvl + 1, the item's own level for rows that use it), inside the chest's level range. The loot of the game depends on
+     * the level only through these rows, so the lists made at these levels together are everything the chest can ever give.
+     */
+    static function levelsOf(chest:Dynamic, heroLvl:Null<Int>):Array<Int> {
+        var gain = gainOf(chest);
+        var range = G.field(gain, "levelRange");
+        var lo = optInt(range, "min"), hi = optInt(range, "max");
+        var out:Array<Int> = [ChestMath.sourceLevel(G.field(chest, "iLevel") == null ? null : G.num(G.field(chest, "iLevel")), lo, hi, heroLvl)];
+        if (lo == null || hi == null) return out;
+        var tables = Sheets.get("lootTable");
+        var items = Sheets.get("item");
+        var seen = new Map<String, Bool>();
+        function add(l:Null<Int>):Void if (l != null && l >= lo && l <= hi && out.indexOf(l) < 0) out.push(l);
+        function scan(id:String, depth:Int):Void {
+            if (id == "" || seen.exists(id) || depth > 8) return;
+            seen.set(id, true);
+            var table = tables.get(id);
+            if (table == null) return;
+            var loot = G.field(table, "loot");
+            for (i in 0...G.len(loot)) {
+                var e = G.at(loot, i);
+                if (e == null) continue;
+                add(optInt(e, "minLvl"));
+                var mx = optInt(e, "maxLvl");
+                if (mx != null) add(mx + 1);
+                var flags = optInt(e, "flags");
+                if (flags != null && (flags & 4) != 0) {
+                    var item = items.get(G.str(G.field(e, "item")));
+                    if (item != null) add(optInt(item, "level"));
+                }
+                scan(G.str(G.field(e, "lootTable")), depth + 1);
+            }
+        }
+        scan(G.str(G.field(gain, "lootTable")), 0);
+        add(lo);
+        add(hi);
+        return out;
+    }
+
+    /**
+     * The complete contents of the chest: every item it can give at any level of its level range, for every class. The items the hero
+     * is offered now (`mine`) come first with their chance; the others (not `mine`: another class, or another level) are listed with
+     * the chance they have for a hero who can get them.
      */
     public static function compute(chest:Dynamic, hero:Dynamic):ChestLootResult {
         var items = Sheets.get("item");
@@ -119,12 +161,16 @@ class ChestLoot {
         var affinity = (main.topFlags & 2) != 0;
         var chances = main.chances;
         var other = new Map<String, Float>();
-        if (affinity) {
-            var exclusive = classes();
-            if (hero == null) chances = new Map(); // no hero: every item is listed with the chance it has for its own class
-            for (cls in exclusive) {
-                var r = offeredFor(chest, level, (item) -> suitsClass(item, cls, exclusive));
-                for (id => c in r.chances) if (!chances.exists(id) && (!other.exists(id) || other.get(id) < c)) other.set(id, c);
+        var exclusive = affinity ? classes() : [];
+        if (affinity && hero == null) chances = new Map(); // no hero: every item is listed with the chance it has for its own class
+        function keep(r:{chances:Map<String, Float>}):Void {
+            for (id => c in r.chances) if (!chances.exists(id) && (!other.exists(id) || other.get(id) < c)) other.set(id, c);
+        }
+        for (l in levelsOf(chest, level)) {
+            if (affinity) {
+                for (cls in exclusive) keep(offeredFor(chest, level, (item) -> suitsClass(item, cls, exclusive), l));
+            } else if (l != main.level) {
+                keep(offeredFor(chest, level, null, l));
             }
         }
 
@@ -144,6 +190,6 @@ class ChestLoot {
         });
         return {entries: entries, level: main.level, maxItems: main.maxItems, weighted: main.weighted, affinity: affinity, ownedLast: (main.topFlags & 8) != 0,
             minRarity: main.minRarity, pool: main.pool, anyClass: hero == null && affinity,
-            hasOthers: hero != null && affinity && Lambda.exists(entries, (e) -> !e.mine)};
+            hasOthers: hero != null && Lambda.exists(entries, (e) -> !e.mine)};
     }
 }

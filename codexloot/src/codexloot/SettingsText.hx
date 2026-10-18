@@ -39,7 +39,7 @@ class SettingsText {
     public static function chestsNothing():String return russian ? "Ни в одном сундуке нет предмета с таким названием." : "No chest contains an item with that name.";
 
     public static function chestNotSold():String
-        return russian ? "Ни один торговец его не продаёт: в данных игры не сказано, как его получить." : "No merchant sells it: the game's data does not say how to get it.";
+        return russian ? "Где его получить, в данных игры не сказано." : "The game's data does not say where to get it.";
 
     /** The label of a line of the description in bold (the game's HTML text). */
     static function bold(label:String):String return "<b>" + label + "</b>";
@@ -75,8 +75,8 @@ class SettingsText {
         if (loot.ownedLast) parts.push(russian ? "Уже имеющиеся у вас предметы предлагаются в последнюю очередь." : "Items you already own are offered last.");
         if (loot.anyClass) parts.push(russian ? "Герой не найден: показаны предметы всех классов (шанс — для героя того класса, которому предмет подходит)." : "No hero found: items of every class are shown (the chance is for a hero of the class that can use the item).");
         else if (loot.hasOthers)
-            parts.push(russian ? "Предметы других классов показаны приглушёнными: вам они не выпадут, шанс указан для героя их класса."
-                : "Items of other classes are dimmed: you are not offered them, the chance is for a hero of their class.");
+            parts.push(russian ? "Приглушённые предметы вам не выпадут (другой класс или другой уровень героя): шанс указан для героя, которому они подходят."
+                : "Dimmed items are not offered to you (another class or hero level): the chance is for a hero who can get them.");
         return parts.join(" ");
     }
 

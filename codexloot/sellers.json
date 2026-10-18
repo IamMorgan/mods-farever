@@ -1,0 +1,8 @@
+[
+  {"item": "HM_Weapon_Cache_25", "unit": "MedalogGloryTrader", "hubs": ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"], "costs": [{"currency": "BadgeOfGlory", "price": 100}]},
+  {"item": "HM_Gear_Cache_25", "unit": "MedalogGloryTrader", "hubs": ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"], "costs": [{"currency": "BadgeOfGlory", "price": 100}]},
+  {"item": "HM_Demon_Cache_25", "unit": "DemonHunterRumi", "hubs": ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"], "costs": [{"currency": "BadgeOfGlory", "price": 100}, {"currency": "Nightblood", "price": 20}]},
+  {"item": "Rift_Gear_Cache", "unit": "DemonHunterMira", "hubs": ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"], "costs": [{"currency": "Nightblood", "price": 10}]},
+  {"item": "Rift_Weapon_Cache", "unit": "DemonHunterMira", "hubs": ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"], "costs": [{"currency": "Nightblood", "price": 10}]},
+  {"item": "Rift_Gift_Cache", "unit": "DemonHunterMira", "hubs": ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"], "costs": [{"currency": "Nightblood", "price": 5}]}
+]
