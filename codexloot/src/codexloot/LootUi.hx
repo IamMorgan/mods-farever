@@ -24,16 +24,30 @@ class LootUi {
         return maxLevelCache;
     }
 
+    /**
+     * The item as the game makes it when it drops at `level` from a source that guarantees at least rarity `minRarity`
+     * (st.Item.create: weapons take the drop's rarity, other items keep the rarity of their data), or null when `level` is 0.
+     */
+    public static function realItem(item:Dynamic, level:Int, minRarity:String = ""):Dynamic {
+        if (level <= 0) return null;
+        try {
+            var id = G.str(G.field(item, "id"));
+            var drop = {count: 1, flags: null, item: id, itemFlags: null, lootLevel: level, lootTableFlags: null, maxRarity: null, minRarity: minRarity == "" ? null : minRarity, rarity: minRarity == "" ? null : minRarity};
+            return G.callStatic("st.Item", "create", [id, drop]);
+        } catch (_:Dynamic) {}
+        return null;
+    }
+
+    /** The rarity of a made item (a weapon has its own, the others the one of their data), "" when unknown. */
+    public static function rarityOf(real:Dynamic, item:Dynamic):String {
+        var r = G.str(G.field(real, "rarity"));
+        if (r == "") r = G.str(G.field(G.field(real, "inf"), "rarity"));
+        return r != "" ? r : G.str(G.field(item, "rarity"));
+    }
+
     /** The tooltip of an item. With `level` > 0 the item is created at that level (and with at least rarity `minRarity`, when set), as a drop of that level would be. */
     public static function tooltip(item:Dynamic, level:Int, minRarity:String = ""):Dynamic {
-        var real:Dynamic = null;
-        if (level > 0) {
-            try {
-                var drop = {count: 1, flags: null, item: G.str(G.field(item, "id")), itemFlags: null, lootLevel: level, lootTableFlags: null, maxRarity: null, minRarity: minRarity == "" ? null : minRarity, rarity: null};
-                real = G.callStatic("st.Item", "create", [G.str(G.field(item, "id")), drop]);
-            } catch (_:Dynamic) { real = null; }
-        }
-        return G.callStatic("ui.Tooltip", "fromItem", [item, real]);
+        return G.callStatic("ui.Tooltip", "fromItem", [item, realItem(item, level, minRarity)]);
     }
 
     /** A Codex button for an item, built the way the game builds them (CodexData.createItemNode), without registering anything. `level` > 0: the tooltip shows the item at that level. */
@@ -45,11 +59,16 @@ class LootUi {
         HlxRuntime.setField(node, "clickable", clickable);
         HlxRuntime.setField(node, "forcedRevealed", true);
         try HlxRuntime.setField(node, "progressThresholds", G.callStatic("st.player.Progress", "getItemProgressThreshold", [item])) catch (_:Dynamic) {}
-        var tip = function():Dynamic return tooltip(item, level, minRarity);
+        var real = realItem(item, level, minRarity);
+        var tip = function():Dynamic return G.callStatic("ui.Tooltip", "fromItem", [item, real]);
         HlxRuntime.setField(node, "getTooltip", tip);
 
         var button = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("ui.win.codex.CodexButton"), 2, [node, parent]);
         var dom = G.field(button, "dom");
+        // the frame colour follows the rarity of the data record; a drop of a chest can be better (weapons of the Hero Weapon Cache are Epic)
+        var rarity = real == null ? "" : rarityOf(real, item);
+        if (rarity != "" && rarity != G.str(G.field(item, "rarity")))
+            try G.call("domkit.Properties", "setClassKind", [dom, "rarity", rarity.toLowerCase()]) catch (_:Dynamic) {}
         if (small) try G.call(G.typeName(dom), "addClass", [dom, "small"]) catch (_:Dynamic) {
             try G.call(G.typeName(dom), "addClass", [dom, "small", null]) catch (_:Dynamic) {}
         }

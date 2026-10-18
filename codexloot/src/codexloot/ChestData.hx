@@ -12,28 +12,42 @@ typedef Seller = {unit:String, hubs:Array<String>, costs:Array<Cost>}
  * of the mod. Chests of the world (part of the map) and of dungeons (the end-of-dungeon rewards) are not items and are not listed.
  *
  * The game's data does not say who sells an item: that is in the NPC prefabs of the hubs (shop lists), read from the game's
- * files once and written down in SELLERS. A chest nobody sells has no entry.
+ * files once and written down in sellers.json. A chest that is not in that file has no seller line.
  */
 class ChestData {
-    /** The hub towns of the three regions (zones of the game's data: Navelin, Tyrna, Lower Ramburg). */
-    static var HUBS = ["Z1_Primevalley_Hub", "Z2_Azuram_Hub", "Z3_CrimsonIsland_South"];
+    
 
-    static var GLORY_100:Cost = {currency: "BadgeOfGlory", price: 100};
+    /** The file with the sellers (next to the mod), see `sellers`. */
+    static inline var SELLERS_FILE = "hlx/mods/codexloot/sellers.json";
 
-    /** chest item id -> its sellers (NPC shop lists of the hub prefabs: Glory_Merchant, Riftstalker_Intendant, DemonHuntMira_NPC_*). */
-    public static var SELLERS:Map<String, Array<Seller>> = [
-        "HM_Weapon_Cache_25" => [{unit: "MedalogGloryTrader", hubs: HUBS, costs: [GLORY_100]}],
-        "HM_Gear_Cache_25" => [{unit: "MedalogGloryTrader", hubs: HUBS, costs: [GLORY_100]}],
-        "HM_Demon_Cache_25" => [{unit: "DemonHunterRumi", hubs: HUBS, costs: [GLORY_100, {currency: "Nightblood", price: 20}]}],
-        "Rift_Gear_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, costs: [{currency: "Nightblood", price: 10}]}],
-        "Rift_Weapon_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, costs: [{currency: "Nightblood", price: 10}]}],
-        "Rift_Gift_Cache" => [{unit: "DemonHunterMira", hubs: HUBS, costs: [{currency: "Nightblood", price: 5}]}]
-    ];
+    static var sellerMap:Map<String, Array<Seller>>;
+
+    /**
+     * chest item id -> its sellers. The game's data does not hold this, so it is read from `sellers.json` (a list of
+     * {item, unit, hubs, costs: [{currency, price}]}, ids of the game's data); the file is data, not code, and a chest that is not
+     * in it is still listed with its complete contents.
+     */
+    public static function sellers():Map<String, Array<Seller>> {
+        if (sellerMap != null) return sellerMap;
+        var m = new Map<String, Array<Seller>>();
+        try {
+            var rows:Array<Dynamic> = haxe.Json.parse(sys.io.File.getContent(SELLERS_FILE));
+            for (r in rows) {
+                var costs:Array<Cost> = [for (c in (r.costs : Array<Dynamic>)) {currency: Std.string(c.currency), price: Std.int(c.price)}];
+                var seller:Seller = {unit: Std.string(r.unit), hubs: [for (h in (r.hubs : Array<Dynamic>)) Std.string(h)], costs: costs};
+                var id = Std.string(r.item);
+                if (!m.exists(id)) m.set(id, []);
+                m.get(id).push(seller);
+            }
+        } catch (_:Dynamic) {}
+        sellerMap = m;
+        return m;
+    }
 
     static var list:Array<Dynamic>;
 
     /** Forget the list (new game data or language). */
-    public static function clear():Void list = null;
+    public static function clear():Void { list = null; sellerMap = null; }
 
     static function rarityRank(item:Dynamic):Int {
         var r = G.str(G.field(item, "rarity"));
@@ -51,7 +65,7 @@ class ChestData {
             if (ChestLoot.gainOf(item) != null && G.field(item, "gfx") != null) out.push(item);
         out.sort((a, b) -> {
             var ia = G.str(G.field(a, "id")), ib = G.str(G.field(b, "id"));
-            var sa = SELLERS.exists(ia), sb = SELLERS.exists(ib);
+            var sa = sellers().exists(ia), sb = sellers().exists(ib);
             if (sa != sb) return sa ? -1 : 1;
             var ra = rarityRank(a), rb = rarityRank(b);
             if (ra != rb) return ra > rb ? -1 : 1;
@@ -80,7 +94,7 @@ class ChestData {
         var lines:Array<String> = [];
         var flavor = flavorOf(chest);
         if (flavor != "") lines.push(flavor);
-        var sellers = SELLERS.get(idOf(chest));
+        var sellers = sellers().get(idOf(chest));
         if (sellers == null) {
             lines.push(SettingsText.chestNotSold());
         } else {
