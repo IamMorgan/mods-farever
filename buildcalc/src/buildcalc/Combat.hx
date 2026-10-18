@@ -17,11 +17,13 @@ class Combat {
     public var selfHeal = 0.0;
     public var allyHeal = 0.0;
     public var ok = false;
+    var fallback = 0.0;
     /** Every damage/heal/shield result in the order of the fight (FightLog writes it). */
     public var hits:Array<Dynamic> = [];
     public var startTime = 0.0;
 
-    public function new(hero:Dynamic) {
+    public function new(hero:Dynamic, fallbackDuration:Float = 0) {
+        this.fallback = fallbackDuration;
         try read(hero) catch (e:Dynamic) DebugLog.error("combat record", e);
     }
 
@@ -34,6 +36,7 @@ class Combat {
         var now = start;
         try now = G.num(G.field(G.call("st.State", "get_time", [hero]), "serverNow")) catch (_:Dynamic) {}
         duration = (inCombat ? now : end) - start;
+        if (duration < 3 && G.len(list) > 0) duration = fallback;
         startTime = start;
         var from = "current fight";
         if (G.len(list) == 0 || duration < 3) {
