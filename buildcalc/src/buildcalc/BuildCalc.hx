@@ -61,6 +61,7 @@ class BuildCalc {
         DebugLog.guard("language", followLanguage);
         DebugLog.guard("layout report", BuildTab.report);
         DebugLog.guard("calculation", BuildTab.tick);
+        DebugLog.guard("fight log", FightLog.tick);
         DebugLog.guard("test mode", () -> TestMode.tick(instance));
 
         DebugLog.flush();

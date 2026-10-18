@@ -17,6 +17,9 @@ class Combat {
     public var selfHeal = 0.0;
     public var allyHeal = 0.0;
     public var ok = false;
+    /** Every damage/heal/shield result in the order of the fight (FightLog writes it). */
+    public var hits:Array<Dynamic> = [];
+    public var startTime = 0.0;
 
     public function new(hero:Dynamic) {
         try read(hero) catch (e:Dynamic) DebugLog.error("combat record", e);
@@ -31,6 +34,7 @@ class Combat {
         var now = start;
         try now = G.num(G.field(G.call("st.State", "get_time", [hero]), "serverNow")) catch (_:Dynamic) {}
         duration = (inCombat ? now : end) - start;
+        startTime = start;
         var from = "current fight";
         if (G.len(list) == 0 || duration < 3) {
             // the last finished fight of the history
@@ -40,6 +44,7 @@ class Combat {
                 var last = G.at(hist, n - 1);
                 list = G.field(last, "damages");
                 duration = G.num(G.field(last, "duration"));
+                startTime = G.num(G.field(last, "startTime"));
                 from = "history #" + (n - 1);
             }
         }
@@ -60,6 +65,13 @@ class Combat {
             var r = bySkill.get(id);
             if (r == null) { r = {dmg: 0, selfHeal: 0, allyHeal: 0, hits: 0, crits: 0}; bySkill.set(id, r); }
             r.hits++;
+            var rec:Dynamic = {i: i, skill: id, kind: kind, amount: amount, crit: critical, target: G.str(G.field(G.field(target, "inf"), "id"))};
+                        // st.skill.DamageResult.get_isPhysical / get_isMagic
+            try {
+                if (G.call("st.skill.DamageResult", "get_isPhysical", [d]) == true) Reflect.setField(rec, "damageType", "physical");
+                else if (G.call("st.skill.DamageResult", "get_isMagic", [d]) == true) Reflect.setField(rec, "damageType", "magical");
+            } catch (_:Dynamic) {}
+            hits.push(rec);
             if (critical) r.crits++;
             if (kind == "Damage") { r.dmg += amount; dmg += amount; }
             else if (kind == "Heal" || kind == "Shield") {
