@@ -298,6 +298,14 @@ class BuildTab {
         else Ui.button(left, bodyFont, Texts.save(), 14, false, () -> {
             var slot = State.active >= 0 ? State.active : 0;
             DebugLog.line("click: save to template " + (slot + 1));
+            saveToTemplate(slot);
+        }, width);
+        statusText = status != "" ? Ui.text(left, bodyFont, status, COLOR_NOTE, 14, width) : null;
+        DebugLog.guard("draw: infusions", () -> Views.infusions(left, G.call("ui.BaseElement", "get_myHero", [window]), bodyFont, headFont, width));
+    }
+
+    /** Saves the result shown (else the questionnaire) to a template: the "Save" button. */
+    public static function saveToTemplate(slot:Int):Void {
             var r = Views.result;
             if (r == null) State.saveTemplate(slot);
             else {
@@ -314,10 +322,7 @@ class BuildTab {
                     [for (s in [0, 1]) r.eval.weaponSkills.exists(s) ? r.eval.weaponSkills.get(s).copy() : []]);
             }
             status = Texts.savedTo(slot);
-            draw();
-        }, width);
-        statusText = status != "" ? Ui.text(left, bodyFont, status, COLOR_NOTE, 14, width) : null;
-        DebugLog.guard("draw: infusions", () -> Views.infusions(left, G.call("ui.BaseElement", "get_myHero", [window]), bodyFont, headFont, width));
+            if (content != null && window != null && isOurs(window)) draw();
     }
 
     static var pendingReport = false;

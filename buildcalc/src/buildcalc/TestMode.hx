@@ -17,6 +17,7 @@ package buildcalc;
  *    fresh:false: a variant of the last result valued as it is). The answer comes when the calculation is done.
  *  - followLast {priorities, ranged, ideal}: calculate again with the talents, runes and skills of the last result of
  *    this questionnaire as the worn ones (the player followed every talent/rune recommendation).
+ *  - saveTemplate {slot:0..2}: saves the result shown to a template (as the "Save" button).
  *  - template {slot:0..2}: opens a template in the window (as its button).
  *  - tooltip {slot} / hideTooltip: the game's tooltip of an item cell of the calculator, as when the mouse is on it.
  *  - screenshot {file}: the game's 2D scene (all its windows) saved as a PNG in the test folder.
@@ -95,6 +96,10 @@ class TestMode {
                 State.save();
                 if (!BuildTab.startCalc(hero, s, opts)) { answer({id: id, cmd: name, ok: false, error: "the calculation did not start (see the log)"}); return; }
                 waiting = {id: id, cmd: name};
+            case "saveTemplate":
+                var slot = Std.int(Reflect.field(cmd, "slot"));
+                BuildTab.saveToTemplate(slot);
+                answer({id: id, cmd: name, ok: true, template: State.templates[slot]});
             case "template":
                 var slot = Std.int(Reflect.field(cmd, "slot"));
                 BuildTab.openTemplate(slot);

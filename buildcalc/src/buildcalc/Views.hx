@@ -383,9 +383,10 @@ class Views {
             parts.push(Texts.infusionItems(name != "" ? name : id, n));
         }
         Ui.text(parent, headFont, result != null || fromTemplate ? Texts.infusionRecommended() : Texts.infusionNow(), 0x7A4E2E, 16, width);
-        if (fromTemplate) return;
         if (parts.length == 0) Ui.text(parent, font, Texts.noInfusions(), 0x5A3E2B, 12, width);
         else for (p in parts) Ui.text(parent, font, p, 0x5A3E2B, 12, width);
+        // a template: its sets only (it was returned before the list: the template's infusions were not shown)
+        if (fromTemplate) return;
         // how many items could carry one
         var can = 0, done = 0;
         for (s in Items.SLOTS) {
@@ -489,6 +490,29 @@ class Views {
     /** For the hooks: is this one of the arsenal items shown (taken as worn in the arsenal by the game's tooltip)? */
     public static function shownInArsenal(item:Dynamic):Bool return item != null && arsenalShown.indexOf(item) >= 0;
 
+    static function ownItem(e:State.TemplateItem, hero:Dynamic):Dynamic {
+        function fits(it:Dynamic):Bool {
+            if (it == null || G.str(G.field(G.field(it, "inf"), "id")) != e.id) return false;
+            return e.upgrade == null || Std.int(G.num(G.field(it, "upgradeLevel"))) == e.upgrade;
+        }
+        var worn = GameData.equipped(hero, e.slot);
+        if (fits(worn)) return worn;
+        for (s in Items.SLOTS) { var w = GameData.equipped(hero, s); if (fits(w)) return w; }
+        if (Sources.ownItems.length == 0) Sources.build(hero);
+        for (it in Sources.ownItems) if (fits(it)) return it;
+        return null;
+    }
+
+    /** A saved id as the game's own string (its record's id in Data.<sheet>), else as saved. */
+    static function gameId(sheet:String, id:String):Dynamic {
+        try {
+            var rec = G.call("haxe.ds.StringMap", "get", [G.field(GameData.data(sheet), "byId"), id]);
+            var gid:Dynamic = rec == null ? null : G.field(rec, "id");
+            if (gid != null) return gid;
+        } catch (_:Dynamic) {}
+        return id;
+    }
+
     /** The hero of the window being drawn (for texts made without it at hand). */
     static var lastHero:Dynamic = null;
 
@@ -571,6 +595,26 @@ class Views {
     /** The item of a template entry, created by the game (st.Item.create) with the saved level, rarity, upgrade, augments and infusion. */
     static function templateItem(e:State.TemplateItem, hero:Dynamic):Dynamic {
         if (e == null) return null;
+        // one of the hero's own items: the real item itself when the hero still has it (worn first, then the bag, mail,
+        // bank), not one made again from the data at the hero's level
+        if (e.own == true) {
+            var real = ownItem(e, hero);
+            if (real != null) {
+                var inf = e.infusion == null ? "" : e.infusion;
+                if (inf == G.str(G.field(real, "infusion"))) return real;
+                // the template infuses it again: a copy with the new infusion (the real item is not touched)
+                var k = "own|" + haxe.Json.stringify(e);
+                if (templateItems.exists(k)) return templateItems.get(k);
+                var copy:Dynamic = null;
+                try {
+                    copy = G.call("st.Item", "clone", [real, null]);
+                    G.call("st.item.Gear", "set_infusion", [copy, inf == "" ? null : gameId("skill", inf)]);
+                    if (e.bonus != null && e.bonus != "") G.call("st.item.Gear", "set_infusionBonusStat", [copy, gameId("attribute", e.bonus)]);
+                } catch (err:Dynamic) DebugLog.error("template own item " + e.id, err);
+                templateItems.set(k, copy != null ? copy : real);
+                return copy != null ? copy : real;
+            }
+        }
         var key = haxe.Json.stringify(e);
         if (templateItems.exists(key)) return templateItems.get(key);
         var item:Dynamic = null;
@@ -581,9 +625,24 @@ class Views {
             item = G.callStatic("st.Item", "create", [e.id, drop]);
             if (item != null && Items.isGear(item)) {
                 if (e.upgrade != null && e.upgrade > 0) G.call("st.item.Gear", "set_upgradeLevel", [item, e.upgrade]);
-                if (e.augs != null) Items.setSlots(item, [for (a in e.augs) a]);
-                if (e.infusion != null && e.infusion != "") G.call("st.item.Gear", "set_infusion", [item, e.infusion]);
-                if (e.bonus != null && e.bonus != "") G.call("st.item.Gear", "set_infusionBonusStat", [item, e.bonus]);
+                // the augments by the game's own id strings (its records' ids): with the saved strings the game's tooltip
+                // found the augment but not its attributes ("Cursed Gift" without its -16 / +16)
+                // the slot list is copied from a worn item's (taken during a calculation; a template opened before any
+                // calculation had none and its augments were dropped)
+                if (Items.slotsTemplate == null) for (sl in Items.SLOTS) {
+                    var w = GameData.equipped(hero, sl);
+                    if (w != null && G.field(w, "slots") != null) { Items.slotsTemplate = G.field(w, "slots"); break; }
+                }
+                if (e.augs != null) {
+                    var byId = G.field(GameData.data("item"), "byId");
+                    Items.setSlots(item, [for (a in e.augs) {
+                        var rec = G.call("haxe.ds.StringMap", "get", [byId, a]);
+                        var gid:Dynamic = rec == null ? null : G.field(rec, "id");
+                        gid != null ? gid : a;
+                    }]);
+                }
+                if (e.infusion != null && e.infusion != "") G.call("st.item.Gear", "set_infusion", [item, gameId("skill", e.infusion)]);
+                if (e.bonus != null && e.bonus != "") G.call("st.item.Gear", "set_infusionBonusStat", [item, gameId("attribute", e.bonus)]);
             }
         } catch (err:Dynamic) DebugLog.error("template item " + e.id, err);
         templateItems.set(key, item);
