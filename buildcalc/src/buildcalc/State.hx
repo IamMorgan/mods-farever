@@ -18,10 +18,27 @@ typedef Template = {
     @:optional var skills:Array<{id:String, runes:Array<String>}>;
     /** The recommended infusion sets: infusion id and number of items. */
     @:optional var infusions:Array<{id:String, count:Int}>;
+    /** The weapon skills in the hero's slots: [main weapon's, arsenal weapon's]. */
+    @:optional var weaponSkills:Array<Array<String>>;
 }
 
-/** An item of a template: enough to show it as calculated (its level, upgrade, augments, infusion). */
-typedef TemplateItem = {slot:Int, id:String, ?level:Int, ?rarity:String, ?upgrade:Int, ?augs:Array<String>, ?infusion:String, ?bonus:String};
+/** The last calculation: the questionnaire and the build it gave (the next calculation starts from it too). */
+typedef LastResult = {
+    var settings:Settings;
+    var savedAt:String;
+    var build:Array<TemplateItem>;
+    @:optional var talents:Array<{id:String, rank:Int}>;
+    @:optional var skills:Array<{id:String, runes:Array<String>}>;
+    /** Optimizer.MODEL_VERSION it was valued with: a result of an older model is not a start (it may be wrong now). */
+    @:optional var model:Int;
+}
+
+/**
+ * An item of a template: enough to show it as calculated. `lootLevel` is the level it dropped at (st.item.Gear.level,
+ * what st.Item.create takes); templates saved before kept `level` = st.Item.getLevel (item level incl. upgrades): ignored.
+ * `own`: one of the hero's real items (worn or owned), not one created from the game's data.
+ */
+typedef TemplateItem = {slot:Int, id:String, ?lootLevel:Int, ?own:Bool, ?rarity:String, ?upgrade:Int, ?augs:Array<String>, ?infusion:String, ?bonus:String};
 
 /**
  * What the player chose in the calculator and the three templates, kept in
@@ -41,7 +58,22 @@ class State {
      * dummy in the world tells its armour): {armor, magicArmor, magicReduction, resilience, taken, level}.
      */
     public static var dummy:Dynamic = null;
+    /**
+     * The last result of each questionnaire (priorities, melee/ranged, ideal/own): a calculation with other priorities
+     * does not take the place of this one's (with one place only, "Healing: Medium" wiped the result of "Healing: Low"
+     * and the next "Low" calculation started from the worn build again — other talents came out).
+     */
+    public static var lasts:Array<LastResult> = [];
+
+    static function settingsKey(s:Settings):String return s.priorities.join(",") + "|" + s.ranged + "|" + s.ideal;
+
+    /** The last result for this questionnaire (null: none). */
+    public static function lastFor(s:Settings):Null<LastResult> {
+        for (l in lasts) if (l.settings != null && settingsKey(l.settings) == settingsKey(s)) return l;
+        return null;
+    }
     static var loaded = false;
+    static var idRe = ~/^[A-Za-z0-9_]+$/;
 
     public static function defaults():Settings return {priorities: [3, 1, 1, 0], ranged: false, ideal: true};
 
@@ -75,50 +107,88 @@ class State {
             if (Std.isOfType(list, Array)) for (i in 0...TEMPLATES) {
                 var t:Dynamic = (list : Array<Dynamic>)[i];
                 if (t == null) { templates[i] = null; continue; }
-                var b:Dynamic = Reflect.field(t, "build");
-                function str(v:Dynamic):String return v == null ? null : Std.string(v);
-                function int(v:Dynamic):Null<Int> return Std.isOfType(v, Int) || Std.isOfType(v, Float) ? Std.int(v) : null;
-                var build:Array<TemplateItem> = Std.isOfType(b, Array) ? [for (e in (b : Array<Dynamic>)) {
-                    var ag:Dynamic = Reflect.field(e, "augs");
-                    ({slot: Std.int(Reflect.field(e, "slot")), id: Std.string(Reflect.field(e, "id")), level: int(Reflect.field(e, "level")),
-                        rarity: str(Reflect.field(e, "rarity")), upgrade: int(Reflect.field(e, "upgrade")),
-                        augs: Std.isOfType(ag, Array) ? [for (x in (ag : Array<Dynamic>)) Std.string(x)] : null,
-                        infusion: str(Reflect.field(e, "infusion")), bonus: str(Reflect.field(e, "bonus"))} : TemplateItem);
-                }] : null;
+                var build = parseBuild(Reflect.field(t, "build"));
                 var inf:Dynamic = Reflect.field(t, "infusions");
                 var infusions = Std.isOfType(inf, Array) ? [for (e in (inf : Array<Dynamic>)) {id: Std.string(Reflect.field(e, "id")), count: Std.int(Reflect.field(e, "count"))}] : null;
-                var tl:Dynamic = Reflect.field(t, "talents");
-                var talents = Std.isOfType(tl, Array) ? [for (e in (tl : Array<Dynamic>)) {id: Std.string(Reflect.field(e, "id")), rank: Std.int(Reflect.field(e, "rank"))}] : null;
+                var talents = parseTalents(Reflect.field(t, "talents"));
                 var sg:Dynamic = Reflect.field(t, "sigils");
-                var sigils = Std.isOfType(sg, Array) ? [for (e in (sg : Array<Dynamic>)) Std.string(e)] : null;
-                var sk:Dynamic = Reflect.field(t, "skills");
-                var skills = Std.isOfType(sk, Array) ? [for (e in (sk : Array<Dynamic>)) {
-                    var r:Dynamic = Reflect.field(e, "runes");
-                    {id: Std.string(Reflect.field(e, "id")), runes: Std.isOfType(r, Array) ? [for (x in (r : Array<Dynamic>)) Std.string(x)] : []};
-                }] : null;
+                // templates saved before the fix of GameData.idOf hold "{bytes : ???, length : 21}": not an id, dropped
+                var sigils = Std.isOfType(sg, Array) ? [for (e in (sg : Array<Dynamic>)) if (Std.isOfType(e, String) && idRe.match(e)) Std.string(e)] : null;
+                var skills = parseSkills(Reflect.field(t, "skills"));
+                var ws:Dynamic = Reflect.field(t, "weaponSkills");
+                var weaponSkills = Std.isOfType(ws, Array) ? [for (e in (ws : Array<Dynamic>)) Std.isOfType(e, Array) ? [for (x in (e : Array<Dynamic>)) Std.string(x)] : []] : null;
                 templates[i] = {settings: valid(Reflect.field(t, "settings")), savedAt: Std.string(Reflect.field(t, "savedAt")), build: build,
-                    talents: talents, sigils: sigils, skills: skills, infusions: infusions};
+                    talents: talents, sigils: sigils, skills: skills, infusions: infusions, weaponSkills: weaponSkills};
             }
             dummy = Reflect.field(data, "dummy");
+            // "lasts": one per questionnaire; "last": the single one kept before
+            var ls:Dynamic = Reflect.field(data, "lasts");
+            var list:Array<Dynamic> = Std.isOfType(ls, Array) ? ls : [];
+            var l1:Dynamic = Reflect.field(data, "last");
+            if (l1 != null) list.push(l1);
+            lasts = [];
+            for (l in list) {
+                var lb = parseBuild(Reflect.field(l, "build"));
+                if (lb == null) continue;
+                var r:LastResult = {settings: valid(Reflect.field(l, "settings")), savedAt: Std.string(Reflect.field(l, "savedAt")), build: lb,
+                    talents: parseTalents(Reflect.field(l, "talents")), skills: parseSkills(Reflect.field(l, "skills")),
+                    model: int(Reflect.field(l, "model"))};
+                if (lastFor(r.settings) == null) lasts.push(r);
+            }
             var a:Dynamic = Reflect.field(data, "active");
             active = Std.isOfType(a, Int) && a >= 0 && a < TEMPLATES && templates[a] != null ? a : -1;
             DebugLog.line("state: loaded " + haxe.Json.stringify(data));
         } catch (e:Dynamic) DebugLog.error("state: load", e);
     }
 
+    static function str(v:Dynamic):String return v == null ? null : Std.string(v);
+    static function int(v:Dynamic):Null<Int> return Std.isOfType(v, Int) || Std.isOfType(v, Float) ? Std.int(v) : null;
+
+    static function parseBuild(b:Dynamic):Array<TemplateItem> {
+        return Std.isOfType(b, Array) ? [for (e in (b : Array<Dynamic>)) {
+            var ag:Dynamic = Reflect.field(e, "augs");
+            ({slot: Std.int(Reflect.field(e, "slot")), id: Std.string(Reflect.field(e, "id")), lootLevel: int(Reflect.field(e, "lootLevel")), own: Reflect.field(e, "own") == true,
+                rarity: str(Reflect.field(e, "rarity")), upgrade: int(Reflect.field(e, "upgrade")),
+                augs: Std.isOfType(ag, Array) ? [for (x in (ag : Array<Dynamic>)) Std.string(x)] : null,
+                infusion: str(Reflect.field(e, "infusion")), bonus: str(Reflect.field(e, "bonus"))} : TemplateItem);
+        }] : null;
+    }
+
+    static function parseTalents(tl:Dynamic):Array<{id:String, rank:Int}> {
+        return Std.isOfType(tl, Array) ? [for (e in (tl : Array<Dynamic>)) {id: Std.string(Reflect.field(e, "id")), rank: Std.int(Reflect.field(e, "rank"))}] : null;
+    }
+
+    static function parseSkills(sk:Dynamic):Array<{id:String, runes:Array<String>}> {
+        return Std.isOfType(sk, Array) ? [for (e in (sk : Array<Dynamic>)) {
+            var r:Dynamic = Reflect.field(e, "runes");
+            {id: Std.string(Reflect.field(e, "id")), runes: Std.isOfType(r, Array) ? [for (x in (r : Array<Dynamic>)) Std.string(x)] : []};
+        }] : null;
+    }
+
+    /** Keeps the result of a calculation done with the questionnaire of now. */
+    public static function setLast(s:Settings, build:Array<TemplateItem>, talents:Array<{id:String, rank:Int}>, skills:Array<{id:String, runes:Array<String>}>,
+            model:Int):Void {
+        var r:LastResult = {settings: copy(s), savedAt: Date.now().toString(), build: build, talents: talents, skills: skills, model: model};
+        lasts = [for (l in lasts) if (settingsKey(l.settings) != settingsKey(s)) l];
+        lasts.unshift(r);
+        // the 24 questionnaires used last are kept
+        if (lasts.length > 24) lasts = lasts.slice(0, 24);
+        save();
+    }
+
     public static function save():Void {
         try {
             if (!sys.FileSystem.exists(DIR)) sys.FileSystem.createDirectory(DIR);
-            var text = haxe.Json.stringify({settings: settings, templates: templates, active: active, dummy: dummy}, null, "  ");
+            var text = haxe.Json.stringify({settings: settings, templates: templates, active: active, dummy: dummy, lasts: lasts}, null, "  ");
             sys.io.File.saveContent(PATH, text);
             DebugLog.line("state: saved " + StringTools.replace(text, "\n", " "));
         } catch (e:Dynamic) DebugLog.error("state: save", e);
     }
 
     public static function saveTemplate(slot:Int, ?build:Array<TemplateItem>, ?talents:Array<{id:String, rank:Int}>, ?sigils:Array<String>,
-            ?skills:Array<{id:String, runes:Array<String>}>, ?infusions:Array<{id:String, count:Int}>):Void {
+            ?skills:Array<{id:String, runes:Array<String>}>, ?infusions:Array<{id:String, count:Int}>, ?weaponSkills:Array<Array<String>>):Void {
         templates[slot] = {settings: copy(settings), savedAt: Date.now().toString(), build: build, talents: talents, sigils: sigils, skills: skills,
-            infusions: infusions};
+            infusions: infusions, weaponSkills: weaponSkills};
         active = slot;
         save();
     }

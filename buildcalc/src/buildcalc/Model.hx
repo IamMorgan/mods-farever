@@ -287,13 +287,10 @@ class Model {
      */
     public function infusionSig(b:Build):String {
         var parts = [for (id => n in infusionCounts(b)) id + "x" + n];
-        for (slot => c in b.items) if (c != null && !c.real) {
-            var inf = b.infusion.get(slot);
-            var stat = b.bonus.get(slot);
-            if (c.infusable && inf != null && inf != "" && stat != null && bonusActive(c, inf)) {
-                var a = bonusAffix(c, inf, stat);
-                if (a != null) parts.push("+" + a.kind + ":" + a.attr + ":" + a.val * (factor.exists(slot) ? factor.get(slot) : 1.0));
-            }
+        for (slot => c in b.items) if (c != null) {
+            var a = addedBonus(b, slot, c);
+            if (a != null) parts.push("+" + a.kind + ":" + a.attr + ":" + a.val * (factor.exists(slot) ? factor.get(slot) : 1.0));
+            if (reinfused(b, slot, c) && c.ownBonus != null) parts.push("-" + c.key);
         }
         parts.sort((x, y) -> x < y ? -1 : (x > y ? 1 : 0));
         return parts.join(",");
@@ -370,31 +367,114 @@ class Model {
         return out;
     }
 
-    /** The infusion bonus affix a created item would have with this attribute (st.item.Gear.getInfusionBonusAffix). */
-    public function bonusAffix(c:Candidate, infusion:String, stat:String):Affix {
-        var key = c.id + "|" + stat;
+    /** Bonus attributes an infusion can give (HInfusion.getInfusionBonusAptitude); set by the optimizer. */
+    public var bonusStats:Array<String> = [];
+
+    /** A real item that the build gives another infusion (the player infuses it again). */
+    public function reinfused(b:Build, slot:Int, c:Candidate):Bool {
+        return c.real && c.infusable && b.infusion.exists(slot) && b.infusion.get(slot) != c.infusion;
+    }
+
+    /**
+     * The infusion bonus attribute of the item in this slot: the one chosen for it; a real item infused again keeps its
+     * own attribute, or takes the first one if it had none (the player picks it when infusing).
+     */
+    public function bonusOf(b:Build, slot:Int, c:Candidate):String {
+        if (b.bonus.exists(slot) && b.bonus.get(slot) != null) return b.bonus.get(slot);
+        if (!c.real) return null;
+        return c.bonusStat != "" ? c.bonusStat : (bonusStats.length > 0 ? bonusStats[0] : null);
+    }
+
+    /**
+     * The infusion bonus the build adds to the item in this slot (null: none): a created item's with its infusion; a real
+     * item's only when the build infuses it again (its own bonus is already in its affixes, `sums` leaves it out then).
+     */
+    function addedBonus(b:Build, slot:Int, c:Candidate):Affix {
+        if (!c.infusable) return null;
+        if (c.real && !reinfused(b, slot, c)) return null;
+        var inf = b.infusion.get(slot);
+        var stat = bonusOf(b, slot, c);
+        if (inf == null || inf == "" || stat == null || !bonusActive(c, inf)) return null;
+        return bonusAffix(c, inf, stat, c.real ? null : b.augs.get(slot));
+    }
+
+    /** The item the infusion is tried on: a created item itself; for a real item a copy (st.Item.clone), never the item. */
+    function probe(c:Candidate):Dynamic {
+        if (!c.real) return c.item;
+        // made on the game's thread before the search (Optimizer.pools0); never here, in the search thread
+        return c.probe;
+    }
+
+    /** The infusion bonus affix the item would have with this attribute (st.item.Gear.getInfusionBonusAffix). */
+    public function bonusAffix(c:Candidate, infusion:String, stat:String, ?augs:Array<Augment>):Affix {
+        var key = c.key + "|" + stat + "|" + augKey(augs);
         if (bonusCache.exists(key)) return bonusCache.get(key);
         var a:Affix = null;
         try {
-            G.call("st.item.Gear", "set_infusion", [c.item, infusion]);
-            G.call("st.item.Gear", "set_infusionBonusStat", [c.item, stat]);
-            a = Items.affixOf(G.call("st.item.Gear", "getInfusionBonusAffix", [c.item]));
+            // the bonus scales with the item level (st.item.Gear.getInfusionBonusAffix): a created item with its augments
+            if (!c.real) slotItem(c, augs);
+            var item = probe(c);
+            if (item == null) { bonusCache.set(key, null); return null; }
+            G.call("st.item.Gear", "set_infusion", [item, infusion]);
+            G.call("st.item.Gear", "set_infusionBonusStat", [item, stat]);
+            a = Items.affixOf(G.call("st.item.Gear", "getInfusionBonusAffix", [item]));
         } catch (e:Dynamic) DebugLog.error("bonusAffix " + c.id, e);
         bonusCache.set(key, a);
         return a;
     }
 
-    /** Is the infusion bonus of a created item active with this infusion (st.item.Gear.isInfusionBonusActive)? */
+    /** Is the infusion bonus of the item active with this infusion (st.item.Gear.isInfusionBonusActive)? */
     public function bonusActive(c:Candidate, infusion:String):Bool {
-        var key = c.id + "|" + infusion;
+        var key = c.key + "|" + infusion;
         if (activeCache.exists(key)) return activeCache.get(key);
         var on = false;
         try {
-            G.call("st.item.Gear", "set_infusion", [c.item, infusion]);
-            on = G.call("st.item.Gear", "isInfusionBonusActive", [c.item]) == true;
+            var item = probe(c);
+            if (item == null) { activeCache.set(key, false); return false; }
+            G.call("st.item.Gear", "set_infusion", [item, infusion]);
+            // the copy needs an attribute for the game to call the bonus active (isInfusionBonusActive)
+            if (c.real && G.field(item, "infusionBonusStat") == null && bonusStats.length > 0)
+                G.call("st.item.Gear", "set_infusionBonusStat", [item, bonusStats[0]]);
+            on = G.call("st.item.Gear", "isInfusionBonusActive", [item]) == true;
         } catch (e:Dynamic) DebugLog.error("bonusActive " + c.id, e);
         activeCache.set(key, on);
         return on;
+    }
+
+    var createdCache = new Map<String, Array<Affix>>();
+
+    static function augKey(augs:Array<Augment>):String return augs == null ? "" : [for (a in augs) a.id].join(",");
+
+    /** Puts these augments in a created item's slots (its item level depends on them). */
+    function slotItem(c:Candidate, augs:Array<Augment>):Bool {
+        var ids:Array<Dynamic> = augs == null ? [] : [for (a in augs) a.raw];
+        Items.setSlots(c.item, ids);
+        return ids.length == 0 || G.field(c.item, "slots") != null;
+    }
+
+    /**
+     * A created item's affixes with these augments in its slots, as the game counts them (st.item.Gear.getAffixes): the
+     * base affixes grow with the item level, and every augment adds its own iLevel to it (st.item.Gear.getILevel). With
+     * the slots left empty a created item came out weaker than the same item worn (a censer 70 vitality instead of 75).
+     * Without the infusion (its bonus is counted apart: addedBonus).
+     */
+    public function createdAffixes(c:Candidate, augs:Array<Augment>):Array<Affix> {
+        var key = c.key + "|" + augKey(augs);
+        var out = createdCache.get(key);
+        if (out != null) return out;
+        out = null;
+        try {
+            if (slotItem(c, augs)) {
+                G.call("st.item.Gear", "set_infusion", [c.item, null]);
+                out = Items.affixes(c.item);
+            }
+        } catch (e:Dynamic) DebugLog.error("createdAffixes " + c.id, e);
+        if (out == null) { // no slot list to fill: the old way (base affixes + the augments' own)
+            out = c.affixes.copy();
+            if (augs != null) for (aug in augs) for (a in aug.affixes) out.push(a);
+        }
+        createdCache.set(key, out);
+        return out;
     }
 
     /** Permanent attribute bonuses of the build. */
@@ -403,16 +483,13 @@ class Model {
         for (slot => c in b.items) if (c != null) {
             if (slot == Items.OFFHAND && !Items.offhandWorks(b.items.get(0), c)) continue;
             var f = factor.exists(slot) ? factor.get(slot) : 1.0;
-            for (a in c.affixes) s.affix(index, a.kind, a.attr, a.val, f);
-            if (c.real) continue; // its affixes already hold its augments and infusion bonus
-            var augs = b.augs.get(slot);
-            if (augs != null) for (aug in augs) for (a in aug.affixes) s.affix(index, a.kind, a.attr, a.val, f);
-            var inf = b.infusion.get(slot);
-            var stat = b.bonus.get(slot);
-            if (c.infusable && inf != null && inf != "" && stat != null && bonusActive(c, inf)) {
-                var a = bonusAffix(c, inf, stat);
-                if (a != null) s.affix(index, a.kind, a.attr, a.val, f);
-            }
+            // a real item infused again loses its own infusion bonus (the last of its affixes)
+            var own = reinfused(b, slot, c) ? c.ownBonus : null;
+            // a real item's affixes hold its augments; a created one is valued with the build's augments in its slots
+            var list = c.real ? c.affixes : createdAffixes(c, b.augs.get(slot));
+            for (a in list) if (a != own) s.affix(index, a.kind, a.attr, a.val, f);
+            var a = addedBonus(b, slot, c);
+            if (a != null) s.affix(index, a.kind, a.attr, a.val, f);
         }
         for (src in sources(b)) for (a in src.def.affixes) if (src.def.affixActive(a, src.rank, src.runes)) s.affix(index, a.ref, a.attr, a.val, 1.0);
         return s;

@@ -16,7 +16,8 @@ class GameData {
     /** Skill id from a reference that may be a plain id or a record. */
     public static function idOf(ref:Dynamic):String {
         if (ref == null) return "";
-        if (Std.isOfType(ref, String)) return ref;
+        // a string of the game is copied into one of the mod (G.str): kept as it is, haxe.Json wrote it as {bytes, length}
+        if (Std.isOfType(ref, String)) return G.str(ref);
         var id = G.str(G.field(ref, "id"));
         return id;
     }

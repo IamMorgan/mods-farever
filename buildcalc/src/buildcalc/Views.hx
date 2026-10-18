@@ -242,6 +242,8 @@ class Views {
             var ids:Array<String> = [];
             if (result != null) {
                 if (result.eval.weaponSkills.exists(slot)) ids = result.eval.weaponSkills.get(slot);
+            } else if (saved != null && saved.build != null) {
+                ids = templateWeaponSkills(hero, slot);
             } else {
                 var item = GameData.equipped(hero, slot);
                 if (slot == 1) {
@@ -256,13 +258,48 @@ class Views {
             }
             Ui.text(col, font, slot == 0 ? Texts.weaponTitle() : Texts.arsenalTitle(), 0x7A4E2E, 12);
             var row = Ui.flow(col, false, 4);
+            // the weapon whose skills these are: the result's, the template's (made again), else the worn one
+            var weapon:Dynamic = null;
+            var ideal = State.settings.ideal;
+            if (result != null) {
+                var c = result.build.items.get(slot);
+                weapon = c == null ? null : c.item;
+            } else if (saved != null && saved.build != null) {
+                ideal = saved.settings.ideal;
+                for (e in saved.build) if (e.slot == slot) weapon = templateItem(e, hero);
+            } else weapon = GameData.equipped(hero, slot);
             for (id in ids) {
                 var sk = GameData.skill(id);
                 if (sk == null) continue;
-                var heroHas = GameData.skillInstance(hero, id) != null;
-                icon(row, G.field(sk, "gfx"), 28, result != null && !heroHas ? FRAME_NEW : FRAME_ON, 1.0, skillTip(sk, hero, 1, null, []));
+                var inst = GameData.skillInstance(hero, id);
+                var tip = inst != null && weapon != null && G.str(G.field(G.field(weapon, "inf"), "id")) == G.str(G.field(G.field(GameData.equipped(hero, slot), "inf"), "id"))
+                    ? skillTip(sk, hero, 1, null, []) : weaponSkillTip(sk, hero, weapon, ideal);
+                icon(row, G.field(sk, "gfx"), 28, result != null && inst == null ? FRAME_NEW : FRAME_ON, 1.0, tip);
             }
         }
+    }
+
+    /**
+     * The game's tooltip of a weapon skill the hero does not have (ui.TipSkill built with the weapon itself): without a
+     * skill instance Tooltip.fromSkill knows no weapon (BaseSkill.getSourceItem), so the numbers from the weapon's power
+     * were missing. Rank: the one the calculation valued (ideal: Const.Hero.WeaponSkill_MaxRank; else the hero's).
+     */
+    static function weaponSkillTip(sk:Dynamic, hero:Dynamic, weapon:Dynamic, ideal:Bool):Void->Dynamic {
+        var id = G.str(G.field(sk, "id"));
+        return () -> {
+            var rank = 1;
+            try {
+                var progress = G.field(G.call("st.player.HeroSpecialization", "get_player", [G.field(hero, "specialization")]), "progress");
+                rank = Std.int(G.num(G.call("st.player.Progress", "getSkillRank", [progress, sk])));
+            } catch (_:Dynamic) {}
+            if (ideal) try rank = Std.int(Math.max(rank, G.num(G.field(HlxRuntime.resolveStaticField(G.type("Const"), "Hero"), "WeaponSkill_MaxRank")))) catch (_:Dynamic) {}
+            var info = GameData.skillInfo(sk, rank, null, null);
+            var tip:Dynamic = null;
+            try tip = HlxRuntime.constructInstanceByName(G.type("ui.TipSkill"), 6, [info, hero, null, weapon == null ? null : G.field(weapon, "inf"), weapon, null])
+            catch (e:Dynamic) DebugLog.error("weapon skill tooltip " + id, e);
+            if (tip == null) tip = G.callStatic("ui.Tooltip", "fromSkill", [info, hero, null]);
+            return tip;
+        };
     }
 
     /** Name and description of a rune, with its numbers filled in by the game (HText.skillMastery). */
@@ -410,7 +447,11 @@ class Views {
 
     static inline var FRAME_NEW = 0x7FA36B;
 
+    /** The hero of the window being drawn (for texts made without it at hand). */
+    static var lastHero:Dynamic = null;
+
     static function slot(parent:Dynamic, hero:Dynamic, index:Int, size:Int):Void {
+        lastHero = hero;
         var worn = GameData.equipped(hero, index);
         var wornId = worn == null ? "" : G.str(G.field(G.field(worn, "inf"), "id"));
         if (result == null && saved != null && saved.build != null) {
@@ -424,9 +465,9 @@ class Views {
             var f = slotFactor(index);
             var tip = f != 1 && shown != null ? arsenalText(shown, f) : null;
             if (f != 1) arsenalTip = tip;
-            var cell = tip != null ? icon(parent, G.field(inf, "gfx"), size, wornId != id ? FRAME_NEW : FRAME_ON, 1.0, null, tip, wornId != id ? Sources.label(id) : null, labelFont)
-                : icon(parent, G.field(inf, "gfx"), size, wornId != id ? FRAME_NEW : FRAME_ON, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, shown]),
-                    null, wornId != id ? Sources.label(id) : null, labelFont);
+            // the game's own tooltip, the arsenal weapon too (its 40% and arsenal skills: the caption's tooltip)
+            var cell = icon(parent, G.field(inf, "gfx"), size, wornId != id ? FRAME_NEW : FRAME_ON, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, shown]),
+                null, wornId != id ? Sources.label(id) : null, labelFont);
             if (entry.infusion != null && entry.infusion != "") DebugLog.guard("infusion mark", () -> infusionMark(cell, entry.infusion, entry.infusion, size + 4));
             return;
         }
@@ -456,22 +497,22 @@ class Views {
         // every item, the arsenal weapon too, shows the game's own tooltip; what the arsenal gives (its share of the
         // attributes, its skills) is on the caption above the arsenal cell
         if (f != 1) arsenalTip = arsenalText(item, f);
-        // the game's tooltip gives an item its slot's share of attributes (st.Equipment.getAffixFactor) only when the hero
-        // wears it there: an arsenal weapon the hero does not wear in the arsenal shows our text with its 40%
-        var wornHere = worn != null && item == worn;
-        var cell = f != 1 && !wornHere
-            ? icon(parent, G.field(inf, "gfx"), size, frame, 1.0, null, arsenalTip, label, labelFont)
-            : icon(parent, G.field(inf, "gfx"), size, frame, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, item]), null, label, labelFont);
+        // the cell always shows the game's own item tooltip (a weapon the hero does not have too: our plain text there
+        // looked broken); the arsenal share (40%) and its skills are on the caption above the cell
+        var cell = icon(parent, G.field(inf, "gfx"), size, frame, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, item]), null, label, labelFont);
         if (infusion != "" || infusionChanged) DebugLog.guard("infusion mark", () -> infusionMark(cell, infusion, wornInfusion, size + 4));
     }
 
     /** A template entry of the build's item in slot `s`: what is needed to show it again as calculated. */
     public static function templateEntry(b:Model.Build, s:Int, c:Items.Candidate):State.TemplateItem {
         var level:Null<Int> = null, rarity:String = null;
-        try level = Std.int(G.num(G.call("st.Item", "getLevel", [c.item]))) catch (_:Dynamic) {}
+        // the level the item dropped at (st.item.Gear.level, given to st.Item.create), not st.Item.getLevel: that is the item
+        // level / 9 with the upgrades in it, an item created at it came out stronger than the one calculated
+        try level = Std.int(G.num(G.field(c.item, "level"))) catch (_:Dynamic) {}
+        if (level != null && level <= 0) level = null;
         try rarity = G.str(G.field(c.item, "rarity")) catch (_:Dynamic) {}
         var inf = b.infusion.exists(s) ? b.infusion.get(s) : (c.real ? c.infusion : "");
-        return {slot: s, id: c.id, level: level, rarity: rarity == "" ? null : rarity, upgrade: c.upgrade,
+        return {slot: s, id: c.id, lootLevel: level, own: c.real, rarity: rarity == "" ? null : rarity, upgrade: c.upgrade,
             augs: b.augs.exists(s) ? [for (a in b.augs.get(s)) Std.string(a.raw)] : [], infusion: inf == null ? "" : inf,
             bonus: b.bonus.exists(s) ? b.bonus.get(s) : null};
     }
@@ -485,7 +526,7 @@ class Views {
         if (templateItems.exists(key)) return templateItems.get(key);
         var item:Dynamic = null;
         try {
-            var level = e.level != null ? e.level : Std.int(G.num(G.field(hero, "_level")));
+            var level = e.lootLevel != null ? e.lootLevel : Std.int(G.num(G.field(hero, "_level")));
             var drop = {count: 1, flags: null, item: e.id, itemFlags: null, lootLevel: level, lootTableFlags: null, maxRarity: null, minRarity: null,
                 rarity: e.rarity != null ? e.rarity : Items.bestRarity(level)};
             item = G.callStatic("st.Item", "create", [e.id, drop]);
@@ -518,6 +559,43 @@ class Views {
     }
 
     static var labelFont:Dynamic;
+    /**
+     * The weapon skills of a template's weapon in this slot (0 main, 1 arsenal): as saved; a template saved before kept
+     * none, so the weapon's own (main: its weapon skills; arsenal: the ones it may give there, Weapon.isValidArsenalSkill),
+     * as many as the hero has slots for — never the skills of the weapon the hero wears now.
+     */
+    static function templateWeaponSkills(hero:Dynamic, slot:Int):Array<String> {
+        if (saved.weaponSkills != null && saved.weaponSkills.length > slot) return saved.weaponSkills[slot];
+        var entry:State.TemplateItem = null;
+        for (e in saved.build) if (e.slot == slot) entry = e;
+        if (entry == null) return [];
+        var inf = G.call("haxe.ds.StringMap", "get", [G.field(GameData.data("item"), "byId"), entry.id]);
+        if (inf == null) return [];
+        // the hero's slots: arsenal (ent.Hero.getNbArsenalSkillSlots), main weapon (Const.Hero.UnlockLevel_WeaponSkillSlots)
+        var max = 0;
+        try {
+            var h = hero != null ? hero : lastHero;
+            if (slot == 1) max = Std.int(G.num(G.call("ent.Hero", "getNbArsenalSkillSlots", [h])));
+            else {
+                var levels = G.field(HlxRuntime.resolveStaticField(G.type("Const"), "Hero"), "UnlockLevel_WeaponSkillSlots");
+                var level = G.num(G.field(h, "_level"));
+                for (i in 0...G.len(levels)) if (G.num(G.at(levels, i)) <= level) max++;
+            }
+        } catch (e:Dynamic) DebugLog.error("template weapon skill slots", e);
+        var out = [];
+        var sk = G.field(inf, "skills");
+        for (i in 0...G.len(sk)) {
+            var id = GameData.idOf(G.field(G.at(sk, i), "skill"));
+            var d = SkillData.get(id);
+            if (d == null) continue;
+            var ok = false;
+            if (slot == 1) try ok = G.callStatic("st.item.Weapon", "isValidArsenalSkill", [inf, id]) == true catch (_:Dynamic) {}
+            else ok = d.type == "WeaponSkill";
+            if (ok && (max <= 0 || out.length < max)) out.push(id);
+        }
+        return out;
+    }
+
     /** The text of the arsenal caption's tooltip, made by slot() for the arsenal weapon. */
     static var arsenalTip:String = null;
 
@@ -538,7 +616,8 @@ class Views {
             var v = Math.round(sums.get(attr) * 10) / 10;
             lines.push((v >= 0 ? "+" : "") + v + " " + attrName(attr));
         }
-        var skills = result != null && result.eval.weaponSkills.exists(1) ? result.eval.weaponSkills.get(1) : [];
+        var skills = result != null ? (result.eval.weaponSkills.exists(1) ? result.eval.weaponSkills.get(1) : [])
+            : (saved != null && saved.build != null ? templateWeaponSkills(null, 1) : []);
         if (skills.length > 0) {
             lines.push(Texts.arsenalTitle() + ":");
             for (id in skills) lines.push("  " + G.str(G.field(G.field(GameData.skill(id), "texts"), "name")));
@@ -556,15 +635,16 @@ class Views {
         return 1;
     }
 
-    public static function equipment(parent:Dynamic, hero:Dynamic, font:Dynamic, width:Int):Void {
+    /** The two columns of equipment slots; the row is as wide as they are (BuildTab measures it for the column width). */
+    public static function equipment(parent:Dynamic, hero:Dynamic, font:Dynamic, width:Int):Dynamic {
         labelFont = font;
         var size = 44;
-        var row = Ui.flow(parent, false, 12, width);
-        G.call("h2d.Flow", "set_horizontalAlign", [row, middle()]);
+        var row = Ui.flow(parent, false, 12);
         var left = Ui.flow(row, true, 8);
         for (i in LEFT) slot(left, hero, i, size);
         var right = Ui.flow(row, true, 8);
         for (i in RIGHT) slot(right, hero, i, size);
+        return row;
     }
 
     /** The weapon cells: main, off-hand (when worn or chosen), arsenal; each with its caption above. */

@@ -44,19 +44,26 @@ class BuildTab {
         DebugLog.line("addTab: done, tabs=" + G.len(tabs) + " name=" + Texts.tabName());
     }
 
-    /** Width available for the panel: the content box once laid out, else the window, else a safe default. */
+    /**
+     * Width of the panel. Measured once (fit): the first drawing is as wide as the window, so the window grows by
+     * exactly what its own edges and paddings add; the panel is then drawn narrower by that much, and stays so.
+     */
     static function panelWidth(window:Dynamic, content:Dynamic):Int {
-        // the room of the tab's content inside the window (measured after the first layout: fit); before that the
-        // window's width less a guess of its edges
         if (contentRoom > 0) return contentRoom;
-        var w = G.num(G.field(window, "maxWidth"));
+        var w = windowWidth > 200 ? windowWidth : G.num(G.field(window, "maxWidth"));
         if (w < 200) w = G.num(G.field(window, "calculatedWidth"));
         if (w < 200) w = 1200;
-        return Std.int(w) - 80;
+        return Std.int(w);
     }
 
-    /** Width of the tab's content inside the profile window (window width less the content's edges), once measured. */
+    /** Width of the panel that keeps the profile window as wide as with the game's own tabs (0: not measured yet). */
     static var contentRoom = 0;
+    /** The width is measured: the panel is drawn at once with it (no redrawing, nothing jumps). */
+    static var widthSettled = false;
+    static var fitTries = 0;
+    /** Width the equipment's two columns of slots take (measured; the column is no wider, no room left on its right). */
+    static var equipNatural = 0;
+    static var equipRow:Dynamic = null;
     /** Width of the profile window with the game's own tabs. */
     static var windowWidth = 0.0;
 
@@ -105,13 +112,18 @@ class BuildTab {
         var gap = 16;
         // left: the questionnaire; right: talents + equipment on top, skills + attributes under them
         var leftW = 300, rightW = width - gap - leftW;
-        var equipW = 150, talentW = rightW - gap - equipW;
+        // the equipment column as wide as its slots, close to the talents: the talents take the rest
+        var equipGap = 8;
+        var equipW = equipNatural > 0 ? equipNatural : 108, talentW = rightW - equipGap - equipW;
         var skillsW = 300, statsW = rightW - gap - skillsW;
         DebugLog.line("draw: width=" + width + " left=" + leftW + " talents=" + talentW + " equipment=" + equipW + " skills=" + skillsW
             + " stats=" + statsW + " settings=" + haxe.Json.stringify(State.settings) + " active=" + State.active);
         built = [];
 
         root = Ui.flow(content, true, 6, width + 2 * margin);
+        // until its width is measured the panel is transparent (it still takes its room, a hidden one would not: h2d.Flow
+        // skips invisible children); it is drawn again once at the right width
+        if (!widthSettled) try HlxRuntime.setField(root, "alpha", 0.0) catch (_:Dynamic) {}
         G.call("h2d.Flow", "set_paddingBottom", [root, 8]);
         G.call("h2d.Flow", "set_paddingLeft", [root, margin]);
         G.call("h2d.Flow", "set_paddingRight", [root, margin]);
@@ -127,7 +139,7 @@ class BuildTab {
         var right = Ui.flow(columns, true, 8, rightW);
         built.push({name: "right", obj: right});
 
-        var top = Ui.flow(right, false, gap, rightW);
+        var top = Ui.flow(right, false, equipGap, rightW);
         var talents = Ui.flow(top, true, 4, talentW);
         built.push({name: "talents", obj: talents});
         Ui.text(talents, headFont, Texts.talents(), COLOR_HEAD, 16, talentW);
@@ -136,7 +148,8 @@ class BuildTab {
         var equip = Ui.flow(top, true, 4, equipW);
         built.push({name: "equipment", obj: equip});
         Ui.text(equip, headFont, Texts.equipment(), COLOR_HEAD, 16, equipW);
-        DebugLog.guard("draw: equipment", () -> Views.equipment(equip, hero, bodyFont, equipW));
+        equipRow = null;
+        DebugLog.guard("draw: equipment", () -> equipRow = Views.equipment(equip, hero, bodyFont, equipW));
 
         var bottom = Ui.flow(right, false, gap, rightW);
         var skillsCol = Ui.flow(bottom, true, 3, skillsW);
@@ -170,18 +183,23 @@ class BuildTab {
             var cpos = G.call("h2d.Object", "localToGlobal", [content, null]);
             var wpos = G.call("h2d.Object", "localToGlobal", [window, null]);
             var offset = G.num(G.field(cpos, "y")) - G.num(G.field(wpos, "y"));
-            // the width: the content starts `left` px from the window's edge and has as much on the right; the panel
-            // takes exactly the room between (drawn again once when it was built for another width)
-            var left = G.num(G.field(cpos, "x")) - G.num(G.field(wpos, "x"));
-            if (windowWidth > 200 && left >= 0 && left < windowWidth / 4) {
-                var room = Std.int(Math.floor(windowWidth - 2 * left));
-                DebugLog.line("fit: window " + Math.round(windowWidth) + " x " + Math.round(windowHeight) + " (now " + G.str(G.field(window, "calculatedWidth"))
-                    + " x " + G.str(G.field(window, "calculatedHeight")) + "), content edge " + Math.round(left) + " px: panel width " + room);
-                if (room > 600 && room != contentRoom) {
-                    contentRoom = room;
-                    draw();
-                    return;
-                }
+            // the width: the window must stay as wide as with the game's own tabs. What it grew by is what the panel is
+            // too wide (its edges and paddings are counted as they are); the equipment column takes its slots' width
+            if (!widthSettled && windowWidth > 200) {
+                var winNow = G.num(G.field(window, "calculatedWidth"));
+                var drawn = panelWidth(window, content);
+                var over = Math.ceil(winNow - windowWidth - 0.01);
+                var eq = equipRow == null ? 0 : Std.int(Math.ceil(G.num(G.field(equipRow, "calculatedWidth"))));
+                var redraw = false;
+                if (eq > 40 && eq != equipNatural) { equipNatural = eq; redraw = true; }
+                if (over > 0) { contentRoom = drawn - over; redraw = true; }
+                else if (contentRoom <= 0) contentRoom = drawn;
+                fitTries++;
+                DebugLog.line("fit: window " + Math.round(windowWidth) + " (now " + Math.round(winNow) + "), panel " + drawn + " -> " + contentRoom
+                    + ", equipment " + equipNatural + (redraw && fitTries < 4 ? ": drawn again" : ": settled"));
+                if (redraw && fitTries < 4) { draw(); return; }
+                widthSettled = true;
+                HlxRuntime.setField(root, "alpha", 1.0);
             }
             var room = windowHeight - offset - 8;
             if (h > 0 && room > 200 && h > room) {
@@ -306,7 +324,8 @@ class BuildTab {
                 }
                 State.saveTemplate(slot, [for (s => c in b.items) if (c != null) Views.templateEntry(b, s, c)], [for (id => rank in b.talents) {id: id, rank: rank}],
                     sigils, [for (id in b.skills) {id: id, runes: b.runes.exists(id) ? b.runes.get(id) : []}],
-                    [for (id => n in r.infusions) {id: id, count: n}]);
+                    [for (id => n in r.infusions) {id: id, count: n}],
+                    [for (s in [0, 1]) r.eval.weaponSkills.exists(s) ? r.eval.weaponSkills.get(s).copy() : []]);
             }
             status = Texts.savedTo(slot);
             draw();
@@ -320,12 +339,23 @@ class BuildTab {
     /** The calculation in progress (null: none); it runs a few milliseconds each frame. */
     static var job:Optimizer = null;
     static var jobStart = 0.0;
+    static var lastFrame = -1.0;
+    static var longestGap = 0.0;
     static var statusText:Dynamic = null;
     static var lastProgress = -1;
 
     /** Each frame: a little of the calculation; the window is drawn again when it is done. */
     public static function tick():Void {
-        if (job == null) return;
+        if (job == null) { lastFrame = -1; return; }
+        // pauses of the game between frames while the calculation runs (it must not stall the game: a stall can cost
+        // the connection to the server)
+        var nowT = haxe.Timer.stamp();
+        if (lastFrame > 0) {
+            var gap = (nowT - lastFrame) * 1000;
+            if (gap > longestGap) longestGap = gap;
+            if (gap > 250) DebugLog.line("calculate: the game paused " + Math.round(gap) + " ms between two frames (calculation stage: " + job.stage + ")");
+        }
+        lastFrame = nowT;
         var finished = false;
         try finished = job.run(6) catch (e:Dynamic) {
             DebugLog.error("calculate", e);
@@ -343,9 +373,17 @@ class BuildTab {
             return;
         }
         var took = Math.round((haxe.Timer.stamp() - jobStart) * 1000);
-        DebugLog.line("calculate: done in " + took + " ms");
+        DebugLog.line("calculate: done in " + took + " ms; longest pause between two frames of the game " + Math.round(longestGap) + " ms");
+        longestGap = 0;
+        lastFrame = -1;
         Views.result = job.result;
         Views.saved = null;
+        // kept as the start of the next calculation with the same questionnaire (Optimizer.seedFromLast)
+        if (job.result != null) DebugLog.guard("keep the last result", () -> {
+            var b = job.result.build;
+            State.setLast(job.settings, [for (s => c in b.items) if (c != null) Views.templateEntry(b, s, c)], [for (id => rank in b.talents) {id: id, rank: rank}],
+                [for (id in b.skills) {id: id, runes: b.runes.exists(id) ? b.runes.get(id).copy() : []}], Optimizer.MODEL_VERSION);
+        });
         job = null;
         lastProgress = -1;
         var r = Views.result;
