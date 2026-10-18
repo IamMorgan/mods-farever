@@ -17,25 +17,45 @@ class FightLog {
     static var seenAt:Array<Float> = [];
     static var fightStart = 0.0;
 
-    /** Each frame (GameApp.update): twice a second looks whether the hero's fight has just ended. */
+    static var lastCount = 0;
+    static var lastChange = 0.0;
+    static var active = false;
+    static var probed = false;
+    static inline var IDLE = 4.0;
+
+    /**
+     * Twice a second: a fight is the stretch in which the results of the hero's combat meter (combatStats.damages) keep
+     * growing; it ends when they stop for IDLE seconds, the list is reset, or the game says the hero left combat.
+     * (The game's isInCombat flag is not set by every target, e.g. a training dummy, so it is only a help.)
+     */
     public static function tick():Void {
         var now = haxe.Timer.stamp();
         if (now < nextCheck) return;
         nextCheck = now + 0.5;
         var hero = GameData.hero();
-        if (hero == null) { wasInCombat = false; return; }
+        if (hero == null) { active = false; return; }
+        var n = G.len(G.field(G.field(hero, "combatStats"), "damages"));
         var inCombat = G.field(hero, "isInCombat") == true;
-        if (wasInCombat && !inCombat) DebugLog.guard("fight log", () -> save(hero));
-        if (inCombat) {
-            if (!wasInCombat) { seenAt = []; fightStart = now; }
-            var n = G.len(G.field(G.field(hero, "combatStats"), "damages"));
+        if (!probed) { probed = true; DebugLog.line("fight log: watching, results " + n + ", in combat " + inCombat); }
+        if (active && n < lastCount) { // the meter was reset: what was there is gone, only the history may still have it
+            DebugLog.guard("fight log", () -> save(hero));
+            active = false;
+        }
+        if (n > lastCount || (n > 0 && !active && n != lastCount)) {
+            if (!active) { active = true; seenAt = []; fightStart = now; DebugLog.line("fight log: fight started, results " + n); }
+            lastChange = now;
             while (seenAt.length < n) seenAt.push(now - fightStart);
+        }
+        lastCount = n;
+        if (active && (now - lastChange > IDLE || (wasInCombat && !inCombat))) {
+            active = false;
+            DebugLog.guard("fight log", () -> save(hero, lastChange - fightStart));
         }
         wasInCombat = inCombat;
     }
 
-    static function save(hero:Dynamic):Void {
-        var c = new Combat(hero);
+    static function save(hero:Dynamic, observed:Float = 0):Void {
+        var c = new Combat(hero, observed);
         if (!c.ok) { DebugLog.line("fight log: no fight to save (too short or empty)"); return; }
         if (seenAt.length == c.hits.length) for (h in c.hits) h.seen = Math.round(seenAt[h.i] * 10) / 10;
         var key = Std.string(c.startTime) + "/" + c.hits.length;
