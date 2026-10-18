@@ -481,6 +481,33 @@ class Sim {
     public var calls = new Map<String, Int>();
     public var heal = new Map<String, Float>();
     var allyHealed = 0.0;
+    /**
+     * Shields on the hero still holding something: a shield counts for healing only by the damage it takes in
+     * (the player's choice) — its size alone is no heal, the dummy hardly hits. `rec`: its line in the log (replay),
+     * `link`: the status it belongs to (it ends with it; a new shield of the same status replaces it), `ally`: an ally
+     * next to the hero would have it too (same damage taken).
+     */
+    var shields:Array<{id:String, left:Float, rec:HitRec, link:Inst, ally:Bool}> = [];
+
+    function addShieldPool(id:String, amount:Float, rec:HitRec, link:Inst, ally:Bool):Void {
+        shields = [for (x in shields) if (!(link != null ? x.link == link : (x.link == null && x.id == id))) x];
+        if (amount > 0) shields.push({id: id, left: amount, rec: rec, link: link, ally: ally});
+    }
+
+    /** Damage taken by the hero goes into its shields first (oldest first); what they take counts as their healing. */
+    function absorb(amount:Float):Void {
+        var i = 0;
+        while (amount > 1e-12 && i < shields.length) {
+            var x = shields[i];
+            var a = Math.min(x.left, amount);
+            x.left -= a;
+            amount -= a;
+            heal.set(x.id, (heal.exists(x.id) ? heal.get(x.id) : 0) + a);
+            if (x.ally) allyHealed += a;
+            if (x.rec != null) x.rec.amount += a;
+            if (x.left <= 1e-12) shields.splice(i, 1) else i++;
+        }
+    }
     public var casts = new Map<String, Int>();
     public var missingLog = new Map<String, Int>();
     var statsCache:StatsView = null;
@@ -646,7 +673,8 @@ class Sim {
                 return Math.max(0, base * Math.max(0, ratio) * r.mult * critF * (1 - env.armorReduction(armor)) * def[1]);
             }
             if (r.kind == 1) return Math.max(0, base * st.get("HealGivenMultiplier") * r.mult * critF);
-            return Math.max(0, base * st.get("ShieldPowerMultiplier"));
+            // a shield: what it absorbed (the damage taken, not its size)
+            return r.amount;
         }
         var vals = [];
         for (r in log) {
@@ -1171,7 +1199,13 @@ class Sim {
                 buffs: buffIndex, tbuffs: heal ? 0 : targetBuffs(target), dyn: e.dynVal > 0 && e.scaling.length == 0, amount: expected});
         var id = inst.info.id;
         if (!heal) damage.set(id, (damage.exists(id) ? damage.get(id) : 0) + amount);
-        else if (target == hero) {
+        else if (target == hero && e.kind == "Shield") {
+            // a shield: held until damage comes (absorb); its log line starts at 0 and grows with what it takes
+            var rec = log.length > 0 ? log[log.length - 1] : null;
+            if (rec != null && rec.inst == inst && rec.e == e) rec.amount = 0 else rec = null;
+            var link:Inst = e.status != "" ? findStatus(target, e.status, null) : (inst.isStatus() ? inst : null);
+            addShieldPool(id, amount, rec, link, s.type != "SelfEffect" && (s.hitFilter == 0 || (s.hitFilter & 2) != 0));
+        } else if (target == hero) {
             this.heal.set(id, (this.heal.exists(id) ? this.heal.get(id) : 0) + amount);
             // a heal that is not only for the hero reaches an ally next to the hero as well (area filter bit 2, or no filter)
             if (s.type != "SelfEffect" && (s.hitFilter == 0 || (s.hitFilter & 2) != 0)) allyHealed += amount;
@@ -1243,6 +1277,7 @@ class Sim {
         if (s.removed) return;
         s.removed = true;
         s.unit.statuses.remove(s);
+        if (s.unit == hero && shields.length > 0) shields = [for (x in shields) if (x.link != s) x];
         if (s.unit == hero) statsDirty = true;
         s.fire("onStop", []);
         dispatchUnit(s.instigator, "onStatusEnd", [s, time - s.start], null);
@@ -1257,6 +1292,7 @@ class Sim {
 
     /** A plain hit `target` takes from `source` (not a skill of the build: it adds no damage or heal of its own). */
     function receiveHit(target:Unit, source:Unit, amount:Float):Void {
+        if (target == hero) absorb(amount);
         var hit = new HitObj();
         hit.set("target", target);
         hit.set("targetUnit", target);
@@ -1506,11 +1542,8 @@ class Sim {
                 // a shield status with an amount: counted as a shield on the hero
                 var u = unitArg(0);
                 if (u == null) return null;
-                applyStatus(u, str(a[1]), inst, 1);
-                if (u == hero) {
-                    var amount = num(a[2]) * statsNow().get("ShieldPowerMultiplier");
-                    heal.set(inst.info.id, (heal.exists(inst.info.id) ? heal.get(inst.info.id) : 0) + amount);
-                }
+                var st = applyStatus(u, str(a[1]), inst, 1);
+                if (u == hero) addShieldPool(inst.info.id, num(a[2]) * statsNow().get("ShieldPowerMultiplier"), null, st, false);
                 return null;
             case "haveShield": var u = unitArg(0); return u != null && findStatus(u, str(a[1]), null) != null;
             case "getStatus": var u = unitArg(0); return u == null ? null : findStatus(u, str(a[1]), Std.isOfType(a[2], Unit) ? a[2] : null);

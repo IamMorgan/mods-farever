@@ -21,6 +21,10 @@ typedef Candidate = {
     var upgrade:Int;
     var real:Bool;               // a real item of the hero (worn or owned): its affixes already hold its augments and infusion bonus
     var realAugs:Array<Dynamic>; // real items: the augments in its slots (Augments.inItem)
+    var key:String;              // unique among candidates: the id (created items), id@n (real items, there may be several)
+    var bonusStat:String;        // real items: the infusion bonus attribute they have ("" none)
+    var ownBonus:Affix;          // real items: their active infusion bonus, the last of `affixes` (null: none)
+    @:optional var probe:Dynamic; // real items: a copy (st.Item.clone) to try other infusions on, the real item is never changed
 }
 
 /** Reads equipment: affixes (with slots, upgrade and infusion bonus, as the game counts them), slots, weapon type. */
@@ -127,11 +131,26 @@ class Items {
         try infusable = G.callStatic("HInfusion", "canBeInfused", [inf]) == true catch (_:Dynamic) {}
         var faction = "";
         try faction = G.str(G.callStatic("HItem", "getFactionOrigin", [inf])) catch (_:Dynamic) {}
-        return {item: item, inf: inf, id: G.str(G.field(inf, "id")), type: type, weapon: weapon, ranged: weapon && isRanged(type),
-            affixes: affixes(item), source: source, skills: skills, aptAtbs: aptitudeAtbs(inf), powerRatio: powerRatio(type),
+        var id = G.str(G.field(inf, "id"));
+        var real = source != "game";
+        var list = affixes(item);
+        // st.item.Gear.getAffixes: the active infusion bonus comes last
+        var ownBonus:Affix = null;
+        if (real) try {
+            if (G.call("st.item.Gear", "isInfusionBonusActive", [item]) == true && list.length > 0) {
+                var b = affixOf(G.call("st.item.Gear", "getInfusionBonusAffix", [item]));
+                var last = list[list.length - 1];
+                if (b != null && last.attr == b.attr && last.kind == b.kind && last.val == b.val) ownBonus = last;
+            }
+        } catch (e:Dynamic) DebugLog.error("infusion bonus " + id, e);
+        return {item: item, inf: inf, id: id, type: type, weapon: weapon, ranged: weapon && isRanged(type),
+            affixes: list, source: source, skills: skills, aptAtbs: aptitudeAtbs(inf), powerRatio: powerRatio(type),
             infusable: infusable, faction: faction, infusion: G.str(G.field(item, "infusion")), upgrade: Std.int(G.num(G.field(item, "upgradeLevel"))),
-            real: source != "game", realAugs: []};
+            real: real, realAugs: [], key: real ? id + "@" + (realCount++) : id,
+            bonusStat: real ? G.str(G.field(item, "infusionBonusStat")) : "", ownBonus: ownBonus};
     }
+
+    static var realCount = 0;
 
     /**
      * Every item of the game the hero could wear (class, level) that `slotOk` puts in some slot and that

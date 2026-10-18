@@ -83,8 +83,17 @@ class Optimizer {
     var finalBuild:Build;
     /** The weights of the score: the player's priorities (3 high … 1 low), "not important" = 0.02 (only breaks ties). */
     var used:Array<Float>;
-    /** Weight of each priority level: not important, low, medium, high. */
-    static var TIER = [0.01, 1.0, 10.0, 100.0];
+    /**
+     * Weight of each priority level: not important, low, medium, high — the agreed TZ (DESIGN.md): High 3, Medium 2,
+     * Low 1; "not important" only breaks ties. (The tiers 100/10/1 made every lower priority worthless: all went to damage.)
+     */
+    static var TIER = [0.01, 1.0, 2.0, 3.0];
+    /**
+     * Unit of the score's thresholds: the sum of the weights (one axis moving its whole range at weight 1 = 1 / unit). A
+     * gain is measured against it, not against the score itself: the score has the worn build in it, so a share of it
+     * changed with what is worn (a rune changed made a +0.99% swap a +1.01% one and the whole build came out other).
+     */
+    public var unit = 1.0;
     /**
      * How far each axis can move: the range between the builds that are best on one axis alone (Prefilter's anchors)
      * and the worn build. An axis counts by the share of its own range a change covers, so a priority means the same
@@ -108,20 +117,73 @@ class Optimizer {
         return sum;
     }
 
-    /** The least each axis below the highest priority should keep (0: none): set at the start of the search. */
+    /** The least an axis must keep (0: none). */
     public var floor:Array<Float> = null;
     static inline var FLOOR_COST = 10.0;
-    /** Share of the start value kept by priority: not important, low, medium, high (high: maximized, no floor). */
-    static var KEEP = [0.0, 0.75, 0.9, 0.0];
+    /** The TZ: a High priority keeps at least 80% of the most its axis can reach (the highest of the anchors). */
+    static inline var HIGH_KEEPS = 0.8;
 
-    public function setFloors(start:Array<Float>):Void {
-        var top = 0;
-        for (w in weights) if (w > top) top = Std.int(w);
-        floor = [for (a in 0...4) {
-            var p = Std.int(Math.max(0, Math.min(3, weights[a])));
-            p < top ? start[a] * KEEP[p] : 0.0;
-        }];
-        DebugLog.line("priorities: floors (kept share of the start build " + start.map(r3).join("/") + "): " + floor.map(r3).join("/"));
+    /**
+     * Floors from what each axis can reach (Prefilter's anchors), not from the build the search starts with: the same
+     * for any worn build, so a change the player made does not move them.
+     */
+    public function setFloors():Void {
+        floor = [for (a in 0...4) weights[a] >= 3 && hi != null ? hi[a] * HIGH_KEEPS : 0.0];
+        DebugLog.line("priorities: floors (High keeps " + Math.round(HIGH_KEEPS * 100) + "% of the most its axis reaches): " + floor.map(r3).join("/"));
+    }
+
+    /**
+     * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2). A last result
+     * valued by another version is not a start for the search (it would keep a build the model of now does not choose).
+     */
+    public static inline var MODEL_VERSION = 2;
+
+    /** The last result for the same questionnaire (null: none). */
+    var last:State.LastResult = null;
+
+    /**
+     * The last recommended build, rebuilt from the candidates of now (null when one of its items cannot be had now).
+     * The search starts from the better of it and the worn build: a recommendation the player followed (a rune, an
+     * item, a talent) does not send the search elsewhere, it ends where it ended before, without that change.
+     */
+    public function seedFromLast():Build {
+        if (last == null || last.build == null) return null;
+        var b = copy(worn);
+        if (last.talents != null) {
+            var t = new Map<String, Int>();
+            for (e in last.talents) if (e.rank > 0) t.set(e.id, e.rank);
+            if (validTalents(t)) b.talents = t;
+        }
+        if (last.skills != null && last.skills.length > 0 && last.skills.length <= Math.max(skillSlots, worn.skills.length)) {
+            var ok = true;
+            for (e in last.skills) if (classSkills.indexOf(e.id) < 0) ok = false;
+            if (ok) {
+                b.skills = [for (e in last.skills) e.id];
+                b.runes = [for (e in last.skills) e.id => e.runes.copy()];
+            }
+        }
+        var bySlot = new Map<Int, State.TemplateItem>();
+        for (e in last.build) bySlot.set(e.slot, e);
+        for (s in Items.SLOTS) {
+            var e = bySlot.get(s);
+            if (e == null) { if (b.items.get(s) != null) place(b, s, null); continue; }
+            var found:Candidate = null;
+            var pool = fullPool(s);
+            if (pool != null) for (c in pool) if (c.id == e.id && c.real == (e.own == true) && (!c.real || e.upgrade == null || c.upgrade == e.upgrade)) {
+                found = c;
+                if (!c.real || c == worn.items.get(s)) break;
+            }
+            if (found == null) {
+                DebugLog.line("search: the last result's " + e.id + " (slot " + s + ") cannot be had now: not a start");
+                return null;
+            }
+            if (b.items.get(s) != found) place(b, s, found);
+            if (found.infusable && e.infusion != null && (!found.real || e.infusion != found.infusion)) {
+                b.infusion.set(s, e.infusion);
+                if (e.bonus != null) b.bonus.set(s, e.bonus);
+            } else if (found.real && e.infusion == found.infusion) { b.infusion.remove(s); b.bonus.remove(s); }
+        }
+        return b;
     }
 
     /** Builds already valued (same items, augments, infusion sets, talents, skills, arsenal): their axes. */
@@ -246,10 +308,18 @@ class Optimizer {
         t0 = haxe.Timer.stamp();
         weights = [for (p in settings.priorities) (p : Float)];
         if (weights[0] + weights[1] + weights[2] + weights[3] <= 0) weights = [1.0, 0, 0, 0];
-        // the priorities are tiers: a higher one comes first (High 100, Medium 10, Low 1 — an axis of a higher priority
-        // moving 10% of its range outweighs one of the next priority moving all of its range); "not important" only
+        // the priorities weigh as the TZ says (High 3, Medium 2, Low 1, each on the range its axis can move): a lower
+        // priority is worth a share of a higher one, it is not given away for any small gain; "not important" only
         // breaks ties (0.01)
         used = [for (w in weights) TIER[Std.int(Math.max(0, Math.min(3, w)))]];
+        unit = 0.0;
+        for (u in used) unit += u;
+        // the last calculation with the same questionnaire: the search also starts from it (see seedFromLast)
+        last = State.lastFor(settings);
+        if (last != null && last.model != MODEL_VERSION) {
+            DebugLog.line("search: the last result (" + last.savedAt + ") was valued by an older model (" + last.model + ", now " + MODEL_VERSION + "): not a start");
+            last = null;
+        }
         // the plan: data first (a part per frame), then the searches
         tasks.push(new Once(() -> { stage = "data"; prepare(); }));
         tasks.push(new ItemScan(this));
@@ -355,7 +425,8 @@ class Optimizer {
         if (weights[3] > 0) { kinds.push("Heal"); kinds.push("Shield"); }
         model.valuedKinds = kinds.length > 0 ? kinds : ["Damage"];
         DebugLog.line("priorities: damage " + weights[0] + ", defense " + weights[1] + ", health " + weights[2] + ", heal " + weights[3]
-            + " -> weights " + used.join("/") + " (score = sum of weight x (1 + (value - worn value) / range of the axis); high 100, medium 10, low 1, not important 0.01)");
+            + " -> weights " + used.join("/") + " (score = sum of weight x (1 + (value - worn value) / range of the axis); high 3, medium 2, low 1, not important 0.01;"
+            + " a change must gain a share of " + r3(unit) + ", the sum of the weights)" + (last != null ? "; the last result (" + last.savedAt + ") is a start too" : ""));
 
         readTree();
         readSkills();
@@ -419,6 +490,16 @@ class Optimizer {
             }
             full.set(s, list);
         }
+        // game objects are made here, on the game's thread: the search thread only reads and fills them. A copy of each
+        // real item that may be infused again (Model.probe) and the slot list of each created item (Model.createdAffixes)
+        var made = 0;
+        for (sl in Items.SLOTS) for (c in full.get(sl)) {
+            if (c.real) {
+                if (c.infusable && c.probe == null) { try c.probe = G.call("st.Item", "clone", [c.item, null]) catch (e:Dynamic) DebugLog.error("probe " + c.id, e); made++; }
+            } else if (G.field(c.item, "slots") == null) Items.setSlots(c.item, []);
+        }
+        for (sl => c in worn.items) if (c != null && c.infusable && c.probe == null) { try c.probe = G.call("st.Item", "clone", [c.item, null]) catch (e:Dynamic) DebugLog.error("probe " + c.id, e); made++; }
+        DebugLog.line("optimizer: " + made + " copies of the hero's items made for trying infusions (on the game's thread)");
         now = model.evaluate(worn).axes;
         DebugLog.line("optimizer: " + all.length + " obtainable items; per slot " + [for (s in Items.SLOTS) s + ":" + full.get(s).length].join(" ") + " (" + ms(t0) + " ms)");
     }
@@ -548,6 +629,7 @@ class Optimizer {
             for (i in 0...G.len(sc)) bonusStats.push(G.str(G.field(G.at(sc, i), "endAtb")));
         } catch (e:Dynamic) DebugLog.error("infusions", e);
         DebugLog.line("infusions: " + infusions.length + " usable; bonus attributes " + bonusStats.join(","));
+        model.bonusStats = bonusStats;
     }
 
     // ---------------------------------------------------------------- search helpers
@@ -596,6 +678,9 @@ class Optimizer {
      * alone in each slot) and the worn build: the range of an axis is its highest value minus its lowest over these
      * builds (at least 5% of its value now, so an axis that can hardly move does not weigh without end).
      */
+    /** The most each axis reaches over the anchors (and the worn build). */
+    public var hi:Array<Float> = null;
+
     public function setSpans(anchors:Array<Array<Float>>):Void {
         var lo = now.copy(), hi = now.copy();
         for (x in anchors) for (a in 0...4) {
@@ -603,6 +688,7 @@ class Optimizer {
             if (x[a] > hi[a]) hi[a] = x[a];
         }
         span = [for (a in 0...4) Math.max(hi[a] - lo[a], 0.05 * Math.max(1e-9, Math.abs(now[a])))];
+        this.hi = hi;
         model.fightSpans = [span[0], span[3]];
         var names = ["damage", "defense", "health", "heal"];
         DebugLog.line("priorities: range of each axis over the builds best on one axis (" + anchors.map(x -> x.map(r3).join("/")).join("; ")
@@ -731,14 +817,27 @@ class Optimizer {
         // only where the game lets the item be worn (st.Equipment.isEquippableOnSlot): a two-handed weapon, fists or
         // halos never go to the off-hand
         if (c != null && !slotFits(c, s)) { badPlace++; return; }
+        // the infusion the slot has now (a worn item carries its own): the new item takes it over, so a swap does not
+        // break an infusion set (6 worn Manfish items: any new item without it dropped the set to 5, rank 3 -> 2, and
+        // looked worse than it is)
+        var old = b.items.get(s);
+        var slotInf = b.infusion.exists(s) ? b.infusion.get(s) : (old != null && old.real ? old.infusion : "");
+        var slotBonus = b.bonus.exists(s) ? b.bonus.get(s) : (old != null && old.real && old.bonusStat != "" ? old.bonusStat : null);
         b.items.set(s, c);
         if (c == null) { b.augs.remove(s); b.infusion.remove(s); b.bonus.remove(s); return; }
         b.augs.set(s, bestAugs(b, s, c));
         if (s == 1) {
             if (c == worn.items.get(1)) b.arsenal = worn.arsenal.copy() else bestArsenal(b);
         }
-        if (c.real || !c.infusable) { b.infusion.remove(s); b.bonus.remove(s); }
-        else if (!b.bonus.exists(s) && bonusStats.length > 0) b.bonus.set(s, bonusStats[0]);
+        if (!c.infusable || (c.real && (c.infusion != "" || slotInf == null || slotInf == ""))) {
+            // an item that cannot be infused; a real item with an infusion of its own (or nothing to take over) keeps its own
+            b.infusion.remove(s);
+            b.bonus.remove(s);
+        } else {
+            if (slotInf != null && slotInf != "") b.infusion.set(s, slotInf);
+            if (slotBonus != null) b.bonus.set(s, slotBonus);
+            else if (!b.bonus.exists(s) && bonusStats.length > 0 && !c.real) b.bonus.set(s, bonusStats[0]);
+        }
     }
 
     public function talentSpent(t:Map<String, Int>):Int {
@@ -906,7 +1005,7 @@ class Optimizer {
                 if (v > bestV) { bestV = v; bestC = c; }
             }
             if (bestC == null) continue;
-            var gain = (bestV / Math.max(1e-9, base) - 1) * 100;
+            var gain = (bestV - base) / unit * 100;
             var need = (s <= 1 ? 1.0 : 0.5);
             var why = gain <= 0 ? "worse" : (gain < need ? "gain under the " + need + "% a swap needs" : "");
             if (why == "") {
@@ -963,6 +1062,8 @@ class Optimizer {
 
     /** Puts the chosen augments, infusion and bonus on the created items, so the game's tooltip shows them. */
     function dress(b:Build):Void {
+        // a real item infused again: the bonus attribute it was valued with (Model.bonusOf) is the one shown and saved
+        for (s => c in b.items) if (c != null && model.reinfused(b, s, c)) b.bonus.set(s, model.bonusOf(b, s, c));
         // worn items with another infusion: a copy of the item (st.Item.clone) carries it, the worn item is not touched
         for (s => c in b.items) if (c != null && c.real && b.infusion.exists(s) && b.infusion.get(s) != c.infusion) {
             try {
@@ -1085,8 +1186,14 @@ class Prefilter implements Task {
             if (ci < list.length) {
                 var c = list[ci++];
                 var trial = Optimizer.copy(s == 0 ? o.worn : base);
+                // a created item takes over the infusion of the worn item it replaces (the set is not broken: see place)
+                var was = trial.items.get(s);
                 trial.items.set(s, c);
                 trial.augs.set(s, c.real ? cast c.realAugs : []);
+                if (!c.real && c.infusable && was != null && was.real && was.infusion != "") {
+                    trial.infusion.set(s, was.infusion);
+                    if (was.bonusStat != "") trial.bonus.set(s, was.bonusStat);
+                }
                 o.model.statsOnly = Optimizer.statsOnlyItem(s, c);
                 var a = o.model.evaluate(trial).axes;
                 o.model.statsOnly = false;
@@ -1176,8 +1283,16 @@ class Search implements Task {
             o.augCache = new Map();
             b = Optimizer.copy(o.worn);
             o.startWeapon(b);
-            if (o.floor == null) o.setFloors(o.axesOf(b));
+            if (o.floor == null) o.setFloors();
             current = o.value(b);
+            var seed = o.seedFromLast();
+            if (seed != null) {
+                var v = o.value(seed);
+                var take = v >= current && o.robustOk(b, seed);
+                DebugLog.line("search: the last result scores " + v + " against " + current + " for the worn build -> "
+                    + (take ? "the search starts from the last result" : "the search starts from the worn build"));
+                if (take) { b = seed; current = v; }
+            }
             start = current;
             before = current - 1;
             t0 = haxe.Timer.stamp();
@@ -1185,7 +1300,7 @@ class Search implements Task {
         }
         if (pass == null) {
             // a round that gained less than 0.2% ends the search (the next would find about nothing)
-            if (passIndex == 0 && (round >= rounds || current <= before + Math.abs(before) * 0.002 || o.overLimit())) {
+            if (passIndex == 0 && (round >= rounds || current <= before + o.unit * 0.002 || o.overLimit())) {
                 DebugLog.line("search " + o.stage + ": score " + start + " -> " + current + ", " + (o.evals - e0) + " builds in "
                     + Math.round((haxe.Timer.stamp() - t0) * 1000) + " ms, " + round + " rounds" + (o.overLimit() ? " (limit)" : ""));
                 onDone(b);
@@ -1232,7 +1347,7 @@ class Pass implements Task {
 
     /** Takes `trial` if it raises the score. */
     function take(trial:Build, v:Float):Bool {
-        if (v > current + Math.max(1e-9, Math.abs(current) * threshold) && o.keepsUnvalued(trial) && o.robustOk(b, trial)) {
+        if (v > current + Math.max(1e-9, o.unit * threshold) && o.keepsUnvalued(trial) && o.robustOk(b, trial)) {
             current = v;
             Optimizer.copyInto(trial, b);
             return true;
