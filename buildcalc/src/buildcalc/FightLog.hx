@@ -9,84 +9,122 @@ package buildcalc;
 class FightLog {
     public static inline var DIR = "hlx/config/buildcalc/fights";
     static inline var MAX_FILES = 200;
-    static var wasInCombat = false;
-    static var nextCheck = 0.0;
-    static var lastKey = "";
+    /** A fight ends when the hero has dealt or received no result for this long (seconds). */
+    static inline var IDLE = 5.0;
+
+    static var hits:Array<Dynamic> = [];
+    static var start = 0.0;
+    static var last = 0.0;
     static var counter = 0;
-    /** When each result of the running fight was first seen (seconds from the fight's start, half a second apart). */
-    static var seenAt:Array<Float> = [];
-    static var fightStart = 0.0;
+    static var nextCheck = 0.0;
+    // diagnostics for the test mode
+    static var seen = 0;
+    static var foreign = 0;
+    static var errors = 0;
+    static var lastSkipped = "";
 
-    static var lastCount = 0;
-    static var lastChange = 0.0;
-    static var active = false;
-    static var probed = false;
-    static inline var IDLE = 4.0;
+    /** Hook ent.Unit.rpcReceiveDamage__impl (instance: the target): every damage result in the world. */
+    public static function damage(target:Dynamic, result:Dynamic):Void {
+        try {
+            if (G.num(G.field(result, "effect")) == 1) return; // heals come through rpcDisplayHeal
+            record(target, result, false);
+        } catch (e:Dynamic) { if (errors++ < 3) DebugLog.error("fight log damage", e); }
+    }
 
-    /**
-     * Twice a second: a fight is the stretch in which the results of the hero's combat meter (combatStats.damages) keep
-     * growing; it ends when they stop for IDLE seconds, the list is reset, or the game says the hero left combat.
-     * (The game's isInCombat flag is not set by every target, e.g. a training dummy, so it is only a help.)
-     */
+    /** Hook ent.Unit.rpcDisplayHeal__impl (instance: the healed unit). */
+    public static function heal(target:Dynamic, result:Dynamic):Void {
+        try record(target, result, true) catch (e:Dynamic) { if (errors++ < 3) DebugLog.error("fight log heal", e); }
+    }
+
+    static function record(target:Dynamic, result:Dynamic, isHeal:Bool):Void {
+        seen++;
+        var hero = GameData.hero();
+        if (hero == null) return;
+        var src = sourceOf(result);
+        if (src != hero) {
+            foreign++;
+            lastSkipped = G.typeName(src) + " -> " + G.typeName(target);
+            return;
+        }
+        var now = haxe.Timer.stamp();
+        // heals (a pet's passive healing) neither start a fight nor keep it going: only damage dealt does
+        if (isHeal && (hits.length == 0 || now - last > IDLE)) return;
+        if (hits.length > 0 && now - last > IDLE) saveFight(hero);
+        if (hits.length == 0) { start = now; DebugLog.line("fight log: fight started"); }
+        if (!isHeal) last = now;
+        var skill = "";
+        try skill = G.str(G.call("st.skill.DamageResult", "get_skillId", [result])) catch (_:Dynamic) {}
+        if (skill == "" || skill == "null") skill = G.str(G.field(G.field(G.field(G.field(result, "ctx"), "skill"), "inf"), "id"));
+        var rec:Dynamic = {t: Math.round((now - start) * 100) / 100, skill: skill == "" ? "?" : skill, kind: isHeal ? "Heal" : "Damage",
+            amount: G.num(G.field(result, "_amount")), crit: G.field(result, "_critical") == true,
+            target: G.str(G.field(G.field(target, "inf"), "id")), self: target == hero};
+        if (!isHeal) {
+            var aff = G.field(result, "affinity");
+            if (aff != null) Reflect.setField(rec, "affinity", G.str(aff));
+            try {
+                if (G.call("st.skill.DamageResult", "get_isPhysical", [result]) == true) Reflect.setField(rec, "damageType", "physical");
+                else if (G.call("st.skill.DamageResult", "get_isMagic", [result]) == true) Reflect.setField(rec, "damageType", "magical");
+            } catch (_:Dynamic) {}
+        }
+        hits.push(rec);
+    }
+
+    /** Who dealt the result: its source unit, a summon or a pet counted for its owner. */
+    static function sourceOf(result:Dynamic):Dynamic {
+        var u:Dynamic = null;
+        try u = G.call("st.skill.DamageResult", "get_source", [result]) catch (_:Dynamic) {}
+        if (u == null) u = G.field(G.field(result, "ctx"), "sourceUnit");
+        for (_ in 0...5) {
+            var owner = G.field(u, "summonOwner");
+            if (owner == null || owner == u) break;
+            u = owner;
+        }
+        return u;
+    }
+
+    /** Each frame: a fight with no results for IDLE seconds is over. */
     public static function tick():Void {
         var now = haxe.Timer.stamp();
         if (now < nextCheck) return;
         nextCheck = now + 0.5;
-        var hero = GameData.hero();
-        if (hero == null) { active = false; return; }
-        var n = G.len(G.field(G.field(hero, "combatStats"), "damages"));
-        var inCombat = G.field(hero, "isInCombat") == true;
-        if (!probed) { probed = true; DebugLog.line("fight log: watching, results " + n + ", in combat " + inCombat); }
-        if (active && n < lastCount) { // the meter was reset: what was there is gone, only the history may still have it
-            DebugLog.guard("fight log", () -> save(hero));
-            active = false;
+        if (hits.length > 0 && now - last > IDLE) {
+            var hero = GameData.hero();
+            DebugLog.guard("fight log", () -> saveFight(hero));
         }
-        if (n > lastCount || (n > 0 && !active && n != lastCount)) {
-            if (!active) { active = true; seenAt = []; fightStart = now; DebugLog.line("fight log: fight started, results " + n); }
-            lastChange = now;
-            while (seenAt.length < n) seenAt.push(now - fightStart);
-        }
-        lastCount = n;
-        if (active && (now - lastChange > IDLE || (wasInCombat && !inCombat))) {
-            active = false;
-            DebugLog.guard("fight log", () -> save(hero, lastChange - fightStart));
-        }
-        wasInCombat = inCombat;
     }
 
-    /** Test mode: what the hero's combat meter holds now; with `write` the fight is saved as it is. */
+    /** Test mode: what has been seen; with `write` the running fight is saved as it is. */
     public static function probe(write:Bool):Dynamic {
-        var hero = GameData.hero();
-        if (hero == null) return {hero: false};
-        var stats = G.field(hero, "combatStats");
-        var out:Dynamic = {hero: true, results: G.len(G.field(stats, "damages")), history: G.len(G.field(hero, "combatDamageHistory")),
-            inCombat: G.field(hero, "isInCombat") == true, start: G.num(G.field(hero, "combatStartTime")), end: G.num(G.field(hero, "combatEndTime")),
-            active: active, tracked: lastCount, files: sys.FileSystem.exists(DIR) ? sys.FileSystem.readDirectory(DIR).length : -1};
-        if (write) { save(hero, 3); out.saved = sys.FileSystem.exists(DIR) ? sys.FileSystem.readDirectory(DIR).length : -1; }
+        var out:Dynamic = {hits: hits.length, seen: seen, foreign: foreign, errors: errors, lastSkipped: lastSkipped,
+            files: sys.FileSystem.exists(DIR) ? sys.FileSystem.readDirectory(DIR).length : -1};
+        if (write) { saveFight(GameData.hero()); out.saved = sys.FileSystem.exists(DIR) ? sys.FileSystem.readDirectory(DIR).length : -1; }
         return out;
     }
 
-    static function save(hero:Dynamic, observed:Float = 0):Void {
-        var c = new Combat(hero, observed);
-        if (!c.ok) { DebugLog.line("fight log: no fight to save (too short or empty)"); return; }
-        if (seenAt.length == c.hits.length) for (h in c.hits) h.seen = Math.round(seenAt[h.i] * 10) / 10;
-        var key = Std.string(c.startTime) + "/" + c.hits.length;
-        if (key == lastKey) return;
-        lastKey = key;
-        var skills = [for (id => r in c.bySkill) {id: id, damage: r.dmg, selfHeal: r.selfHeal, allyHeal: r.allyHeal, hits: r.hits, crits: r.crits,
-            dps: r.dmg / c.duration}];
-        var out:Dynamic = {
-            written: Date.now().toString(),
-            duration: c.duration, damage: c.dmg, dps: c.dmg / c.duration, selfHeal: c.selfHeal, allyHeal: c.allyHeal,
-            hero: describe(hero), skills: skills, hits: c.hits
-        };
+    static function saveFight(hero:Dynamic):Void {
+        var list = hits;
+        hits = [];
+        if (list.length == 0) return;
+        var duration = Math.max(last - start, 0.1);
+        var per = new Map<String, Dynamic>();
+        var dmg = 0.0, selfHeal = 0.0, allyHeal = 0.0;
+        for (h in list) {
+            var r = per.get(h.skill);
+            if (r == null) { r = {id: h.skill, damage: 0.0, selfHeal: 0.0, allyHeal: 0.0, hits: 0, crits: 0}; per.set(h.skill, r); }
+            r.hits++;
+            if (h.crit) r.crits++;
+            if (h.kind == "Damage") { r.damage += h.amount; dmg += h.amount; }
+            else if (h.self) { r.selfHeal += h.amount; selfHeal += h.amount; }
+            else { r.allyHeal += h.amount; allyHeal += h.amount; }
+        }
+        var out:Dynamic = {written: Date.now().toString(), duration: duration, damage: dmg, dps: dmg / duration, selfHeal: selfHeal, allyHeal: allyHeal,
+            hero: describe(hero), skills: [for (r in per) r], hits: list};
         try {
             if (!sys.FileSystem.exists(DIR)) sys.FileSystem.createDirectory(DIR);
             prune();
-            var d = Date.now();
-            var name = "fight_" + DateTools.format(d, "%Y%m%d_%H%M%S") + "_" + (++counter) + ".json";
+            var name = "fight_" + DateTools.format(Date.now(), "%Y%m%d_%H%M%S") + "_" + (++counter) + ".json";
             sys.io.File.saveContent(DIR + "/" + name, haxe.Json.stringify(out));
-            DebugLog.line("fight log: saved " + name + ", " + c.hits.length + " hits over " + Math.round(c.duration * 10) / 10 + " s");
+            DebugLog.line("fight log: saved " + name + ", " + list.length + " results over " + Math.round(duration * 10) / 10 + " s, dps " + Math.round(dmg / duration));
         } catch (e:Dynamic) DebugLog.error("fight log write", e);
     }
 
