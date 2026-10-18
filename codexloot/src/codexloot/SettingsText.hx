@@ -28,6 +28,50 @@ class SettingsText {
         }
     }
 
+    // ---- the Chests tab of the Codex ----
+
+    public static function tabCodex():String return russian ? "Кодекс" : "Codex";
+
+    public static function tabChests():String return russian ? "Сундуки" : "Chests";
+
+    public static function chestsHeader():String return russian ? "Содержимое" : "Contents";
+
+    public static function chestsNothing():String return russian ? "Ни в одном сундуке нет предмета с таким названием." : "No chest contains an item with that name.";
+
+    public static function chestNotSold():String
+        return russian ? "Ни один торговец его не продаёт: в данных игры не сказано, как его получить." : "No merchant sells it: the game's data does not say how to get it.";
+
+    public static function chestSoldBy(npc:String):String return (russian ? "Продаёт: " : "Sold by: ") + npc + ".";
+
+    public static function chestWhere(places:Array<String>):String return (russian ? "Где: " : "Where: ") + places.join(", ") + ".";
+
+    public static function chestPrice(price:Int, currency:String):String return (russian ? "Цена: " : "Price: ") + price + " x " + currency + ".";
+
+    /** "1 предмет", "2 предмета", "5 предметов". */
+    static function ruItems(n:Int):String {
+        var m100 = n % 100, m10 = n % 10;
+        var word = (m100 >= 11 && m100 <= 14) ? "предметов" : (m10 == 1 ? "предмет" : (m10 >= 2 && m10 <= 4 ? "предмета" : "предметов"));
+        return n + " " + word;
+    }
+
+    /** How the chest opens: what it gives, at which level, with which rarity (`rarityName` "" = not limited). */
+    public static function chestHow(loot:ChestMath.ChestLootResult, rarityName:String = ""):String {
+        var parts:Array<String> = [];
+        if (loot.weighted)
+            parts.push(russian ? "При открытии выдаётся один случайный предмет из списка." : "Opening it gives one random item of the list.");
+        else if (loot.maxItems != null)
+            parts.push(russian
+                ? "При открытии предлагаются " + ruItems(loot.maxItems) + " из списка" + (loot.affinity ? " (только для вашего класса)" : "") + ": вы забираете один."
+                : "Opening it offers " + loot.maxItems + " random item" + (loot.maxItems == 1 ? "" : "s") + " of the list" + (loot.affinity ? " (only for your class)" : "") + ": you keep one.");
+        else
+            parts.push(russian ? "При открытии выдаются все предметы из списка." : "Opening it gives all the items of the list.");
+        if (loot.level > 0) parts.push(russian ? "Уровень предметов: " + loot.level + "." : "Item level: " + loot.level + ".");
+        if (rarityName != "") parts.push(russian ? "Редкость: " + rarityName + " или выше." : "Rarity: " + rarityName + " or better.");
+        if (loot.ownedLast) parts.push(russian ? "Уже имеющиеся у вас предметы предлагаются в последнюю очередь." : "Items you already own are offered last.");
+        if (loot.anyClass) parts.push(russian ? "Герой не найден: показаны предметы всех классов." : "No hero found: items of every class are shown.");
+        return parts.join(" ");
+    }
+
     static function tip(text:String):Dynamic return {enabled: true, tooltipText: text};
 
     public static function build(russian:Bool):Dynamic {
@@ -38,6 +82,9 @@ class SettingsText {
         configs.push({key: "unitTags", type: "checkbox", label: t("Boss / Elite / Spark tags in the monster list", "Метки Босс / Элита / Искра в списке монстров"),
             tooltip: tip(t("Writes Boss, Elite or Spark at the bottom of the monster's frame in the list.",
                 "Пишет Босс, Элита или Искра внизу рамки монстра в списке."))});
+        configs.push({key: "chestsTab", type: "checkbox", label: t("Chests tab in the Codex", "Вкладка «Сундуки» в Кодексе"),
+            tooltip: tip(t("Adds a Chests tab to the Codex window: every chest item (Hero Weapon Cache, Chaotic Gear Cache...) with where to get it, its contents and the chance of each item. The Codex tab is the game's own Codex.",
+                "Добавляет в окно Кодекса вкладку «Сундуки»: каждый сундук (Hero Weapon Cache, Chaotic Gear Cache...) с тем, где его взять, содержимым и шансом каждого предмета. Вкладка «Кодекс» — обычный Кодекс игры."))});
         configs.push({key: "lootSearch", type: "checkbox", label: t("Search finds monsters by the name of their loot", "Поиск находит монстров по названию их лута"),
             tooltip: tip(t("Typing in the Codex search keeps the monsters whose name or whose loot (any item, including equipment) contains the text.",
                 "При вводе в поиск Кодекса остаются монстры, у которых имя или любой предмет лута (включая экипировку) содержит введённый текст."))});

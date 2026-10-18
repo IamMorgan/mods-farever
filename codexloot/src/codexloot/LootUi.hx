@@ -2,7 +2,7 @@ package codexloot;
 
 /** Draws on the Codex window: the missing loot buttons, the drop chances and the monster tags. */
 class LootUi {
-    static function percent(p:Float):String {
+    public static function percent(p:Float):String {
         var v = p * 100;
         if (v >= 10) return Std.string(Math.round(v)) + "%";
         if (v >= 1) return Std.string(Math.round(v * 10) / 10) + "%";
@@ -24,12 +24,12 @@ class LootUi {
         return maxLevelCache;
     }
 
-    /** The tooltip of an item. With `level` > 0 the item is created at that level, as a drop of that level would be. */
-    static function tooltip(item:Dynamic, level:Int):Dynamic {
+    /** The tooltip of an item. With `level` > 0 the item is created at that level (and with at least rarity `minRarity`, when set), as a drop of that level would be. */
+    public static function tooltip(item:Dynamic, level:Int, minRarity:String = ""):Dynamic {
         var real:Dynamic = null;
         if (level > 0) {
             try {
-                var drop = {count: 1, flags: null, item: G.str(G.field(item, "id")), itemFlags: null, lootLevel: level, lootTableFlags: null, maxRarity: null, minRarity: null, rarity: null};
+                var drop = {count: 1, flags: null, item: G.str(G.field(item, "id")), itemFlags: null, lootLevel: level, lootTableFlags: null, maxRarity: null, minRarity: minRarity == "" ? null : minRarity, rarity: null};
                 real = G.callStatic("st.Item", "create", [G.str(G.field(item, "id")), drop]);
             } catch (_:Dynamic) { real = null; }
         }
@@ -37,36 +37,32 @@ class LootUi {
     }
 
     /** A Codex button for an item, built the way the game builds them (CodexData.createItemNode), without registering anything. `level` > 0: the tooltip shows the item at that level. */
-    static function makeButton(item:Dynamic, parent:Dynamic, level:Int):Dynamic {
+    public static function makeButton(item:Dynamic, parent:Dynamic, level:Int, minRarity:String = "", clickable:Bool = false, small:Bool = true):Dynamic {
         var node = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("data.CodexNode"), 0, []);
         HlxRuntime.setField(node, "name", G.str(G.field(item, "id")));
         HlxRuntime.setField(node, "data", item);
         HlxRuntime.setField(node, "_icon", G.field(item, "gfx"));
-        HlxRuntime.setField(node, "clickable", false);
+        HlxRuntime.setField(node, "clickable", clickable);
         HlxRuntime.setField(node, "forcedRevealed", true);
         try HlxRuntime.setField(node, "progressThresholds", G.callStatic("st.player.Progress", "getItemProgressThreshold", [item])) catch (_:Dynamic) {}
-        var tip = function():Dynamic return tooltip(item, level);
+        var tip = function():Dynamic return tooltip(item, level, minRarity);
         HlxRuntime.setField(node, "getTooltip", tip);
 
         var button = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("ui.win.codex.CodexButton"), 2, [node, parent]);
         var dom = G.field(button, "dom");
-        try G.call(G.typeName(dom), "addClass", [dom, "small"]) catch (_:Dynamic) {
+        if (small) try G.call(G.typeName(dom), "addClass", [dom, "small"]) catch (_:Dynamic) {
             try G.call(G.typeName(dom), "addClass", [dom, "small", null]) catch (_:Dynamic) {}
         }
         return button;
     }
 
-    static var font:Dynamic;
+    public static var font:Dynamic;
     static var searched:Dynamic;
     static var fontSize:Float = 0;
 
-    /** True when the font has a glyph for `code` (h2d.Font.glyphs). */
+    /** True when the font can draw `code` (h2d.Font.hasChar also looks into the sub fonts the game adds for other alphabets). */
     static function hasGlyph(f:Dynamic, code:Int):Bool {
-        // haxe.ds.IntMap.exists is inlined in HashLink, so ask the font itself: a missing letter gives its default char
-        try {
-            var c = G.call("h2d.Font", "getChar", [f, code]);
-            return c != null && c != G.field(f, "defaultChar");
-        } catch (_:Dynamic) return false;
+        try return G.call("h2d.Font", "hasChar", [f, code]) == true catch (_:Dynamic) return false;
     }
 
     /** True when our font can draw every letter of `text` (else the caller falls back to English). */
@@ -100,10 +96,19 @@ class LootUi {
         return any;
     }
 
-    /** A font for our texts: a font the Codex window already uses (one with Cyrillic if possible), the engine's default font otherwise. */
+    static var lastSearch = 0.0;
+
+    /**
+     * A font for our texts: a font the Codex window already uses (one with Cyrillic if possible), the engine's default font otherwise.
+     * The texts of a window get their fonts a frame after the window is built, so while the font in use cannot draw Cyrillic the
+     * window is searched again (at most every 0.4 s) instead of keeping the default font for good.
+     */
     public static function prepare(sheet:Dynamic, button:Dynamic):Bool {
-        if (font != null && (hasGlyph(font, 0x0411) || searched == sheet)) return true;
-        searched = sheet; // one search per Codex window
+        if (font != null && hasGlyph(font, 0x0411)) return true;
+        var now = haxe.Timer.stamp();
+        if (font != null && now - lastSearch < 0.4) return true;
+        lastSearch = now;
+        searched = sheet;
         var f:Dynamic = null;
         try f = findFont(sheet) catch (_:Dynamic) {}
         if (f == null) try f = findFont(G.field(sheet, "parent")) catch (_:Dynamic) {}
@@ -121,12 +126,12 @@ class LootUi {
     }
 
     /** Scale that gives the font a height of about `px` pixels. */
-    static function scaleFor(px:Float):Float {
+    public static function scaleFor(px:Float):Float {
         var s = fontSize > 0 ? px / fontSize : 2.0;
         return Math.max(0.5, Math.min(4.0, s));
     }
 
-    static function newText(parent:Dynamic, text:String, color:Int, scale:Float):Dynamic {
+    public static function newText(parent:Dynamic, text:String, color:Int, scale:Float):Dynamic {
         var t = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Text"), 2, [font, parent]);
         G.call("h2d.Text", "set_text", [t, text]);
         try G.call("h2d.Text", "set_textColor", [t, color]) catch (_:Dynamic) {}
@@ -135,7 +140,7 @@ class LootUi {
     }
 
     /** Text with a black outline (shifted black copies under the coloured text). */
-    static function outlined(parent:Dynamic, text:String, color:Int, px:Float):Dynamic {
+    public static function outlined(parent:Dynamic, text:String, color:Int, px:Float):Dynamic {
         var box = HlxRuntime.constructInstanceByName(HlxRuntime.resolveType("h2d.Object"), 1, [parent]);
         var s = scaleFor(px);
         for (o in [[-1.0, 0.0], [1.0, 0.0], [0.0, -1.0], [0.0, 1.0], [-1.0, -1.0], [1.0, 1.0]]) {
@@ -203,7 +208,7 @@ class LootUi {
     static var padded:Array<{grid:Dynamic, value:Int}> = [];
 
     /** The Codex panel's scroll bar is drawn over the right edge of the icon grid: keep the icons left of it. */
-    static function keepClearOfScrollBar(icons:Dynamic):Void {
+    public static function keepClearOfScrollBar(icons:Dynamic):Void {
         try {
             var current = Std.int(G.num(G.field(icons, "paddingRight")));
             for (p in padded) if (p.grid == icons) {

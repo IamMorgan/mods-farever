@@ -12,6 +12,8 @@ typedef LootConfig = {
     var levelFilter:Bool;
     /** The Codex search also finds monsters by the names of their loot. */
     var lootSearch:Bool;
+    /** The Chests tab of the Codex window. */
+    var chestsTab:Bool;
     /** Upper bound for the number of icons added to the window. */
     var maxItems:Int;
 }
@@ -30,6 +32,7 @@ class CodexLoot {
         unitTags: true,
         levelFilter: false,
         lootSearch: true,
+        chestsTab: true,
         maxItems: 200
     };
 
@@ -42,13 +45,14 @@ class CodexLoot {
             (_:Dynamic) -> {
                 config = ModConfig.load(HlxRuntime.moduleName(), config);
                 LootSearch.clear();
+                ChestNames.clear();
             }
         );
     }
 
     static var localizedLanguage:String = null;
     /** The local hero (world loot of the hero's class); refreshed every frame. */
-    static var hero:Dynamic;
+    public static var hero:Dynamic;
     static var nextLanguageCheck = 0.0;
 
     /**
@@ -66,6 +70,9 @@ class CodexLoot {
         localizedLanguage = language;
         SettingsText.russian = SettingsText.isRussian(language);
         LootSearch.clear(); // item names follow the client's language
+        ChestNames.clear();
+        ChestData.clear();
+        Sheets.clear();
         var path = "hlx/mods/" + HlxRuntime.moduleName() + "/configFormats.json";
         var text = SettingsText.json(SettingsText.russian);
         var current = try sys.io.File.getContent(path) catch (_:Dynamic) "";
@@ -79,11 +86,14 @@ class CodexLoot {
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
         try localizeSettings() catch (_:Dynamic) {}
+        try CodexTabs.tick(instance) catch (_:Dynamic) {}
+        try TestMode.tick(instance) catch (_:Dynamic) {}
         var h = G.field(instance, "hero");
         if (h != hero) {
             hero = h;
             WorldLoot.clearPools();
             LootSearch.clear();
+            ChestNames.clear();
         }
         return Continue;
     }
@@ -99,6 +109,8 @@ class CodexLoot {
     static function beforeSpawnerClear():HlxPrefixResult<Void> {
         SpawnerLoot.clear();
         LootSearch.clear();
+        Sheets.clear();
+        ChestData.clear();
         return Continue;
     }
 
@@ -118,7 +130,7 @@ class CodexLoot {
     /** Runs once, when the player picks a monster in the Codex. */
     @:hlx.postfix(ui.win.codex.CodexUnitSheet.setSelectedUnit)
     static function afterSetSelectedUnit(instance:Dynamic, node:Dynamic, result:Void):Void {
-        if (!config.enabled) return;
+        if (!config.enabled || ChestSheet.owns(instance)) return;
         try {
             var unit = G.field(instance, "selectedUnit");
             if (unit == null) return;
@@ -130,9 +142,55 @@ class CodexLoot {
     /** Runs every time the monster list is rebuilt (opening the Codex page, searching, filtering). */
     @:hlx.postfix(ui.win.codex.CodexUnitSheet.updateUnitNodes)
     static function afterUpdateUnitNodes(instance:Dynamic, result:Void):Void {
-        if (!config.enabled || !config.unitTags) return;
+        if (!config.enabled || !config.unitTags || ChestSheet.owns(instance)) return;
         try {
             UnitTags.apply(instance);
         } catch (_:Dynamic) {}
+    }
+
+    // ---- the Chests tab ----
+
+    /** The Codex window is built (also every time its tab is switched): a new window starts on the Codex tab. */
+    @:hlx.prefix(ui.win.codex.CodexWindow.init)
+    static function beforeWindowInit(instance:Dynamic):HlxPrefixResult<Void> {
+        if (!config.enabled || !config.chestsTab) return Continue;
+        try CodexTabs.beforeInit(instance) catch (_:Dynamic) {}
+        return Continue;
+    }
+
+    @:hlx.postfix(ui.win.codex.CodexWindow.init)
+    static function afterWindowInit(instance:Dynamic, result:Void):Void {
+        if (!config.enabled || !config.chestsTab) return;
+        try CodexTabs.afterInit(instance) catch (_:Dynamic) {}
+    }
+
+    /** The chest sheet is the game's monster sheet: it fills its own list (search, filters). */
+    @:hlx.prefix(ui.win.codex.CodexUnitSheet.updateUnitNodes)
+    static function beforeUpdateUnitNodes(instance:Dynamic):HlxPrefixResult<Void> {
+        if (!ChestSheet.owns(instance)) return Continue;
+        try ChestSheet.refresh(instance) catch (_:Dynamic) {}
+        return Skip;
+    }
+
+    @:hlx.prefix(ui.win.codex.CodexUnitSheet.setSelectedUnit)
+    static function beforeSetSelectedUnit(instance:Dynamic, node:Dynamic):HlxPrefixResult<Void> {
+        return ChestSheet.owns(instance) ? Skip : Continue;
+    }
+
+    /** In the Chests tab the window shows the icon (and banner colour) of the Dungeons page. */
+    @:hlx.prefix(ui.win.codex.CodexWindow.getPanelIcon)
+    static function beforeGetPanelIcon(instance:Dynamic):HlxPrefixResult<String> {
+        if (CodexTabs.inChestMode() && instance == CodexTabs.currentWindow()) return SkipWith("Dungeons");
+        return Continue;
+    }
+
+    /** The back arrow of the Chests page goes back to the Codex. */
+    @:hlx.prefix(ui.win.codex.CodexWindow.onBack)
+    static function beforeOnBack(instance:Dynamic):HlxPrefixResult<Bool> {
+        if (CodexTabs.inChestMode() && instance == CodexTabs.currentWindow()) {
+            try CodexTabs.switchTo(false) catch (_:Dynamic) {}
+            return SkipWith(true);
+        }
+        return Continue;
     }
 }
