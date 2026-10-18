@@ -259,17 +259,7 @@ class BuildTab {
         if (job != null) Ui.disabledButton(left, headFont, Texts.calculatingButton(), 17, width);
         else Ui.button(left, headFont, Texts.calculate(), 17, true, () -> {
             DebugLog.line("click: calculate with " + haxe.Json.stringify(State.settings));
-            var hero = G.call("ui.BaseElement", "get_myHero", [window]);
-            try {
-                job = new Optimizer(hero, State.settings);
-                jobStart = haxe.Timer.stamp();
-                status = Texts.calculating(0);
-            } catch (e:Dynamic) {
-                DebugLog.error("calculate", e);
-                job = null;
-                status = Texts.failed();
-            }
-            draw();
+            startCalc(G.call("ui.BaseElement", "get_myHero", [window]), State.settings);
         }, width);
 
 
@@ -287,11 +277,7 @@ class BuildTab {
             }
             Ui.button(col, bodyFont, Texts.template(t) + (State.templates[t] == null ? "" : " •"), 13, State.active == t, () -> {
                 DebugLog.line("click: template " + (slot + 1) + (State.templates[slot] == null ? " (empty)" : ""));
-                State.openTemplate(slot);
-                Views.result = null;
-                Views.saved = State.templates[slot];
-                status = State.templates[slot] == null ? Texts.emptyTemplate(slot) : Texts.opened(slot);
-                draw();
+                openTemplate(slot);
             }, each);
             var armed = resetArmed == t && haxe.Timer.stamp() < resetArmedUntil;
             Ui.button(col, bodyFont, armed ? Texts.resetConfirm() : Texts.resetOne(), 12, false, () -> {
@@ -344,6 +330,41 @@ class BuildTab {
     static var statusText:Dynamic = null;
     static var lastProgress = -1;
 
+    /** Starts a calculation (the "Calculate" button, or a test command with its options); false when it could not start. */
+    public static function startCalc(hero:Dynamic, settings:State.Settings, ?opts:Optimizer.TestOptions):Bool {
+        if (job != null) return false;
+        try {
+            job = new Optimizer(hero, settings, opts);
+            jobStart = haxe.Timer.stamp();
+            status = Texts.calculating(0);
+        } catch (e:Dynamic) {
+            DebugLog.error("calculate", e);
+            job = null;
+            status = Texts.failed();
+        }
+        if (content != null && window != null && isOurs(window)) draw();
+        return job != null;
+    }
+
+    /** Opens a template (its button). */
+    public static function openTemplate(slot:Int):Void {
+        State.openTemplate(slot);
+        Views.result = null;
+        Views.saved = State.templates[slot];
+        status = State.templates[slot] == null ? Texts.emptyTemplate(slot) : Texts.opened(slot);
+        if (content != null && window != null && isOurs(window)) draw();
+    }
+
+    public static function calculating():Bool return job != null;
+
+    /** The hero profile window is open (it has a parent in the scene). */
+    public static function windowOpen():Bool {
+        return window != null && G.field(window, "parent") != null;
+    }
+
+    /** The calculator tab is the one shown. */
+    public static function calculatorShown():Bool return windowOpen() && isOurs(window);
+
     /** Each frame: a little of the calculation; the window is drawn again when it is done. */
     public static function tick():Void {
         if (job == null) { lastFrame = -1; return; }
@@ -361,7 +382,8 @@ class BuildTab {
             DebugLog.error("calculate", e);
             job = null;
             status = Texts.failed();
-            draw();
+            DebugLog.guard("test: failed", () -> TestMode.failed(Std.string(e)));
+            if (content != null && window != null && isOurs(window)) draw();
             return;
         }
         if (!finished) {
@@ -382,10 +404,12 @@ class BuildTab {
         if (job.result != null) DebugLog.guard("keep the last result", () -> {
             var b = job.result.build;
             State.setLast(job.settings, [for (s => c in b.items) if (c != null) Views.templateEntry(b, s, c)], [for (id => rank in b.talents) {id: id, rank: rank}],
-                [for (id in b.skills) {id: id, runes: b.runes.exists(id) ? b.runes.get(id).copy() : []}], Optimizer.MODEL_VERSION);
+                [for (id in b.skills) {id: id, runes: b.runes.exists(id) ? b.runes.get(id).copy() : []}], Optimizer.MODEL_VERSION, job.span, job.hi, job.model.exportChoices());
         });
+        var done = job.result;
         job = null;
         lastProgress = -1;
+        DebugLog.guard("test: finished", () -> TestMode.finished(done, took));
         var r = Views.result;
         status = r == null || r.pool == 0 ? Texts.noItems() : Texts.considered(r.pool) + " "
             + (r.changed == 0 ? Texts.alreadyBest() : Texts.changedSlots(r.changed)) + " " + Texts.calcTime(took, 0);

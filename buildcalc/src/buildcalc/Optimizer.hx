@@ -5,6 +5,16 @@ import buildcalc.Augments.Augment;
 import buildcalc.Model.Build;
 import buildcalc.Model.Eval;
 
+/** Options of a test command (TestMode): the start, the search, the worn build as if the hero had these. */
+typedef TestOptions = {
+    var fresh:Bool;                          // the last result is not a start
+    var search:Bool;                         // false: the start build is only valued
+    var talents:Map<String, Int>;            // the worn talents (null: the hero's)
+    var runes:Map<String, Array<String>>;    // the worn runes per class skill (null: the hero's)
+    var skills:Array<String>;                // the worn class skills (null: the hero's)
+    @:optional var infusions:Map<Int, String>; // the start build's infusion per slot ("" none) — a variant to value
+}
+
 typedef BuildResult = {
     var build:Build;
     var worn:Build;
@@ -133,10 +143,15 @@ class Optimizer {
     }
 
     /**
-     * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2). A last result
+     * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2; chances without luck = 3). A last result
      * valued by another version is not a start for the search (it would keep a build the model of now does not choose).
      */
-    public static inline var MODEL_VERSION = 2;
+    public static inline var MODEL_VERSION = 5;
+    /**
+     * The search goes round until a whole round takes nothing (at most this many rounds): a search that stopped after
+     * 3 rounds or a round under 0.2% was not done, and the next calculation (from its result) went on and moved.
+     */
+    public static inline var MAX_ROUNDS = 10;
 
     /** The last result for the same questionnaire (null: none). */
     var last:State.LastResult = null;
@@ -301,8 +316,11 @@ class Optimizer {
         return caps;
     }
 
-    public function new(hero:Dynamic, settings:State.Settings) {
+    var opts:TestOptions = null;
+
+    public function new(hero:Dynamic, settings:State.Settings, ?opts:TestOptions) {
         this.hero = hero;
+        this.opts = opts;
         // a copy: a click in the window during the calculation does not change it
         this.settings = State.copy(settings);
         t0 = haxe.Timer.stamp();
@@ -315,7 +333,7 @@ class Optimizer {
         unit = 0.0;
         for (u in used) unit += u;
         // the last calculation with the same questionnaire: the search also starts from it (see seedFromLast)
-        last = State.lastFor(settings);
+        last = opts != null && opts.fresh ? null : State.lastFor(settings);
         if (last != null && last.model != MODEL_VERSION) {
             DebugLog.line("search: the last result (" + last.savedAt + ") was valued by an older model (" + last.model + ", now " + MODEL_VERSION + "): not a start");
             last = null;
@@ -334,7 +352,7 @@ class Optimizer {
             for (a in 0...4) best[a] = Math.max(1e-9, now[a]);
             evalLimit = evals + 6000;
         }));
-        tasks.push(new Search(this, v -> norm(v, now), 3, b -> finalBuild = b));
+        tasks.push(new Search(this, v -> norm(v, now), opts != null && !opts.search ? 0 : MAX_ROUNDS, b -> finalBuild = b));
         tasks.push(new Once(() -> finish()));
     }
 
@@ -414,7 +432,22 @@ class Optimizer {
         DebugLog.line("optimizer: slots " + [for (s in Items.SLOTS) s + "=" + slotNames.get(s) + (factor.get(s) != 1 ? " x" + factor.get(s) : "")].join(", "));
         try arsenalSlots = Std.int(G.num(G.call("ent.Hero", "getNbArsenalSkillSlots", [hero]))) catch (e:Dynamic) DebugLog.error("arsenal slots", e);
         worn = currentBuild();
+        // the model knows the hero's attributes as the game gives them, with the real talents and runes: it is built from
+        // the real worn build (a test's worn talents/runes below only change the start; built from them, the hero's base
+        // attributes came out wrong and a "followed recommendations" test valued builds otherwise)
         model = new Model(hero, worn, factor);
+        if (opts != null) {
+            // a test: the worn build as if the hero had these talents, runes, skills (nothing changes in the game)
+            if (opts.talents != null) worn.talents = [for (id => r in opts.talents) if (r > 0) id => r];
+            if (opts.skills != null) worn.skills = opts.skills.copy();
+            if (opts.runes != null) for (id => r in opts.runes) worn.runes.set(id, r.copy());
+            DebugLog.line("test: options fresh=" + opts.fresh + " search=" + opts.search + (opts.talents != null || opts.skills != null || opts.runes != null
+                ? "; worn build taken as: " + describe(worn) : ""));
+        }
+        if (last != null && last.choices != null) {
+            var n = model.importChoices(last.choices);
+            DebugLog.line("model: " + n + " fight choices of the last result kept (" + last.savedAt + ")");
+        }
         model.idealRanks = settings.ideal;
         // choices inside a fight (rotation, weapon skill slots) follow the player's priorities too
         model.fightWeights = used;
@@ -475,7 +508,8 @@ class Optimizer {
             all.push(c);
             owned.push(c.id + (c.upgrade > 0 ? "+" + c.upgrade : "") + (c.infusion != "" ? "[" + c.infusion + "]" : ""));
         } catch (e:Dynamic) DebugLog.error("owned item", e);
-        DebugLog.line("optimizer: the hero's own items that fit (bag, mail, bank): " + (owned.length == 0 ? "none" : owned.join(", ")));
+        DebugLog.line("optimizer: the hero's own items that fit (bag, mail, bank): " + (owned.length == 0 ? "none" : owned.join(", "))
+            + (settings.ideal ? "" : "; variant \"own items\": the candidates are the worn items and these only"));
         poolSize = all.length;
         for (s in Items.SLOTS) {
             var list = [];
@@ -556,7 +590,8 @@ class Optimizer {
             var arr = G.field(HlxRuntime.resolveStaticField(G.type("Const"), "Hero"), "Talents_TierThresholds");
             for (i in 0...G.len(arr)) thresholds.push(Std.int(G.num(G.at(arr, i))));
         } catch (e:Dynamic) DebugLog.error("tier thresholds", e);
-        try points = Std.int(G.num(G.call("st.player.HeroSpecialization", "getTotalTalentPoints", [G.field(hero, "specialization")]))) catch (_:Dynamic) {}
+        // the game's formula (level - UnlockLevel_Talents + 1) is negative below the level the talents open at: none then
+        try points = Std.int(Math.max(0, G.num(G.call("st.player.HeroSpecialization", "getTotalTalentPoints", [G.field(hero, "specialization")])))) catch (_:Dynamic) {}
         var trees = G.field(G.field(hero, "inf"), "talentTrees");
         if (G.len(trees) > 0) {
             var talents = G.field(G.at(trees, 0), "talents");
@@ -614,11 +649,19 @@ class Optimizer {
         try {
             var list = G.callStatic("HInfusion", "getAllInfusions", []);
             var mine = model.infusionCounts(worn);
+            var learned = new Map<String, Bool>();
+            try {
+                var progress = G.field(G.call("st.player.HeroSpecialization", "get_player", [G.field(hero, "specialization")]), "progress");
+                var un = G.field(G.field(progress, "infusionsUnlocked"), "array");
+                for (i in 0...G.len(un)) learned.set(G.str(G.at(un, i)), true);
+            } catch (e:Dynamic) DebugLog.error("learned infusions", e);
+            if (!settings.ideal) DebugLog.line("infusions: learned by the hero: " + [for (k in learned.keys()) k].join(", "));
             for (i in 0...G.len(list)) {
                 var id = G.str(G.at(list, i));
                 var pattern = "";
                 try pattern = G.str(G.field(G.callStatic("HInfusion", "getInfusionPattern", [id]), "id")) catch (_:Dynamic) {}
-                var ok = mine.exists(id) || pattern == "" || Sources.available(pattern);
+                // ideal: an infusion whose pattern can be obtained; own items: one the hero has learned (Progress.infusionsUnlocked)
+                var ok = mine.exists(id) || (settings.ideal ? (pattern == "" || Sources.available(pattern)) : learned.exists(id) || learned.exists(pattern));
                 var d = SkillData.get(id);
                 DebugLog.line("  infusion " + id + " pattern " + pattern + " " + (ok ? "obtainable (" + Sources.where(pattern) + ")" : "not obtainable now")
                     + (d != null ? "; " + describeSkill(d) : ""));
@@ -681,13 +724,37 @@ class Optimizer {
     /** The most each axis reaches over the anchors (and the worn build). */
     public var hi:Array<Float> = null;
 
+    /**
+     * The reference build of the ranges and the prefilter: the worn build. (A build without talents and runes was tried
+     * so the ranges would not move with the worn talents: its damage is half the real one and the ranges it gave made the
+     * results worse — 706 instead of 741 dps; the talents are built from scratch by the search anyway.)
+     */
+    public var canon:Build = null;
+    public var canonAxes:Array<Float> = null;
+
+    public function makeCanon():Void {
+        canon = worn;
+        canonAxes = model.evaluate(worn).axes;
+    }
+
     public function setSpans(anchors:Array<Array<Float>>):Void {
-        var lo = now.copy(), hi = now.copy();
+        // the ranges of this questionnaire's last result: the score stays the same from one calculation to the next (the
+        // ranges come from the worn build; after following a recommendation they moved a little, and with them the best
+        // build: 741.5 -> 735 dps)
+        if (last != null && last.spans != null && last.hi != null) {
+            span = last.spans.copy();
+            hi = last.hi.copy();
+            model.fightSpans = [span[0], span[3]];
+            DebugLog.line("priorities: the ranges of the last result are kept (" + last.savedAt + "): " + span.map(r3).join("/") + ", highest " + hi.map(r3).join("/"));
+            return;
+        }
+        var ref = canonAxes != null ? canonAxes : now;
+        var lo = ref.copy(), hi = ref.copy();
         for (x in anchors) for (a in 0...4) {
             if (x[a] < lo[a]) lo[a] = x[a];
             if (x[a] > hi[a]) hi[a] = x[a];
         }
-        span = [for (a in 0...4) Math.max(hi[a] - lo[a], 0.05 * Math.max(1e-9, Math.abs(now[a])))];
+        span = [for (a in 0...4) Math.max(hi[a] - lo[a], 0.05 * Math.max(1e-9, Math.abs(ref[a])))];
         this.hi = hi;
         model.fightSpans = [span[0], span[3]];
         var names = ["damage", "defense", "health", "heal"];
@@ -911,10 +978,21 @@ class Optimizer {
                 chosen.push(m.id);
                 var v = value(b);
                 chosen.remove(m.id);
-                var tie = worn.runes.exists(id) && worn.runes.get(id).indexOf(m.id) >= 0 ? 1e-7 : 0;
-                if (v + tie > bestV + 1e-12) { bestV = v + tie; best = m.id; }
+                if (v > bestV + 1e-12) { bestV = v; best = m.id; }
             }
-            if (best == "") break;
+            if (best == "") {
+                // no rune gains anything here (the model sees no difference): the hero's own rune stays, an empty rune
+                // slot would read as "take the rune off"
+                var have = worn.runes.exists(id) ? worn.runes.get(id) : [];
+                for (r in have) if (chosen.indexOf(r) < 0 && Lambda.exists(d.masteries, m -> m.id == r)) {
+                    chosen.push(r);
+                    var v = value(b);
+                    if (v >= bestV - 1e-9) { best = r; bestV = v; break; }
+                    chosen.remove(r);
+                }
+                if (best == "") break;
+                continue;
+            }
             chosen.push(best);
         }
         return chosen;
@@ -1006,7 +1084,7 @@ class Optimizer {
             }
             if (bestC == null) continue;
             var gain = (bestV - base) / unit * 100;
-            var need = (s <= 1 ? 1.0 : 0.5);
+            var need = Pass.GAIN * 100;
             var why = gain <= 0 ? "worse" : (gain < need ? "gain under the " + need + "% a swap needs" : "");
             if (why == "") {
                 var trial = copy(b);
@@ -1029,6 +1107,7 @@ class Optimizer {
             if (to == from) continue;
             var back = copy(b);
             back.talents.set(id, from);
+            if (!validTalents(back.talents)) { DebugLog.line("why talent " + id + " " + from + "->" + to + ": not alone (the points moved elsewhere)"); continue; }
             var e2 = model.evaluate(back);
             DebugLog.line("why talent " + id + " " + from + "->" + to + ": dps " + r3(ev.dps - e2.dps) + ", defense " + r3(ev.axes[1] - e2.axes[1])
                 + ", health " + r3(ev.axes[2] - e2.axes[2]) + ", self heal " + r3(ev.selfHeal - e2.selfHeal) + ", ally heal " + r3(ev.allyHeal - e2.allyHeal)
@@ -1064,6 +1143,12 @@ class Optimizer {
     function dress(b:Build):Void {
         // a real item infused again: the bonus attribute it was valued with (Model.bonusOf) is the one shown and saved
         for (s => c in b.items) if (c != null && model.reinfused(b, s, c)) b.bonus.set(s, model.bonusOf(b, s, c));
+        // a bonus attribute the infusion does not activate on this item (other faction: Gear.isInfusionBonusActive) gives
+        // nothing: not shown nor saved (a Kobold belt with a Manfish infusion showed "armour penetration" to a priest)
+        for (s => c in b.items) if (c != null && b.bonus.exists(s)) {
+            var inf = b.infusion.exists(s) ? b.infusion.get(s) : (c.real ? c.infusion : "");
+            if (inf == null || inf == "" || !model.bonusActive(c, inf)) b.bonus.remove(s);
+        }
         // worn items with another infusion: a copy of the item (st.Item.clone) carries it, the worn item is not touched
         for (s => c in b.items) if (c != null && c.real && b.infusion.exists(s) && b.infusion.get(s) != c.infusion) {
             try {
@@ -1129,6 +1214,8 @@ class ItemScan implements Task {
     public function new(o:Optimizer) this.o = o;
 
     public function step():Bool {
+        // "own items": only the hero's own items are candidates (pools0), nothing of the game's data is created
+        if (!o.settings.ideal) return true;
         if (all == null) {
             all = G.field(GameData.data("item"), "all");
             level = Std.int(G.num(G.field(o.model.hero, "_level")));
@@ -1163,7 +1250,8 @@ class Prefilter implements Task {
     public function step():Bool {
         if (weights == null) {
             weights = o.settingsWeights();
-            now = o.model.evaluate(o.worn).axes;
+            o.makeCanon();
+            now = o.canonAxes;
             o.stage = "prefilter";
         }
         if (si < Items.SLOTS.length) {
@@ -1173,8 +1261,8 @@ class Prefilter implements Task {
             if (s != 0 && base == null) {
                 // the items of the other slots are valued with a main weapon of the kind asked (a shield needs a
                 // one-handed one): the worn one, or the best of slot 0 by the score without ranges
-                base = Optimizer.copy(o.worn);
-                var w = o.worn.items.get(0);
+                base = Optimizer.copy(o.canon);
+                var w = o.canon.items.get(0);
                 if (w == null || w.ranged != o.settings.ranged) {
                     var bestX = null;
                     for (x in scored.get(0)) if (bestX == null || o.norm(x.a, now) > o.norm(bestX.a, now)) bestX = x;
@@ -1185,7 +1273,7 @@ class Prefilter implements Task {
             }
             if (ci < list.length) {
                 var c = list[ci++];
-                var trial = Optimizer.copy(s == 0 ? o.worn : base);
+                var trial = Optimizer.copy(s == 0 ? o.canon : base);
                 // a created item takes over the infusion of the worn item it replaces (the set is not broken: see place)
                 var was = trial.items.get(s);
                 trial.items.set(s, c);
@@ -1212,7 +1300,7 @@ class Prefilter implements Task {
             var wornMain = o.worn.items.get(0);
             var wrongMain = wornMain != null && wornMain.ranged != o.settings.ranged;
             for (axis in 0...4) {
-                var b = Optimizer.copy(base != null ? base : o.worn);
+                var b = Optimizer.copy(base != null ? base : o.canon);
                 for (s in Items.SLOTS) {
                     var bestX = null;
                     for (x in scored.get(s)) if (bestX == null || x.a[axis] > bestX.a[axis]) bestX = x;
@@ -1260,7 +1348,19 @@ class Search implements Task {
     var start = 0.0;
     var round = 0;
     var before = 0.0;
-    var passIndex = 0;
+    /**
+     * -3..-1: before anything else, skills (with no talents), talents, skills again — all built from scratch, so the
+     * worn talents, skills and runes are no start; 0..3 the passes of a round.
+     */
+    var passIndex = -3;
+    /**
+     * What changed since the talents (infusions) were last built from scratch: they are built again only then — with
+     * the same items, infusions and skills the scratch build comes out the same (it is deterministic), so the time is
+     * saved without changing the result.
+     */
+    var changedForTalents = true;
+    var changedForInfusions = true;
+    var passStart = 0.0;
     var pass:Pass = null;
     var started = false;
     var t0 = 0.0;
@@ -1285,13 +1385,31 @@ class Search implements Task {
             o.startWeapon(b);
             if (o.floor == null) o.setFloors();
             current = o.value(b);
+            // the last result of this questionnaire is the start when there is one (its items; talents, skills and runes
+            // are built from scratch anyway): not weighed against the worn build, whose score has the worn talents in it
             var seed = o.seedFromLast();
             if (seed != null) {
-                var v = o.value(seed);
-                var take = v >= current && o.robustOk(b, seed);
-                DebugLog.line("search: the last result scores " + v + " against " + current + " for the worn build -> "
-                    + (take ? "the search starts from the last result" : "the search starts from the worn build"));
-                if (take) { b = seed; current = v; }
+                b = seed;
+                current = o.value(b);
+                // the last result's talents and skills come from a search, not from the hero: they are kept (rebuilding
+                // them from scratch lost the better ones: 741.5 -> 738.6 dps after following every recommendation)
+                passIndex = 0;
+                DebugLog.line("search: the search starts from the last result (score " + current + ")");
+            }
+            var ov = @:privateAccess o.opts;
+            if (ov != null && ov.infusions != null) {
+                // a test: these infusions on the start build (a variant valued as it is with search:false)
+                for (sl => inf in ov.infusions) {
+                    var c = b.items.get(sl);
+                    if (c == null || !c.infusable) continue;
+                    b.infusion.set(sl, inf);
+                    b.bonus.remove(sl);
+                    var stat = o.model.bonusOf(b, sl, c);
+                    if (stat == null && o.bonusStats.length > 0) stat = o.bonusStats[0];
+                    if (stat != null) b.bonus.set(sl, stat);
+                }
+                current = o.value(b);
+                DebugLog.line("test: infusions of the start build set: " + [for (sl => inf in ov.infusions) sl + "=" + inf].join(", ") + " -> score " + current);
             }
             start = current;
             before = current - 1;
@@ -1299,26 +1417,44 @@ class Search implements Task {
             e0 = o.evals;
         }
         if (pass == null) {
-            // a round that gained less than 0.2% ends the search (the next would find about nothing)
-            if (passIndex == 0 && (round >= rounds || current <= before + o.unit * 0.002 || o.overLimit())) {
+            // the search ends when a whole round took nothing: from its result nothing better is found again
+            if (passIndex == 0 && (round >= rounds || current <= before + 1e-12 || o.overLimit())) {
                 DebugLog.line("search " + o.stage + ": score " + start + " -> " + current + ", " + (o.evals - e0) + " builds in "
                     + Math.round((haxe.Timer.stamp() - t0) * 1000) + " ms, " + round + " rounds" + (o.overLimit() ? " (limit)" : ""));
                 onDone(b);
                 return true;
             }
             if (passIndex == 0) before = current;
+            if (passIndex == -3) {
+                if (rounds == 0) { passIndex = 0; return false; } // a variant valued as it is (test): nothing rebuilt
+                b.talents = new Map();
+                current = o.value(b);
+            }
             pass = switch (passIndex) {
+                case -3: new SkillPass(o, b, current, true);
+                case -2: new TalentPass(o, b, current, true, true);
+                case -1: new SkillPass(o, b, current, true);
                 case 0: new ItemPass(o, b, current);
-                case 1: new InfusionPass(o, b, current, round == 0);
-                case 2: new TalentPass(o, b, current, round == 0);
-                default: new SkillPass(o, b, current);
+                case 1: new InfusionPass(o, b, current, round == 0 || changedForInfusions);
+                // talents built from scratch in every round (with the items of now): a search that ends must leave no better
+                // scratch talents, or the next calculation (after following the recommendations) finds them and moves
+                case 2: new TalentPass(o, b, current, round == 0 || changedForTalents, false);
+                default: new SkillPass(o, b, current, false);
             };
         }
-        if (passT0 < 0) { passT0 = haxe.Timer.stamp(); passE0 = o.evals; passF0 = o.model.fightsRun; }
+        if (passT0 < 0) { passT0 = haxe.Timer.stamp(); passE0 = o.evals; passF0 = o.model.fightsRun; passStart = current; }
         if (pass.step()) {
-            DebugLog.line("search pass " + ["items", "infusions", "talents", "skills"][passIndex] + " round " + (round + 1) + ": score " + current + " -> " + pass.current
+            DebugLog.line("search pass " + ["skills from scratch (no talents)", "talents from scratch", "skills from scratch", "items", "infusions", "talents", "skills"][passIndex + 3] + " round " + (round + 1) + ": score " + current + " -> " + pass.current
                 + ", " + (o.evals - passE0) + " builds, " + (o.model.fightsRun - passF0) + " fights, " + Math.round((haxe.Timer.stamp() - passT0) * 1000) + " ms");
             passT0 = -1;
+            var moved = pass.current != passStart;
+            switch (passIndex) {
+                case 0: if (moved) { changedForInfusions = true; changedForTalents = true; }
+                case 1: changedForInfusions = false; if (moved) changedForTalents = true;
+                case 2: changedForTalents = false; if (moved) changedForInfusions = true;
+                case 3: if (moved) { changedForInfusions = true; changedForTalents = true; }
+                default:
+            }
             current = pass.current;
             pass = null;
             passIndex++;
@@ -1342,8 +1478,14 @@ class Pass implements Task {
 
     public function step():Bool return true;
 
-    /** Share of the score a change must add to be taken (no swaps for nothing). */
-    var threshold = 0.001;
+    /**
+     * Share of the sum of the weights a change must add to be taken: the same small one for every kind of change. Larger
+     * ones (talents 3%, weapons 1%, items 0.5%, skills 2%) kept whatever was worn: with the hero's talents worn the search
+     * kept them, with other talents worn it kept those — the result depended on what the hero wore (test 2026-10-18:
+     * 756 dps / 307 heal with the hero's talents, 762 / 347 from the other ones).
+     */
+    public static inline var GAIN = 0.001;
+    var threshold = GAIN;
 
     /** Takes `trial` if it raises the score. */
     function take(trial:Build, v:Float):Bool {
@@ -1363,7 +1505,6 @@ class ItemPass extends Pass {
 
     public function new(o:Optimizer, b:Build, current:Float) {
         super(o, b, current);
-        threshold = 0.01;
     }
 
     override public function step():Bool {
@@ -1380,7 +1521,6 @@ class ItemPass extends Pass {
                 if ([for (a in augs) a.id].join(",") == [for (a in now) a.id].join(",")) continue;
                 var again = Optimizer.copy(b);
                 again.augs.set(s, augs);
-                threshold = 0.001;
                 o.model.statsOnly = Optimizer.statsOnlyItem(s, c) && !Lambda.exists(augs, a -> a.skills.length > 0);
                 take(again, o.value(again));
                 o.model.statsOnly = false;
@@ -1397,7 +1537,6 @@ class ItemPass extends Pass {
                 if (old != null && o.slotFits(old, other)) o.place(trial, other, old);
                 else if (c.real) o.place(trial, other, null);
             }
-            threshold = s <= 1 ? 0.01 : 0.005;
             o.model.statsOnly = Optimizer.statsOnlyItem(s, c) && (other < 0 || Optimizer.statsOnlyItem(other, old));
             take(trial, o.value(trial));
             o.model.statsOnly = false;
@@ -1490,7 +1629,7 @@ class InfusionPass extends Pass {
                 trial.infusion.set(s, best);
                 if (o.robustOk(b, trial)) {
                     b.infusion.set(s, best);
-                    current = Math.max(current, bestV);
+                    current = o.value(b);
                 }
             }
         }
@@ -1510,7 +1649,7 @@ class InfusionPass extends Pass {
                 for (s in group) trial.infusion.set(s, best);
                 if (o.robustOk(b, trial)) {
                     for (s in group) b.infusion.set(s, best);
-                    current = Math.max(current, bestV);
+                    current = o.value(b);
                 }
             }
         }
@@ -1558,15 +1697,20 @@ class InfusionPass extends Pass {
  * Talents: for each branch whose last tier can be reached with the points, a build that takes it — root,
  * the branch's lower talents (best gain first) up to the tier threshold, the final talent, then the rest of
  * the points where they gain most. Talents a sigil of the build already gives get no points. The best of
- * these builds replaces the hero's talents only when it is clearly better (threshold).
+ * these builds replaces the talents when it scores higher (the same threshold as every change: Pass.GAIN).
  */
 class TalentPass extends Pass {
     var full:Bool;
+    /**
+     * The best talents built from scratch replace the build's ones even when those score higher: the result must not
+     * depend on the talents the hero wears (they are no start). The local moves then go on from the scratch build.
+     */
+    var scratch:Bool;
 
-    public function new(o:Optimizer, b:Build, current:Float, full:Bool) {
+    public function new(o:Optimizer, b:Build, current:Float, full:Bool, scratch:Bool = true) {
         super(o, b, current);
-        threshold = 0.03;
         this.full = full;
+        this.scratch = scratch;
     }
 
     var options:Array<TalentNode> = null;   // the final talents to build towards
@@ -1597,15 +1741,20 @@ class TalentPass extends Pass {
         }
         if (options.length == 0 && !local) {
             local = true;
-            threshold = 0.005;
             planMoves();
         }
         if (oi >= options.length) {
             if (!local) {
-                if (bestBuild != null) take(bestBuild, bestScore);
+                if (bestBuild != null) {
+                    // every pass builds the talents from scratch: the best of these is the start of the local moves,
+                    // whatever the talents before (worn ones or an earlier round's)
+                    if (scratch || bestScore > current) {
+                        current = bestScore;
+                        Optimizer.copyInto(bestBuild, b);
+                    }
+                }
                 local = true;
-                threshold = 0.005;
-                planMoves();
+                    planMoves();
             }
             return localStep();
         }
@@ -1637,8 +1786,8 @@ class TalentPass extends Pass {
             t.set(n.id, r + 1);
             if (o.validTalents(t)) {
                 var val = o.value(trial);
-                var have = o.worn.talents;
-                var tie = n.tier * 0.01 + (have.exists(n.id) && have.get(n.id) > r ? 0.001 : 0.0);
+                // equal gains: the higher tier first (no preference for what the hero wears)
+                var tie = n.tier * 0.01;
                 if (val > bestV + 1e-9 || (Math.abs(val - bestV) <= 1e-9 && tie > bestTie)) { bestV = val; bestId = n.id; bestTie = tie; }
             }
             if (r == 0) t.remove(n.id) else t.set(n.id, r);
@@ -1672,7 +1821,7 @@ class TalentPass extends Pass {
     }
 
     function localStep():Bool {
-        if (o.overLimit() || localRounds > 12) return true;
+        if (o.overLimit() || localRounds > 60) return true;
         while (mi < moves.length) {
             var m = moves[mi++];
             var t = b.talents.copy();
@@ -1705,9 +1854,12 @@ class TalentPass extends Pass {
 
 /** Class skills for the hero's slots (best gain first) with their best runes; or only better runes. */
 class SkillPass extends Pass {
-    public function new(o:Optimizer, b:Build, current:Float) {
+    /** The skills built from scratch replace the build's ones (the worn skills and runes are no start). */
+    var scratch:Bool;
+
+    public function new(o:Optimizer, b:Build, current:Float, scratch:Bool = false) {
         super(o, b, current);
-        threshold = 0.02;
+        this.scratch = scratch;
     }
 
     var trial:Build = null;
@@ -1731,8 +1883,7 @@ class SkillPass extends Pass {
                 trial.skills.push(id);
                 trial.runes.set(id, o.bestRunes(trial, id));
                 var val = o.value(trial);
-                var tie = o.worn.skills.indexOf(id) >= 0 ? 1e-7 : 0;
-                if (val + tie > bestV) { bestV = val + tie; bestId = id; }
+                if (val > bestV) { bestV = val; bestId = id; }
                 trial.skills.remove(id);
                 trial.runes.remove(id);
                 return false;
@@ -1743,7 +1894,10 @@ class SkillPass extends Pass {
             ci = 0; bestId = ""; bestV = -1e30;
             return false;
         }
-        if (!(trial.skills.length >= o.skillSlots && take(trial, o.value(trial)))) {
+        if (scratch && trial.skills.length >= o.skillSlots) {
+            current = o.value(trial);
+            Optimizer.copyInto(trial, b);
+        } else if (!(trial.skills.length >= o.skillSlots && take(trial, o.value(trial)))) {
             var runesOnly = Optimizer.copy(b);
             for (id in runesOnly.skills) runesOnly.runes.set(id, o.bestRunes(runesOnly, id));
             take(runesOnly, o.value(runesOnly));

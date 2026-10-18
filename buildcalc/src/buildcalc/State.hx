@@ -31,6 +31,11 @@ typedef LastResult = {
     @:optional var skills:Array<{id:String, runes:Array<String>}>;
     /** Optimizer.MODEL_VERSION it was valued with: a result of an older model is not a start (it may be wrong now). */
     @:optional var model:Int;
+    /** The ranges of the axes and their highest values it was valued with (the score of this questionnaire, kept). */
+    @:optional var spans:Array<Float>;
+    @:optional var hi:Array<Float>;
+    /** The fight choices it was valued with (Model.exportChoices). */
+    @:optional var choices:Dynamic;
 }
 
 /**
@@ -132,7 +137,8 @@ class State {
                 if (lb == null) continue;
                 var r:LastResult = {settings: valid(Reflect.field(l, "settings")), savedAt: Std.string(Reflect.field(l, "savedAt")), build: lb,
                     talents: parseTalents(Reflect.field(l, "talents")), skills: parseSkills(Reflect.field(l, "skills")),
-                    model: int(Reflect.field(l, "model"))};
+                    model: int(Reflect.field(l, "model")), spans: floats(Reflect.field(l, "spans")), hi: floats(Reflect.field(l, "hi")),
+                    choices: Reflect.field(l, "choices")};
                 if (lastFor(r.settings) == null) lasts.push(r);
             }
             var a:Dynamic = Reflect.field(data, "active");
@@ -142,6 +148,11 @@ class State {
     }
 
     static function str(v:Dynamic):String return v == null ? null : Std.string(v);
+    static function floats(v:Dynamic):Array<Float> {
+        if (!Std.isOfType(v, Array) || (v : Array<Dynamic>).length != 4) return null;
+        return [for (x in (v : Array<Dynamic>)) Std.parseFloat(Std.string(x))];
+    }
+
     static function int(v:Dynamic):Null<Int> return Std.isOfType(v, Int) || Std.isOfType(v, Float) ? Std.int(v) : null;
 
     static function parseBuild(b:Dynamic):Array<TemplateItem> {
@@ -167,8 +178,9 @@ class State {
 
     /** Keeps the result of a calculation done with the questionnaire of now. */
     public static function setLast(s:Settings, build:Array<TemplateItem>, talents:Array<{id:String, rank:Int}>, skills:Array<{id:String, runes:Array<String>}>,
-            model:Int):Void {
-        var r:LastResult = {settings: copy(s), savedAt: Date.now().toString(), build: build, talents: talents, skills: skills, model: model};
+            model:Int, ?spans:Array<Float>, ?hi:Array<Float>, ?choices:Dynamic):Void {
+        var r:LastResult = {settings: copy(s), savedAt: Date.now().toString(), build: build, talents: talents, skills: skills, model: model,
+            spans: spans, hi: hi, choices: choices};
         lasts = [for (l in lasts) if (settingsKey(l.settings) != settingsKey(s)) l];
         lasts.unshift(r);
         // the 24 questionnaires used last are kept

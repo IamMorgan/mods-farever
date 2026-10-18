@@ -47,7 +47,7 @@ typedef SkillSpec = {id:String, rank:Int, runes:Array<String>, kind:String, slot
 typedef HitRec = {inst:Inst, e:SEffect, split:Int, add:Float, mult:Float, ccAdd:Float, cdAdd:Float, crit:Bool, ignore:Float, kind:Int,
     self:Bool, ally:Bool, buffs:Int, tbuffs:Int, dyn:Bool, amount:Float};
 
-typedef SimResult = {dps:Float, selfHeal:Float, allyHeal:Float, damage:Map<String, Float>, heal:Map<String, Float>, casts:Map<String, Int>, missing:Map<String, Int>, time:Float};
+typedef SimResult = {dps:Float, selfHeal:Float, allyHeal:Float, damage:Map<String, Float>, heal:Map<String, Float>, casts:Map<String, Int>, missing:Map<String, Int>, time:Float, ?resources:String};
 
 /** Names of the data a script refers to: Skill.X, Steps.X, Mastery.X, GameBeat.X… are their names. */
 /**
@@ -449,8 +449,9 @@ class HitObj extends DynObj {
  * A fight of the hero against a training dummy, run by the skills' own data and scripts: the attack chain
  * of the main weapon, the skills when ready (prayers when charged), steps with their delays and ticks,
  * statuses with their duration, stacks and ticks, and every script handler the game calls
- * (on…Eval before a hit, onInflictDamage after it, onSkillProc, onUseSkill, onRegUpdate…). Randomness
- * (crits, checkProba) comes from a seeded generator, so every build meets the same luck.
+ * (on…Eval before a hit, onInflictDamage after it, onSkillProc, onUseSkill, onRegUpdate…). Chances (crits,
+ * checkProba) are not rolled: each one comes true exactly as often as its chance (`chance`), so a 40 s fight gives
+ * every build its expected luck (rolled chances made the same build heal 27 or 44/s with an infusion proc).
  */
 class Sim {
     public static var ATTACKS = ["Attack", "Attack2", "Attack3", "Attack4", "AttackCombo"];
@@ -536,6 +537,22 @@ class Sim {
         hero = new Unit(this, true);
         dummy = new Unit(this, false);
         units = [hero, dummy];
+    }
+
+    /**
+     * A chance without luck: per source (the skill whose script asks, or the hit's skill for a crit) the chances add up,
+     * and it comes true each time the sum passes a whole number (starting at one half: the nearest count). A 15% proc
+     * comes true 3 times in 20 tries, never 0 or 6 by chance; the same build is always valued the same.
+     */
+    var chances = new Map<String, Float>();
+
+    public function chance(source:String, p:Float):Bool {
+        if (p <= 0) return false;
+        if (p >= 1) return true;
+        var acc = (chances.exists(source) ? chances.get(source) : 0.5) + p;
+        var yes = acc >= 1;
+        chances.set(source, yes ? acc - 1 : acc);
+        return yes;
     }
 
     public function rand():Float {
@@ -626,6 +643,43 @@ class Sim {
     var buffIndex = 0;
     /** Attributes the fight's course depends on (cooldowns, cast times, scripts reading them), not only its numbers. */
     public var timing = new Map<String, Float>();
+
+    /**
+     * Keeps only what `replay` needs (the hit log, the buff sets, the casts) and lets the rest go: a fight kept whole for
+     * every build valued (units, statuses, script interpreters, the event queue — each skill instance holding its owner,
+     * its script and the fight) took 12 GB in two calculations, and the garbage collector then stopped the game for 12 s
+     * (the server closed the connection).
+     */
+    public function compact():Void {
+        for (r in log) {
+            var i = r.inst;
+            if (i == null) continue;
+            i.interp = null;
+            i.owner = null;
+            // i.item (a candidate) stays: effectBase needs its power
+            if (Std.isOfType(i, Status)) {
+                var st:Status = cast i;
+                st.unit = null;
+                st.instigator = null;
+                st.source = null;
+            }
+        }
+        for (x in shields) x.link = null;
+        shields = [];
+        queue = [];
+        units = [];
+        hero = null;
+        dummy = null;
+        ctx = null;
+        current = null;
+        chain = [];
+        actives = [];
+        components = new Map();
+        mageObj = null;
+        statsCache = null;
+        calls = new Map();
+        chances = new Map();
+    }
     /** Sets of the target's status affixes met in the fight (index 0: none). */
     public var targetBuffSets:Array<Array<{a:SAffix, share:Float}>> = [[]];
     var targetBuffKeys = ["" => 0];
@@ -646,6 +700,17 @@ class Sim {
     public function timingStat(name:String):Float {
         var v = statsNow().get(name);
         if (!timing.exists(name)) timing.set(name, v);
+        return v;
+    }
+
+    /**
+     * A resource attribute as the game's resource code reads it (ent.UnitAttributes.get / getMax: the raw value, not the
+     * displayed percentage): Rage's gain factor is 1 raw, 0.01 shown — taken shown, a warrior gained 0.85 Rage in 40 s
+     * and never used Rage Strike.
+     */
+    public function timingRaw(name:String):Float {
+        var v = statsNow().raw(name);
+        if (!timing.exists(name)) timing.set(name, statsNow().get(name));
         return v;
     }
 
@@ -695,7 +760,8 @@ class Sim {
                 if (r.ally) ally += v;
             }
         }
-        return {dps: total / length, selfHeal: self / length, allyHeal: ally / length, damage: dmg, heal: hl, casts: casts, missing: missingLog, time: length};
+        return {dps: total / length, selfHeal: self / length, allyHeal: ally / length, damage: dmg, heal: hl, casts: casts, missing: missingLog, time: length,
+            resources: resourcesText};
     }
 
     var length = 60.0;
@@ -710,7 +776,7 @@ class Sim {
         return u == hero ? timingStat(id) : 0;
     }
 
-    function resMax(u:Unit, at:SAttr):Float return u == hero ? timingStat(at.max) : 0;
+    function resMax(u:Unit, at:SAttr):Float return u == hero ? timingRaw(at.max) : 0;
 
     /**
      * A resource's value; the first time: full if the game refills it out of combat (a regeneration out of combat that
@@ -721,7 +787,7 @@ class Sim {
         if (v != null) return v;
         var at = GameRules.attributes.get(id);
         var start = 0.0;
-        if (at != null && u == hero) for (r in at.regen) if (r.cond == "timeOutsideCombat" && timingStat(r.atb) * r.factor > 0) start = resMax(u, at);
+        if (at != null && u == hero) for (r in at.regen) if (r.cond == "timeOutsideCombat" && timingRaw(r.atb) * r.factor > 0) start = resMax(u, at);
         u.res.set(id, start);
         return start;
     }
@@ -735,14 +801,19 @@ class Sim {
         if (at == null || u == null) return;
         var before = resGet(u, id);
         var factor = 1.0;
-        if (at.gain != "" && u == hero) { factor = timingStat(at.gain); if (factor <= 0) factor = 1.0; }
+        if (at.gain != "" && u == hero) { factor = timingRaw(at.gain); if (factor <= 0) factor = 1.0; }
         var after = Math.max(0, Math.min(resMax(u, at), before + amount * factor));
+        if (u == hero && amount > 0) resGained.set(id, (resGained.exists(id) ? resGained.get(id) : 0) + amount * factor);
         u.res.set(id, after);
         if (after < before && u == hero) {
             dispatchUnit(hero, "onOwnerConsumeResource", [id, after - before], null);
             if (mageObj != null || hasConduits()) cast(component(hero, "mage"), MageObj).onConsumeResource(id, before);
         }
     }
+
+    var resGained = new Map<String, Float>();
+    /** The resources at the end of the fight (run), kept for the replays' reports. */
+    public var resourcesText = "";
 
     public function resSet(u:Unit, id:String, v:Float):Void {
         var at = GameRules.attributes.get(id);
@@ -756,7 +827,7 @@ class Sim {
             var at = GameRules.attributes.get(id);
             if (at == null) continue;
             var add = 0.0;
-            for (r in at.regen) if (r.cond == "" || r.cond == "timeInCombat") add += timingStat(r.atb) * r.factor * dt;
+            for (r in at.regen) if (r.cond == "" || r.cond == "timeInCombat") add += timingRaw(r.atb) * r.factor * dt;
             if (add != 0) hero.res.set(id, Math.max(0, Math.min(resMax(hero, at), v + add)));
         }
     }
@@ -867,7 +938,15 @@ class Sim {
         var total = 0.0, healed = 0.0;
         for (v in damage) total += v;
         for (v in heal) healed += v;
-        return {dps: total / seconds, selfHeal: healed / seconds, allyHeal: allyHealed / seconds, damage: damage, heal: heal, casts: casts, missing: missingLog, time: seconds};
+        // the hero's resources at the end, their maximum and gain factor (for the log: why a skill with a cost was not used)
+        var res = [for (id => v in hero.res) {
+            var at = GameRules.attributes.get(id);
+            id + "=" + Math.round(v * 100) / 100 + (at == null ? "" : "/" + Math.round(resMax(hero, at) * 100) / 100 + " gain x" + (at.gain != "" ? Std.string(Math.round(timingRaw(at.gain) * 1000) / 1000) : "1")
+                + " gained " + Math.round((resGained.exists(id) ? resGained.get(id) : 0) * 100) / 100);
+        }].join(", ");
+        resourcesText = res;
+        return {dps: total / seconds, selfHeal: healed / seconds, allyHeal: allyHealed / seconds, damage: damage, heal: heal, casts: casts, missing: missingLog, time: seconds,
+            resources: res};
     }
 
     /** The hero's next action: a ready skill (prayers when charged), else the next hit of the attack chain. */
@@ -1171,7 +1250,7 @@ class Sim {
             dispatchUnit(target, "onReceiveHealEval", [hit], null);
         }
         var ccHit = num(hit.get("critChance")), cdHit = num(hit.get("critDmgMult"));
-        var critical = rand() < ccHit;
+        var critical = chance("crit|" + inst.info.id, ccHit);
         hit.set("critical", critical);
         var amount = base + num(hit.get("dmgAdd"));
         if (!heal) {
@@ -1332,8 +1411,9 @@ class Sim {
     public function api(inst:Inst, name:String, a:Array<Dynamic>):Dynamic {
         inline function unitArg(i:Int):Unit return Std.isOfType(a[i], Unit) ? a[i] : (Std.isOfType(a[i], Status) ? (a[i] : Status).unit : null);
         switch (name) {
-            case "checkProba": return rand() < num(a[0]);
-            case "random": return a.length >= 2 ? num(a[0]) + rand() * (num(a[1]) - num(a[0])) : rand() * num(a[0]);
+            case "checkProba": return chance("proba|" + inst.info.id, num(a[0]));
+            // a random value: its mean (no luck either)
+            case "random": return a.length >= 2 ? (num(a[0]) + num(a[1])) / 2 : num(a[0]) / 2;
             case "pickRandom": var arr:Array<Dynamic> = a[0]; return arr == null || arr.length == 0 ? null : arr[Std.int(rand() * arr.length)];
             case "round": return Math.round(num(a[0]));
             case "addStatus", "tryAddStatus":

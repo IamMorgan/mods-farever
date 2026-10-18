@@ -327,11 +327,19 @@ class Model {
                 else add({def: d, rank: 1, runes: [], kind: "enchant", item: c, slot: s});
             }
         }
-        for (id => r in talents) {
+        // in a fixed order (sorted ids): a map's order depends on how it was filled, and the order of the skills is the
+        // order the fight tries them in — the same build filled another way was valued otherwise
+        var tids = [for (id in talents.keys()) id];
+        tids.sort((x, y) -> x < y ? -1 : (x > y ? 1 : 0));
+        for (id in tids) {
             var d = SkillData.get(id);
-            if (d != null) add({def: d, rank: r, runes: [], kind: "talent", item: null, slot: -1});
+            if (d != null) add({def: d, rank: talents.get(id), runes: [], kind: "talent", item: null, slot: -1});
         }
-        for (id => n in infusionCounts(b)) {
+        var counts = infusionCounts(b);
+        var iids = [for (id in counts.keys()) id];
+        iids.sort((x, y) -> x < y ? -1 : (x > y ? 1 : 0));
+        for (id in iids) {
+            var n = counts.get(id);
             var r = rankFromStacks(n);
             var d = SkillData.get(id);
             if (r > 0 && d != null) {
@@ -522,7 +530,7 @@ class Model {
         return s.spread ? 1 : stepTicks(def, s, rank, runes, statusDuration);
 
     function itemPart(src:Src, e:Effect, ratio:Float):Float {
-        var key = src.item.id + "|" + src.rank + "|" + e.uid;
+        var key = src.item.key + "|" + src.rank + "|" + e.uid; // by the candidate: same id, other item data (rarity, level)
         if (itemPartCache.exists(key)) return itemPartCache.get(key);
         var v = 0.0;
         try {
@@ -792,6 +800,35 @@ class Model {
      * damage and heal) and kept: a mace whose skill pays most two attacks before the combo is played that way.
      */
     var weaves = new Map<String, Map<String, Int>>();
+
+    /**
+     * The fight choices made once and kept (the place of each weapon skill in the attack chain, the weapon skills put
+     * in the two slots), as data for the last result of a questionnaire: the next calculation of it starts with the same
+     * choices, so a build is valued the same as before (they were made with the build valued first, the worn one).
+     */
+    public function exportChoices():Dynamic {
+        return {weaves: [for (k => m in weaves) {k: k, v: [for (id => pos in m) {id: id, pos: pos}]}],
+            picks: [for (k => ids in picks) {k: k, ids: ids}]};
+    }
+
+    public function importChoices(d:Dynamic):Int {
+        var n = 0;
+        if (d == null) return 0;
+        var w:Dynamic = Reflect.field(d, "weaves");
+        if (Std.isOfType(w, Array)) for (e in (w : Array<Dynamic>)) {
+            var m = new Map<String, Int>();
+            var v:Dynamic = Reflect.field(e, "v");
+            if (Std.isOfType(v, Array)) for (x in (v : Array<Dynamic>)) m.set(Std.string(Reflect.field(x, "id")), Std.int(Reflect.field(x, "pos")));
+            weaves.set(Std.string(Reflect.field(e, "k")), m);
+            n++;
+        }
+        var p:Dynamic = Reflect.field(d, "picks");
+        if (Std.isOfType(p, Array)) for (e in (p : Array<Dynamic>)) {
+            var ids:Dynamic = Reflect.field(e, "ids");
+            if (Std.isOfType(ids, Array)) { picks.set(Std.string(Reflect.field(e, "k")), [for (x in (ids : Array<Dynamic>)) Std.string(x)]); n++; }
+        }
+        return n;
+    }
     /** The weapon skills chosen for the slots, by the weapon skills there are to choose from. */
     var picks = new Map<String, Array<String>>();
 
@@ -925,6 +962,7 @@ class Model {
             if (bestSim != null) {
                 var base = env.stats([]);
                 if (!fights.exists(key)) fights.set(key, []);
+                bestSim.compact();
                 fights.get(key).push({sim: bestSim, pick: bestPick, timing: [for (k => _ in bestSim.timing) k => base.get(k)]});
                 if (fightsRun <= 3) DebugLog.line("sim: the fight's course depends on " + [for (k => _ in bestSim.timing) k].join(", ") + "; " + bestSim.log.length + " hits logged");
             }
@@ -951,6 +989,7 @@ class Model {
         if (report != null) {
             report.push("sim: " + FIGHT + " s fight, dps " + r2(best.dps) + ", self heal " + r2(best.selfHeal) + "/s, ally heal " + r2(best.allyHeal) + "/s");
             report.push("sim casts: " + [for (id => k in best.casts) id + " " + k].join(", "));
+            if (best.resources != null && best.resources != "") report.push("sim resources at the end: " + best.resources);
             report.push("sim damage/s: " + [for (id => v in best.damage) id + " " + r2(v / FIGHT)].join(", "));
             report.push("sim heal/s: " + [for (id => v in best.heal) id + " " + r2(v / FIGHT)].join(", "));
             var miss = [for (k => v in best.missing) k + " x" + v];

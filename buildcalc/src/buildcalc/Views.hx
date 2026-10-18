@@ -134,7 +134,9 @@ class Views {
         function talent(parentRow:Dynamic, t:Dynamic):Void {
             var id = GameData.idOf(G.field(t, "skill"));
             var sk = GameData.skill(id);
-            var max = Std.int(G.num(G.field(G.field(G.field(sk, "props"), "talent"), "maxPoints")));
+            // the game's rule (HSkill.getTalentMaxPoints): a talent without props.talent.maxPoints has 1 point (it showed 0/0)
+            var max = 1;
+            try max = Std.int(G.num(G.callStatic("HSkill", "getTalentMaxPoints", [sk]))) catch (_:Dynamic) {}
             var rank = shown.ranks.exists(id) ? shown.ranks.get(id) : 0;
             var mine = GameData.talentRank(hero, id);
             spent += rank;
@@ -187,7 +189,8 @@ class Views {
     }
 
     static function talentPoints(hero:Dynamic):Int {
-        try return Std.int(G.num(G.call("st.player.HeroSpecialization", "getTotalTalentPoints", [G.field(hero, "specialization")]))) catch (_:Dynamic) return 0;
+        // negative below the level the talents open at (level - UnlockLevel_Talents + 1): none then
+        try return Std.int(Math.max(0, G.num(G.call("st.player.HeroSpecialization", "getTotalTalentPoints", [G.field(hero, "specialization")])))) catch (_:Dynamic) return 0;
     }
 
     // ---------------------------------------------------------------- skills and runes
@@ -447,6 +450,45 @@ class Views {
 
     static inline var FRAME_NEW = 0x7FA36B;
 
+    /**
+     * Items shown in the arsenal cell that the hero does not wear there. The game's item tooltip (ui.TipItem.init) gives
+     * an item its slot's share of the attributes (st.Equipment.getAffixFactor) only when the hero's equipment says it is
+     * worn (st.Equipment.isEquipped, getEquipSlot): for these items the mod answers "worn in the arsenal" to those two
+     * questions (BuildCalc hooks), so the game's own tooltip shows 40% and its arsenal line, as for the worn arsenal
+     * weapon. Only the mod's own copies are listed (a real item of the bag is shown by a copy, st.Item.clone), so no
+     * real item of the hero is ever taken for worn.
+     */
+    static var arsenalShown:Array<Dynamic> = [];
+    /** The item cells drawn last, by equipment slot (the test mode shows their tooltips). */
+    public static var cells = new Map<Int, Dynamic>();
+    static var arsenalCopies:Array<{of:Dynamic, copy:Dynamic}> = [];
+
+    static function asArsenal(item:Dynamic, worn:Dynamic):Dynamic {
+        if (item == null || item == worn) return item;
+        var shown = item;
+        if (isHeroItem(item)) {
+            shown = null;
+            for (x in arsenalCopies) if (x.of == item) shown = x.copy;
+            if (shown == null) {
+                try shown = G.call("st.Item", "clone", [item, null]) catch (e:Dynamic) DebugLog.error("arsenal tooltip copy", e);
+                if (shown == null) return item;
+                arsenalCopies.push({of: item, copy: shown});
+            }
+        }
+        if (arsenalShown.indexOf(shown) < 0) arsenalShown.push(shown);
+        return shown;
+    }
+
+    /** An item of the hero's inventories (equipment, bag, mail, bank): never answered for. */
+    static function isHeroItem(item:Dynamic):Bool {
+        for (x in Sources.ownItems) if (x == item) return true;
+        if (lastHero != null) for (sl in Items.SLOTS) if (GameData.equipped(lastHero, sl) == item) return true;
+        return false;
+    }
+
+    /** For the hooks: is this one of the arsenal items shown (taken as worn in the arsenal by the game's tooltip)? */
+    public static function shownInArsenal(item:Dynamic):Bool return item != null && arsenalShown.indexOf(item) >= 0;
+
     /** The hero of the window being drawn (for texts made without it at hand). */
     static var lastHero:Dynamic = null;
 
@@ -465,9 +507,12 @@ class Views {
             var f = slotFactor(index);
             var tip = f != 1 && shown != null ? arsenalText(shown, f) : null;
             if (f != 1) arsenalTip = tip;
-            // the game's own tooltip, the arsenal weapon too (its 40% and arsenal skills: the caption's tooltip)
-            var cell = icon(parent, G.field(inf, "gfx"), size, wornId != id ? FRAME_NEW : FRAME_ON, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, shown]),
+            // the game's own tooltip; an arsenal weapon the hero does not wear there is shown as worn in the arsenal
+            if (f != 1 && shown != null && index == 1) shown = asArsenal(shown, GameData.equipped(hero, index));
+            var tipItem = shown;
+            var cell = icon(parent, G.field(inf, "gfx"), size, wornId != id ? FRAME_NEW : FRAME_ON, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, tipItem]),
                 null, wornId != id ? Sources.label(id) : null, labelFont);
+            cells.set(index, cell);
             if (entry.infusion != null && entry.infusion != "") DebugLog.guard("infusion mark", () -> infusionMark(cell, entry.infusion, entry.infusion, size + 4));
             return;
         }
@@ -499,7 +544,11 @@ class Views {
         if (f != 1) arsenalTip = arsenalText(item, f);
         // the cell always shows the game's own item tooltip (a weapon the hero does not have too: our plain text there
         // looked broken); the arsenal share (40%) and its skills are on the caption above the cell
-        var cell = icon(parent, G.field(inf, "gfx"), size, frame, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, item]), null, label, labelFont);
+        // an arsenal weapon the hero does not wear there: the game's tooltip shows it as worn in the arsenal (40%)
+        if (f != 1 && index == 1) item = asArsenal(item, worn);
+        var tipItem = item;
+        var cell = icon(parent, G.field(inf, "gfx"), size, frame, 1.0, () -> G.callStatic("ui.Tooltip", "fromItem", [inf, tipItem]), null, label, labelFont);
+        cells.set(index, cell);
         if (infusion != "" || infusionChanged) DebugLog.guard("infusion mark", () -> infusionMark(cell, infusion, wornInfusion, size + 4));
     }
 
