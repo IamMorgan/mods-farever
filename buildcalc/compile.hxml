@@ -1,0 +1,7 @@
+-debug
+-lib hlx-runtime
+-D hl-ver=1.16.0
+-cp src
+-main buildcalc.BuildCalc
+-dce full
+-hl build/buildcalc/buildcalc.hl
