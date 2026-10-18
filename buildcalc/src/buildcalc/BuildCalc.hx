@@ -56,6 +56,20 @@ class BuildCalc {
         return name == null ? Continue : SkipWith(name);
     }
 
+    /** Every damage result in the world: those the hero dealt go to the fight log (FightLog). */
+    @:hlx.prefix(ent.Unit.rpcReceiveDamage__impl)
+    static function beforeReceiveDamage(instance:Dynamic, damage:Dynamic):HlxPrefixResult<Void> {
+        FightLog.damage(instance, damage);
+        return Continue;
+    }
+
+    /** ... and every heal. */
+    @:hlx.prefix(ent.Unit.rpcDisplayHeal__impl)
+    static function beforeDisplayHeal(instance:Dynamic, damage:Dynamic):HlxPrefixResult<Void> {
+        FightLog.heal(instance, damage);
+        return Continue;
+    }
+
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
         DebugLog.guard("language", followLanguage);
