@@ -971,6 +971,34 @@ class Optimizer {
         }
     }
 
+    /** A talent change must gain this share of the score's unit (the sum of the weights) to replace the talents the player has. */
+    public static inline var TALENT_CHANGE_GAIN = 0.10;
+
+    /**
+     * The talents of the start (the hero's worn ones, the last result's) stay unless the talents found gain at least
+     * TALENT_CHANGE_GAIN: the model's small gains from talents are within its error, so a talent change must be clear.
+     */
+    public function keepTalents(b:Build, refs:Array<Map<String, Int>>):Void {
+        var found = talentKey(b.talents);
+        var base = value(b);
+        var best:Map<String, Int> = null, bestV = -1e30;
+        for (r in refs) {
+            if (talentKey(r) == found) return;
+            if (!validTalents(r)) continue;
+            var trial = copy(b);
+            trial.talents = r.copy();
+            var v = value(trial);
+            if (v > bestV) { bestV = v; best = r; }
+        }
+        if (best == null) return;
+        var gain = (base - bestV) / unit;
+        if (gain < TALENT_CHANGE_GAIN) {
+            DebugLog.line("talents: the talents found gain " + r3(gain * 100) + "% of the unit over the start's (" + r3(bestV) + " -> " + r3(base) + "), less than "
+                + r3(TALENT_CHANGE_GAIN * 100) + "%: the start's talents are kept");
+            b.talents = best.copy();
+        } else DebugLog.line("talents: the talents found gain " + r3(gain * 100) + "% of the unit over the start's: changed");
+    }
+
     public function talentSpent(t:Map<String, Int>):Int {
         var n = 0;
         for (v in t) n += v;
@@ -1457,6 +1485,8 @@ class Search implements Task {
     var passStart = 0.0;
     var pass:Pass = null;
     var started = false;
+    /** The talents the search started with (the hero's, the last result's): they stay unless the others gain clearly. */
+    var refTalents:Array<Map<String, Int>> = [];
     var t0 = 0.0;
     var e0 = 0;
     var passT0 = -1.0;
@@ -1482,6 +1512,8 @@ class Search implements Task {
             // the last result of this questionnaire is the start when there is one (its items; talents, skills and runes
             // are built from scratch anyway): not weighed against the worn build, whose score has the worn talents in it
             var seed = o.seedFromLast();
+            refTalents = [o.worn.talents.copy()];
+            if (seed != null) refTalents.push(seed.talents.copy());
             if (seed != null) {
                 b = seed;
                 current = o.value(b);
@@ -1515,6 +1547,7 @@ class Search implements Task {
             if (passIndex == 0 && (round >= rounds || current <= before + 1e-12 || o.overLimit())) {
                 DebugLog.line("search " + o.stage + ": score " + start + " -> " + current + ", " + (o.evals - e0) + " builds in "
                     + Math.round((haxe.Timer.stamp() - t0) * 1000) + " ms, " + round + " rounds" + (o.overLimit() ? " (limit)" : ""));
+                if (rounds > 0) o.keepTalents(b, refTalents);
                 onDone(b);
                 return true;
             }
