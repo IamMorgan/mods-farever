@@ -106,8 +106,9 @@ class RotationSequencer {
     function play(index:Int, def:RotationData, runner:Runner, slot:Int, now:Float):Void {
         if (runner.awaiting) {
             runner.awaiting = false;
-            // Still ready after the request: it was not used (queue expired); ask again, then give up on it.
-            if (skills.skillState(hero, def.slots[runner.next]) == Readiness.READY && runner.attempts < MAX_ATTEMPTS) {
+            // Not used after the request (queue expired, no target...): ask again, then give up on it.
+            var used = skills.wasUsed(slot) || skills.skillState(hero, def.slots[runner.next]) != Readiness.READY;
+            if (!used && runner.attempts < MAX_ATTEMPTS) {
                 // fall through: request it again
             } else {
                 runner.next++;

@@ -133,6 +133,7 @@ class GameSkills implements SkillIO {
             var input = inputFor(kind);
             st.lastSkill = skill;
             st.lastUsedAt = now;
+            st.usedSeen = false;
             if (isAimSkill(skill)) {
                 if (aoeAutoAim) {
                     st.autoSkill = skill; st.autoKind = kind; st.autoInput = input;
@@ -208,8 +209,20 @@ class GameSkills implements SkillIO {
             if (ctl == null) { st.autoSkill = null; st.aimInput = null; continue; }
             updateAuto(st, ctl);
             updateAim(st, ctl);
+            watchUse(st);
         }
     }
+
+    /** After a request: has the game started using the skill? (casting, or no longer ready: cooldown, charges). */
+    function watchUse(st:MacroState):Void {
+        if (st.usedSeen || st.lastSkill == null || now - st.lastUsedAt > 10) return;
+        try {
+            if (G.call("st.skill.Skill", "isCasting", st.lastSkill) == true
+                || enumName(G.call("st.skill.Skill", "checkUse", st.lastSkill, [null])) != "Ok") st.usedSeen = true;
+        } catch (_:Dynamic) {}
+    }
+
+    public function wasUsed(macroIndex:Int):Bool return state(macroIndex).usedSeen;
 
     /** Auto aim: once the skill can be used, use it on the nearest target's point. */
     function updateAuto(st:MacroState, ctl:Dynamic):Void {
@@ -268,6 +281,7 @@ private class MacroState {
     public var requestTime = -1.0; // requestedSkillTime of this macro's last request
     public var lastSkill:Dynamic;
     public var lastUsedAt = 0.0;
+    public var usedSeen = false; // since the last request the skill was seen casting or not ready: the game used it
     // ground-aimed skill waiting for its confirm press (auto aim off)
     public var aimInput:String;
     public var aimUntil = 0.0;

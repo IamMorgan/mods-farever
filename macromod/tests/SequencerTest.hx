@@ -38,6 +38,7 @@ class FakeSkills implements SkillIO {
     public var busyMacros:Array<Int> = []; // only these macros are busy, when non-empty
     public function isBusy(macroIndex:Int):Bool return busy && (busyMacros.length == 0 || busyMacros.indexOf(macroIndex) >= 0);
     public function skillState(hero:Dynamic, skillId:String):Int return 1;
+    public function wasUsed(macroIndex:Int):Bool return true;
     public function useSkill(macroIndex:Int, hero:Dynamic, skillId:String):Bool {
         if (knownIds.length > 0 && knownIds.indexOf(skillId) < 0) return false;
         log.push(Std.int(t * 1000) + " " + skillId);
