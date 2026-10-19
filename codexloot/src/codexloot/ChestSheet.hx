@@ -320,11 +320,13 @@ class ChestSheet {
         if (drops == null) return;
         var any:Dynamic = null;
         var made:Array<{button:Dynamic, item:Dynamic, chance:Float, mine:Bool}> = [];
+        // the weapons' rarity is rolled when they drop: the Legendary ones are listed on their own, the others have the rest of the chance
+        var legendary = loot.legendary;
         for (e in loot.entries) {
             try {
                 var button = LootUi.makeButton(e.item, drops, loot.level, loot.minRarity);
                 if (any == null) any = button;
-                made.push({button: button, item: e.item, chance: e.chance, mine: e.mine});
+                made.push({button: button, item: e.item, chance: legendary > 0 && e.weapon ? e.chance * (1 - legendary) : e.chance, mine: e.mine});
             } catch (_:Dynamic) {}
         }
         if (any != null && LootUi.prepare(s, any))
@@ -334,6 +336,10 @@ class ChestSheet {
             var alpha = m.mine ? 1.0 : 0.5;
             if (text != "" && !ChestNames.matches(m.item, text)) alpha = 0.3;
             if (alpha < 1.0) try HlxRuntime.setField(m.button, "alpha", alpha) catch (_:Dynamic) {}
+        }
+        if (legendary > 0 && any != null) {
+            var top:Array<LootCalc.LootEntry> = [for (e in loot.entries) if (e.weapon && e.mine) {item: e.item, chance: e.chance * legendary}];
+            LootUi.block(s, drops, any, SettingsText.legendaryCaption(), "Legendary", 0xFFC344, top, loot.level, 0, top.length, "Legendary");
         }
         try G.call("h2d.Flow", "reflow", [drops]) catch (_:Dynamic) {}
     }
