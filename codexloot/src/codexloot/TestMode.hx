@@ -81,8 +81,8 @@ class TestMode {
         var loot = ChestLoot.compute(chest, CodexLoot.hero);
         return {id: ChestData.idOf(chest), name: ChestData.nameOf(chest), rarity: G.str(G.field(chest, "rarity")),
             lines: ChestData.describe(chest, loot), level: loot.level, maxItems: loot.maxItems, weighted: loot.weighted, affinity: loot.affinity,
-            ownedLast: loot.ownedLast, minRarity: loot.minRarity, pool: loot.pool,
-            items: [for (e in loot.entries) {id: G.str(G.field(e.item, "id")), name: Sheets.name("item", G.str(G.field(e.item, "id"))), chance: Math.round(e.chance * 10000) / 10000, mine: e.mine,
+            ownedLast: loot.ownedLast, minRarity: loot.minRarity, pool: loot.pool, legendary: loot.legendary, legendaryMax: loot.legendaryMax,
+            items: [for (e in loot.entries) {id: G.str(G.field(e.item, "id")), name: Sheets.name("item", G.str(G.field(e.item, "id"))), chance: Math.round(e.chance * 10000) / 10000, mine: e.mine, weapon: e.weapon,
                 shownRarity: LootUi.rarityOf(LootUi.realItem(e.item, loot.level, loot.minRarity), e.item)}]};
     }
 
@@ -153,7 +153,8 @@ class TestMode {
                 for (n in ["listPanel", "unitList", "unitPanel", "dataPanel", "leftPanel", "lorePanel", "loreTitle", "description", "progressPanel", "dropsPanel", "dropHeader", "dropsIconsRoot", "dropsIcons", "rightPanel"]) {
                     var o = G.field(sheet, n);
                     Reflect.setField(out, n, o == null ? null : {type: G.typeName(o), x: G.num(G.field(o, "x")), y: G.num(G.field(o, "y")), w: G.num(G.field(o, "calculatedWidth")),
-                        h: G.num(G.field(o, "calculatedHeight")), minH: G.field(o, "minHeight"), maxH: G.field(o, "maxHeight"), visible: G.field(o, "visible"), overflow: G.str(G.field(o, "overflow"))});
+                        h: G.num(G.field(o, "calculatedHeight")), minH: G.field(o, "minHeight"), maxH: G.field(o, "maxHeight"), visible: G.field(o, "visible"), overflow: G.str(G.field(o, "overflow")),
+                        scrollBar: G.field(G.field(o, "scrollBar"), "visible"), scrollMax: G.field(o, "scrollPosY"), contentH: G.num(G.field(o, "contentHeight"))});
                 }
                 answer({id: id, cmd: name, ok: true, parts: out});
             case "raw":
