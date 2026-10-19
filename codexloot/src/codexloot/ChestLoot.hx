@@ -28,7 +28,10 @@ class ChestLoot {
 
     /** Weapons get their rarity rolled when they drop (Legendary among the rarities); other items keep the rarity of their data. */
     static function isWeapon(item:Dynamic):Bool {
-        try return G.callStatic("HItem", "isSameType", [item, "Weapon"]) == true catch (_:Dynamic) return false;
+        try {
+            var type = Sheets.get("itemType").get(G.str(G.field(item, "type"))); // HItem.isSameType takes the item type's record
+            return type != null && G.callStatic("HItem", "isSameType", [type, "Weapon"]) == true;
+        } catch (_:Dynamic) return false;
     }
 
     /** The hero's level, or null. */

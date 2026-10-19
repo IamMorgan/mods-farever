@@ -306,13 +306,40 @@ class ChestSheet {
         try G.call("ui.win.TitleWindow", "setHeader", [owner, "ChestCompletion", null]) catch (_:Dynamic) {}
     }
 
-    /** The texts changed size: the panels of the sheet are laid out again. */
+    /** The texts changed size: the panels of the sheet are laid out again, and the contents list is fitted into the window. */
     static function relayout(s:Dynamic):Void {
-        for (name in ["lorePanel", "leftPanel", "dataPanel", "dropsPanel"]) {
-            var p = G.field(s, name);
-            if (p != null) try G.call("h2d.Flow", "reflow", [p]) catch (_:Dynamic) {}
-        }
+        for (name in ["lorePanel", "leftPanel"]) reflow(G.field(s, name));
+        fitDrops(s);
+        for (name in ["dataPanel", "dropsPanel"]) reflow(G.field(s, name));
         try G.call("h2d.Flow", "reflow", [s]) catch (_:Dynamic) {}
+    }
+
+    static function reflow(p:Dynamic):Void {
+        if (p != null) try G.call("h2d.Flow", "reflow", [p]) catch (_:Dynamic) {}
+    }
+
+    static inline var DROPS_BOTTOM_GAP = 12;
+    static inline var DROPS_MIN_HEIGHT = 100;
+
+    /**
+     * The contents list has a fixed height of the game's style (it scrolls inside it), made for a monster's short lore text. The
+     * description of a chest is longer, so the list would end below the window: its height is cut to what is left of the left
+     * panel, so that the list ends inside the window and its scroll bar is on screen.
+     */
+    static function fitDrops(s:Dynamic):Void {
+        try {
+            var left = G.field(s, "leftPanel"), panel = G.field(s, "dropsPanel"), root = G.field(s, "dropsIconsRoot"), icons = G.field(s, "dropsIcons");
+            if (left == null || panel == null || root == null || icons == null) return;
+            var limit = G.num(G.field(left, "maxHeight"));
+            if (limit <= 0) return;
+            var room = Math.floor(limit - G.num(G.field(panel, "y")) - G.num(G.field(root, "y")) - DROPS_BOTTOM_GAP);
+            if (room < DROPS_MIN_HEIGHT) room = DROPS_MIN_HEIGHT;
+            for (o in [root, icons]) {
+                HlxRuntime.setField(o, "minHeight", room);
+                HlxRuntime.setField(o, "maxHeight", room);
+                HlxRuntime.setField(o, "needReflow", true);
+            }
+        } catch (_:Dynamic) {}
     }
 
     /** The contents: an icon with the chance for every item, like the trophies of a monster. */

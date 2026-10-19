@@ -69,6 +69,11 @@ The mod follows the game's own loot rules:
 
 ### Changelog
 
+#### 1.2.4
+
+- **Fix: the Legendary weapons block of 1.2.3 was never shown** (the weapon check passed the game a wrong argument). The Hero Weapon Cache now lists its Legendary weapons (6%) in a block of their own.
+- **Fix: the contents list of a chest had no scroll bar.** The chest description is longer than a monster's lore text and pushed the list below the window, with its scroll bar. The list is now cut to the room left in the window and scrolls (a chest with many items, like the Chaotic Gear Cache, shows the scroll bar).
+
 #### 1.2.3
 
 - **Legendary weapons in chests:** a weapon's rarity is rolled when it drops, and *Legendary* is among the rarities even when a chest guarantees *Epic or better* (the Hero Weapon Cache). The Chests tab now shows the chance of a Legendary weapon in a separate block (*Legendary weapons*, gold), and the other weapons have their chance reduced by that share. For the Hero Weapon Cache (level 25) the chance is **6%** with no bad luck gathered (Legendary's 1% of the 20% weight left after *Epic or better*, plus the 1% base of the game's luck counter); the luck counter adds 0.5% with every dropped weapon that is not Legendary, up to 30%. The numbers come from the game's data (`rarity`, `counter`) and the drop code (`ent.Hero.makeLootItem`, `st.Player.rollLuck`).
