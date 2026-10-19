@@ -49,7 +49,7 @@ For manual installation:
 #### 1.3.0
 
 - **Rotations:** a new window (button *Rotations* in *General*) for skill rotations. Each rotation is ten cells; its skills are used in turn, each as soon as it is ready (no delays), and the next skill waits for a skill that is on cooldown. *Repeat* loops the rotation, otherwise it plays once. Own activation key (one rotation per key) and press type (Toggle / Hold) per rotation. The window is drawn by the mod itself and follows the client's language (English or Russian). Rotations are stored in `hlx/config/macromod/rotations.json`.
-- Skills without a cooldown (basic attacks) work in rotations: every cell is one request, so a combo of several basic attacks goes through.
+- Basic attacks work in rotations as combos: the rotation presses the Attack key, so the game picks the next hit of the combo itself, and the next skill waits until the hero has finished the current one (skills no longer cancel each other).
 - The skills of the action bars are now re-read while you play (every two seconds), not only while the settings page is open, so ground-aimed skills always confirm with the right key.
 - Test mode for development: the mod listens for commands only while the folder `hlx/config/macromod/test` exists (it is not in the archive).
 

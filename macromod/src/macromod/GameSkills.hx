@@ -25,6 +25,7 @@ class GameSkills implements SkillIO {
     static inline var AIM_CONFIRM_DELAY = 0.08; // aiming visible this long before the confirm press
     static inline var MAX_CAST_WAIT = 6.0;      // a cast longer than this no longer holds the next step
     static inline var PRESS_FRAMES = 2;         // hxd.Key reports a key-down one frame after the event
+    static inline var ATTACK_WAIT = 1.5;        // longest wait for the game to start a pressed attack (it may first draw the weapon)
 
     /** Name -> kind of every skill picked in the panel (see PickStore). */
     public var picks:Map<String, String> = new Map();
@@ -101,6 +102,11 @@ class GameSkills implements SkillIO {
         } catch (_:Dynamic) return false;
     }
 
+    /** Basic attacks (the Attack key) are requested another way than skills: see useSkill. */
+    static function isBasic(skill:Dynamic):Bool {
+        try return G.call("st.skill.BaseSkill", "isBasicAttack", skill) == true catch (_:Dynamic) return false;
+    }
+
     /** The game's own check before using a skill (cooldown, silence, whether the hero can act): Ok = ready now. */
     public function skillState(hero:Dynamic, value:String):Int {
         if (controller() == null) return Readiness.WAITING;
@@ -111,6 +117,8 @@ class GameSkills implements SkillIO {
             if (kind == null) return Readiness.MISSING;
             var skill = G.call("ent.GameObject", "getSkill", hero, [kind]);
             if (skill == null || G.field(skill, "removed") == true) return Readiness.MISSING;
+            // A basic attack is ready when the hero can attack: which hit of the combo comes next is the game's choice.
+            if (isBasic(skill)) return G.call("ent.Hero", "canAttack", hero) == true ? Readiness.READY : Readiness.WAITING;
             return enumName(G.call("st.skill.Skill", "checkUse", skill, [null])) == "Ok" ? Readiness.READY : Readiness.WAITING;
         } catch (_:Dynamic) {
             return Readiness.WAITING;
@@ -134,6 +142,15 @@ class GameSkills implements SkillIO {
             st.lastSkill = skill;
             st.lastUsedAt = now;
             st.usedSeen = false;
+            st.attackPending = false;
+            if (isBasic(skill)) {
+                // A basic attack is not requested by kind: the game picks the next hit of the combo itself when
+                // the Attack key is pressed, so press it, the way the keyboard reports it.
+                if (!pressInput("Attack")) return false;
+                st.attackPending = true;
+                st.attackSince = now;
+                return true;
+            }
             if (isAimSkill(skill)) {
                 if (aoeAutoAim) {
                     st.autoSkill = skill; st.autoKind = kind; st.autoInput = input;
@@ -165,21 +182,25 @@ class GameSkills implements SkillIO {
 
     /** One press of the key bound to a game input, the way the keyboard reports it. */
     function press(input:String):Bool {
-        for (name in [input, "AimSkillConfirm"]) {
-            try {
-                var binding = G.staticCall("lib.Input", "getBinding", [name]);
-                var code:Dynamic = G.field(binding, "code");
-                if (code == null) continue;
-                var c = G.integer(code, -1);
-                if (c < 0) continue;
-                if (releaseCode >= 0) keys.send(releaseCode, false);
-                keys.send(c, true);
-                releaseCode = c;
-                releaseFrames = PRESS_FRAMES;
-                return true;
-            } catch (_:Dynamic) {}
-        }
+        for (name in [input, "AimSkillConfirm"]) if (pressInput(name)) return true;
         return false;
+    }
+
+    function pressInput(name:String):Bool {
+        try {
+            var binding = G.staticCall("lib.Input", "getBinding", [name]);
+            var code:Dynamic = G.field(binding, "code");
+            if (code == null) return false;
+            var c = G.integer(code, -1);
+            if (c < 0) return false;
+            if (releaseCode >= 0) keys.send(releaseCode, false);
+            keys.send(c, true);
+            releaseCode = c;
+            releaseFrames = PRESS_FRAMES;
+            return true;
+        } catch (_:Dynamic) {
+            return false;
+        }
     }
 
     /** The nearest target's position as a point target, kept within the skill's range. */
@@ -216,6 +237,14 @@ class GameSkills implements SkillIO {
     /** After a request: has the game started using the skill? (casting, or no longer ready: cooldown, charges). */
     function watchUse(st:MacroState):Void {
         if (st.usedSeen || st.lastSkill == null || now - st.lastUsedAt > 10) return;
+        if (st.attackPending) { // a basic attack: used once the hero is seen performing a skill (a combo hit is a skill of its own)
+            var ctl = controller();
+            try {
+                var active = ctl == null ? null : G.call("ent.GameObject", "getActiveSkill", G.field(ctl, "unit"));
+                if (active != null) st.usedSeen = true; // nothing else was running when the key was pressed
+            } catch (_:Dynamic) {}
+            return;
+        }
         try {
             if (G.call("st.skill.Skill", "isCasting", st.lastSkill) == true
                 || enumName(G.call("st.skill.Skill", "checkUse", st.lastSkill, [null])) != "Ok") st.usedSeen = true;
@@ -262,6 +291,8 @@ class GameSkills implements SkillIO {
     public function isBusy(macroIndex:Int):Bool {
         var st = state(macroIndex);
         if (st.autoSkill != null || st.aimInput != null || now < st.confirmUntil) return true;
+        // A basic attack still waits for the game to start it (it may first draw the weapon).
+        if (st.attackPending && !st.usedSeen && now - st.attackSince < ATTACK_WAIT) return true;
         var ctl = controller();
         if (ctl == null) return false;
         try {
@@ -270,6 +301,8 @@ class GameSkills implements SkillIO {
                 && serverNow(ctl) - st.requestTime < queueTime()) return true;
             if (st.lastSkill != null && now - st.lastUsedAt < MAX_CAST_WAIT
                 && G.call("st.skill.Skill", "isCasting", st.lastSkill) == true) return true;
+            // A rotation never cuts in on a skill the hero is using (any skill, not only its own last one).
+            if (macroIndex >= MacroDefs.MACROS && G.call("ent.GameObject", "getActiveSkill", G.field(ctl, "unit")) != null) return true;
         } catch (_:Dynamic) {}
         return false;
     }
@@ -281,6 +314,8 @@ private class MacroState {
     public var requestTime = -1.0; // requestedSkillTime of this macro's last request
     public var lastSkill:Dynamic;
     public var lastUsedAt = 0.0;
+    public var attackPending = false; // the last request was a basic attack (the Attack key was pressed)
+    public var attackSince = 0.0; // when it was made
     public var usedSeen = false; // since the last request the skill was seen casting or not ready: the game used it
     // ground-aimed skill waiting for its confirm press (auto aim off)
     public var aimInput:String;

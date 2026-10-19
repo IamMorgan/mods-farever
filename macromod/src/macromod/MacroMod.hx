@@ -230,6 +230,7 @@ class MacroMod {
         rotationSeq.suspended = rotationWindow.isCapturing();
         try rotationSeq.update(now) catch (_:Dynamic) {}
         try TestMode.tick(instance) catch (_:Dynamic) {}
+        try TestMode.frame() catch (_:Dynamic) {}
 
         // Both scanners are cheap (a few hundred UI nodes per frame, with a pause between passes)
         // and only find rows while the Farever Macros settings page is on screen.
