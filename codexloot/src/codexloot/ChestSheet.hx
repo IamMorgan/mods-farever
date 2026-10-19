@@ -339,6 +339,7 @@ class ChestSheet {
                 HlxRuntime.setField(o, "maxHeight", room);
                 HlxRuntime.setField(o, "needReflow", true);
             }
+            LootUi.keepClearOfScrollBar(icons); // the scroll bar is drawn over the right edge of the icon grid
         } catch (_:Dynamic) {}
     }
 
@@ -365,8 +366,11 @@ class ChestSheet {
             if (alpha < 1.0) try HlxRuntime.setField(m.button, "alpha", alpha) catch (_:Dynamic) {}
         }
         if (legendary > 0 && any != null) {
-            var top:Array<LootCalc.LootEntry> = [for (e in loot.entries) if (e.weapon && e.mine) {item: e.item, chance: e.chance * legendary}];
-            LootUi.block(s, drops, any, SettingsText.legendaryCaption(), "Legendary", 0xFFC344, top, loot.level, 0, top.length, "Legendary");
+            // every weapon of the list, the ones of other classes dimmed as in the list above
+            var top:Array<LootCalc.LootEntry> = [for (e in loot.entries) if (e.weapon) {item: e.item, chance: e.chance * legendary}];
+            var others = [for (e in loot.entries) if (e.weapon && !e.mine) G.str(G.field(e.item, "id")) => true];
+            LootUi.block(s, drops, any, SettingsText.legendaryCaption(), "Legendary", 0xFFC344, top, loot.level, 0, top.length, "Legendary",
+                (e) -> others.exists(G.str(G.field(e.item, "id"))));
         }
         try G.call("h2d.Flow", "reflow", [drops]) catch (_:Dynamic) {}
     }
