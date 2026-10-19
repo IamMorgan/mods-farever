@@ -38,6 +38,30 @@ class SettingsText {
 
     public static function cancel(russian:Bool):String return russian ? "Отмена" : "Cancel";
 
+    // --- Rotation window (drawn by the mod itself, see RotationWindow) ---
+
+    public static function rotationsTitle(russian:Bool):String return russian ? "Ротации" : "Rotations";
+    public static function rotationNew(russian:Bool):String return russian ? "Новая" : "New";
+    public static function rotationRepeat(russian:Bool):String return russian ? "Повторять" : "Repeat";
+    public static function rotationKey(russian:Bool):String return russian ? "Клавиша:" : "Key:";
+    public static function rotationKeyNotSet(russian:Bool):String return russian ? "Не задана" : "Not set";
+    public static function rotationPressKey(russian:Bool):String return russian ? "Нажмите клавишу..." : "Press a key...";
+    public static function rotationDelete(russian:Bool):String return russian ? "Удалить" : "Delete";
+    public static function rotationClose(russian:Bool):String return russian ? "Закрыть" : "Close";
+    public static function rotationEmpty(russian:Bool):String
+        return russian ? "Ротаций пока нет. Нажмите «Новая»." : "No rotations yet. Click \"New\".";
+    public static function rotationHint(russian:Bool):String
+        return russian ? "Нажмите на ячейку, чтобы выбрать скилл. Правая кнопка или красный крестик очищают ячейку. Колесо мыши листает список."
+            : "Click a cell to pick a skill. Right-click or the red X clears a cell. The mouse wheel scrolls the list.";
+    public static function rotationPickerTitle(number:Int, cell:Int, russian:Bool):String
+        return russian ? "Скилл для ячейки " + cell + " ротации " + number : "Skill for cell " + cell + " of rotation " + number;
+    public static function rotationPage(from:Int, to:Int, total:Int):String return from + "-" + to + " / " + total;
+
+    /** The window's note when a key is already used: by another rotation or by one of the macros. */
+    public static function rotationKeyTaken(isMacro:Bool, number:Int, russian:Bool):String
+        return russian ? "Эта клавиша уже занята: " + (isMacro ? "макрос " : "ротация ") + number + ". Выберите другую."
+            : "That key is already used by " + (isMacro ? "macro " : "rotation ") + number + ". Choose another one.";
+
     public static function build(russian:Bool, macros:Int, steps:Int):Dynamic {
         inline function t(en:String, ru:String):String return russian ? ru : en;
         var configs:Array<Dynamic> = [];
@@ -51,6 +75,10 @@ class SettingsText {
         configs.push({key: "combatOnly", type: "checkbox",
             label: t("Active only in combat (a started macro plays only while your character is in combat and waits outside it)",
                 "Активно только в бою (запущенный макрос воспроизводится только в бою, вне боя ждёт)")});
+        configs.push({key: "rotations_open", type: "button",
+            label: t("Rotations: skills used in turn, each as soon as it is ready (opens the rotation window)",
+                "Ротации: скиллы по очереди, каждый как только будет готов (открывает окно ротаций)"),
+            buttonText: t("Rotations", "Ротации")});
         for (m in 1...macros + 1) {
             configs.push({type: "title", label: t("Macro " + m, "Макрос " + m)});
             configs.push({key: "m" + m + "_name", type: "text", label: t("Name", "Название"), placeholder: t("Rotation " + m, "Ротация " + m)});

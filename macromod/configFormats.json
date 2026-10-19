@@ -20,6 +20,12 @@
       "key": "combatOnly"
     },
     {
+      "type": "button",
+      "label": "Rotations: skills used in turn, each as soon as it is ready (opens the rotation window)",
+      "key": "rotations_open",
+      "buttonText": "Rotations"
+    },
+    {
       "type": "title",
       "label": "Macro 1"
     },

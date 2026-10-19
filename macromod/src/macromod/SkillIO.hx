@@ -9,4 +9,14 @@ interface SkillIO {
     /** True while this macro's previous step isn't finished (request still queued, aiming not
         confirmed, skill still casting); its next step waits instead of cutting it off. */
     function isBusy(macroIndex:Int):Bool;
+    /** Whether a rotation may use the skill now: Readiness.READY, WAITING (cooldown, silence, ...)
+        or MISSING (the hero has no such skill: the rotation skips it). */
+    function skillState(hero:Dynamic, skill:String):Int;
+}
+
+/** Answers of SkillIO.skillState. */
+class Readiness {
+    public static inline var MISSING = 0;
+    public static inline var READY = 1;
+    public static inline var WAITING = 2;
 }

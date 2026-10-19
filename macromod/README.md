@@ -19,6 +19,7 @@ For manual installation:
 - **Press (Toggle) or Hold:** In Toggle mode press the activation key to start the macro and press it again to stop. In Hold mode the macro runs only while the key is held down.
 - **Active only in combat (optional):** With this setting on, the activation key still starts and stops a macro at any time, but a started macro plays only while your character is in combat. When the fight ends it waits (it is not stopped), and in the next fight it plays again from its first step.
 - **Settings in your language:** The settings page follows the client's language (English or Russian).
+- **Rotations:** the *Rotations* button in *General* opens a window with your rotations. *New* adds a rotation at the top of the list: ten cells with a "+" between them. Click a cell to pick a skill (the same panel as for macro steps; right-click or the small red X clears a cell). Under the cells: *Repeat*, the activation key (click it, then press the key or a combination such as Ctrl+1; Esc cancels, the red X clears it) and the press type (*Press (Toggle)*: press to start, press again to stop; *Hold*: runs while the key is held). A rotation uses its skills in turn and has no delays: each skill is used as soon as it is ready. A skill on cooldown holds the rotation back - the next skill is not used before it. Without *Repeat* the rotation plays once, with it the rotation goes round and round. Empty cells are skipped. One key can start only one rotation (or macro); the window refuses a key that is taken. Rotations are saved on their own and follow the *General* options *Active only in combat*, *Don't use while running* and *AoE skills aim at the nearest enemy*.
 - **Repeat in loop:** Run the steps once, or loop them until you stop the macro.
 - **Hotkey modifiers:** Activation keys accept Ctrl, Shift or Alt combinations, with Farever's strict matching: Ctrl+1 does not also trigger a plain 1.
 - **Clear buttons:** A small red X next to every key button resets the key to "Not set" and updates the button right away. Right-clicking a key button works too.
@@ -44,6 +45,12 @@ For manual installation:
 - Skills that must be held down are stopped by the game right after they start, because their key isn't physically held.
 
 ### Changelog
+
+#### 1.3.0
+
+- **Rotations:** a new window (button *Rotations* in *General*) for skill rotations. Each rotation is ten cells; its skills are used in turn, each as soon as it is ready (no delays), and the next skill waits for a skill that is on cooldown. *Repeat* loops the rotation, otherwise it plays once. Own activation key (one rotation per key) and press type (Toggle / Hold) per rotation. The window is drawn by the mod itself and follows the client's language (English or Russian). Rotations are stored in `hlx/config/macromod/rotations.json`.
+- The skills of the action bars are now re-read while you play (every two seconds), not only while the settings page is open, so ground-aimed skills always confirm with the right key.
+- Test mode for development: the mod listens for commands only while the folder `hlx/config/macromod/test` exists (it is not in the archive).
 
 #### 1.2.2
 
