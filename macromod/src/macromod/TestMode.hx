@@ -31,6 +31,32 @@ class TestMode {
     static var log:Array<Dynamic> = [];
     static var t0 = -1.0;
 
+    static var trace:Array<Dynamic> = [];
+    static var traceUntil = 0.0;
+    static var traceStart = 0.0;
+
+    /** Every frame: while a trace runs, one sample of the hero's active skill. */
+    public static function frame():Void {
+        var at = haxe.Timer.stamp();
+        if (at > traceUntil) return;
+        var hero = GameSkills.localHero();
+        if (hero == null) return;
+        var active:Dynamic = null;
+        try active = G.call("ent.GameObject", "getActiveSkill", hero) catch (_:Dynamic) {}
+        var sample:Dynamic = {t: Math.round((at - traceStart) * 1000) / 1000, canAttack: try G.call("ent.Hero", "canAttack", hero) == true catch (_:Dynamic) null};
+        try Reflect.setField(sample, "goState", Type.enumConstructor(G.field(hero, "goState"))) catch (_:Dynamic) {}
+        try { var ctl = GameSkills.controller(); Reflect.setField(sample, "reqAttack", G.number(G.field(ctl, "requestAttack"), -9)); Reflect.setField(sample, "job", Type.enumConstructor(G.field(ctl, "currentJob"))); } catch (_:Dynamic) {}
+        if (active != null) {
+            Reflect.setField(sample, "active", G.text(G.str(G.field(active, "kind"))));
+            for (name in ["isCasting", "isRunning"]) {
+                var type = name == "isCasting" ? "st.skill.Skill" : "st.skill.BaseSkill";
+                try Reflect.setField(sample, name, G.call(type, name, active) == true) catch (_:Dynamic) {}
+            }
+            try Reflect.setField(sample, "castLeft", Math.round(G.number(G.call("st.skill.Skill", "getCastTimeLeft", active), -1) * 1000) / 1000) catch (_:Dynamic) {}
+        }
+        trace.push(sample);
+    }
+
     /** Each frame (GameApp.update): looks for a command twice a second, while the test folder exists. */
     public static function tick(gameApp:Dynamic):Void {
         app = gameApp;
@@ -43,7 +69,7 @@ class TestMode {
             MacroMod.rotationSeq.onUse = (rotation, cell, skill) -> {
                 var at = haxe.Timer.stamp();
                 if (t0 < 0) t0 = at;
-                log.push({t: Math.round((at - t0) * 1000) / 1000, rotation: rotation, cell: cell, skill: skill});
+                log.push({t: Math.round((at - t0) * 1000) / 1000, trace: Math.round((at - traceStart) * 1000) / 1000, rotation: rotation, cell: cell, skill: skill});
             };
         }
         if (!sys.FileSystem.exists(COMMAND)) return;
@@ -131,6 +157,15 @@ class TestMode {
             case "start":
                 MacroMod.rotationSeq.startNow(index, now);
                 reply({});
+            case "trace":
+                // Starts rotation `index` and records every frame for `ms`: the hero's active skill and its states.
+                trace = [];
+                traceUntil = haxe.Timer.stamp() + Std.int(Reflect.field(cmd, "ms")) / 1000;
+                traceStart = haxe.Timer.stamp();
+                MacroMod.rotationSeq.startNow(index, now);
+                reply({});
+            case "tracelog":
+                reply({trace: trace});
             case "stop":
                 MacroMod.rotationSeq.stopNow(index);
                 reply({});
