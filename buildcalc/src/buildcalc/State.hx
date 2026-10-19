@@ -126,8 +126,14 @@ class State {
                 var skills = parseSkills(Reflect.field(t, "skills"));
                 var ws:Dynamic = Reflect.field(t, "weaponSkills");
                 var weaponSkills = Std.isOfType(ws, Array) ? [for (e in (ws : Array<Dynamic>)) Std.isOfType(e, Array) ? [for (x in (e : Array<Dynamic>)) Std.string(x)] : []] : null;
+                // the build's own attributes and totals: kept with the template (templates saved before have none)
+                var st:Dynamic = Reflect.field(t, "stats");
+                var stats = Std.isOfType(st, Array) ? [for (e in (st : Array<Dynamic>)) {id: Std.string(Reflect.field(e, "id")), v: num(Reflect.field(e, "v"))}] : null;
+                var tt:Dynamic = Reflect.field(t, "totals");
+                var totals = tt == null ? null : {dps: num(Reflect.field(tt, "dps")), self: num(Reflect.field(tt, "self")), ally: num(Reflect.field(tt, "ally")),
+                    nowDps: num(Reflect.field(tt, "nowDps")), nowSelf: num(Reflect.field(tt, "nowSelf")), nowAlly: num(Reflect.field(tt, "nowAlly"))};
                 templates[i] = {settings: valid(Reflect.field(t, "settings")), savedAt: Std.string(Reflect.field(t, "savedAt")), build: build,
-                    talents: talents, sigils: sigils, skills: skills, infusions: infusions, weaponSkills: weaponSkills};
+                    talents: talents, sigils: sigils, skills: skills, infusions: infusions, weaponSkills: weaponSkills, stats: stats, totals: totals};
             }
             dummy = Reflect.field(data, "dummy");
             // "lasts": one per questionnaire; "last": the single one kept before
@@ -157,6 +163,7 @@ class State {
         return [for (x in (v : Array<Dynamic>)) Std.parseFloat(Std.string(x))];
     }
 
+    static function num(v:Dynamic):Float return Std.isOfType(v, Int) || Std.isOfType(v, Float) ? v : 0.0;
     static function int(v:Dynamic):Null<Int> return Std.isOfType(v, Int) || Std.isOfType(v, Float) ? Std.int(v) : null;
 
     static function parseBuild(b:Dynamic):Array<TemplateItem> {
