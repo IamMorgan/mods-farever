@@ -25,17 +25,21 @@ class GameFake implements SkillIO {
     public var log:Array<String> = [];
     public var busyUntil = 0.0;
     public var castTime = 0.0;
+    public var used = false;
     public function new() {}
     public function isBusy(macroIndex:Int):Bool return t < busyUntil;
+    public function wasUsed(macroIndex:Int):Bool return used;
     public function skillState(hero:Dynamic, id:String):Int {
         if (missing.indexOf(id) >= 0) return Readiness.MISSING;
         return t >= (readyAt.exists(id) ? readyAt.get(id) : 0) ? Readiness.READY : Readiness.WAITING;
     }
     public function useSkill(macroIndex:Int, hero:Dynamic, id:String):Bool {
+        used = false;
         if (ignoring.indexOf(id) >= 0) { busyUntil = t + 0.1; return true; } // queued for a moment, then dropped
         if (skillState(hero, id) != Readiness.READY) return false;
         readyAt.set(id, t + (cooldown.exists(id) ? cooldown.get(id) : 1.0));
         busyUntil = t + castTime;
+        used = true;
         log.push(Std.int(Math.round(t * 1000)) + " " + id);
         return true;
     }
@@ -137,6 +141,13 @@ class RotationTest {
         check("cast: next skill after the cast", ids(c.game) == "a,b" && at(c.game, 1) - at(c.game, 0) >= 500, c.game.log.join(","));
 
         // 9. Nothing usable: the rotation never starts / stops at once.
+
+        // 15. A skill without a cooldown (basic attack): each cell is one request, so the combo goes on.
+        c = make(["hit", "hit", "hit"], false);
+        c.game.cooldown.set("hit", 0.0);
+        c.game.castTime = 0.4;
+        run(c, 4000, [1]);
+        check("no cooldown: one request per cell", ids(c.game) == "hit,hit,hit", c.game.log.join(","));
         c = make(["", ""], true);
         run(c, 500, [1]);
         check("no skills: does not start", !c.seq.isRunning(0));

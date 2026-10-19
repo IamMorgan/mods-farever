@@ -12,6 +12,9 @@ interface SkillIO {
     /** Whether a rotation may use the skill now: Readiness.READY, WAITING (cooldown, silence, ...)
         or MISSING (the hero has no such skill: the rotation skips it). */
     function skillState(hero:Dynamic, skill:String):Int;
+    /** True once the game has started using the skill this macro / rotation requested last (it was seen
+        casting or not ready any more): skills without a cooldown, like basic attacks, are told by this. */
+    function wasUsed(macroIndex:Int):Bool;
 }
 
 /** Answers of SkillIO.skillState. */
