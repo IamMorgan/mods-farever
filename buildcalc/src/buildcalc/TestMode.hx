@@ -116,6 +116,14 @@ class TestMode {
                 if (tp == null || tp.build == null) { answer({id: id, cmd: name, ok: false, error: "no such template"}); return; }
                 State.setLast(tp.settings, tp.build, tp.talents, tp.skills, Optimizer.MODEL_VERSION);
                 answer({id: id, cmd: name, ok: true, settings: tp.settings});
+            case "lastTalents":
+                // the talents of the last result of the questionnaire are replaced (to value its items with other talents)
+                var ls = State.lastFor(settingsOf(cmd));
+                var tt:Dynamic = Reflect.field(cmd, "talents");
+                if (ls == null || tt == null) { answer({id: id, cmd: name, ok: false, error: "no last result or no talents"}); return; }
+                ls.talents = [for (k in Reflect.fields(tt)) {id: k, rank: Std.int(Reflect.field(tt, k))}];
+                State.save();
+                answer({id: id, cmd: name, ok: true, talents: ls.talents});
             case "statuses":
                 // the statuses the hero has right now (id x stacks): what an enchant (Devote, Zealot) gave in a fight
                 var hh = myHero();
