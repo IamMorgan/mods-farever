@@ -3,7 +3,13 @@ package codexloot;
 import codexloot.LootMath.Row;
 
 /** `mine` = the hero is offered this item (false: an item of another class, listed for completeness). */
-typedef ChestEntry = {item:Dynamic, chance:Float, mine:Bool}
+typedef ChestEntry = {item:Dynamic, chance:Float, mine:Bool, weapon:Bool}
+
+/** The chance of a rarity at a range of item levels (rarity.props.generationChance). */
+typedef RarityBand = {minLevel:Int, maxLevel:Int, chance:Float}
+
+/** A rarity of the game's data; `bands` null = the game never rolls it (Common). `index`: its place in the sheet (Common = 0). */
+typedef RarityGen = {id:String, index:Int, bands:Array<RarityBand>}
 
 typedef ChestLootResult = {
     var entries:Array<ChestEntry>;
@@ -25,6 +31,10 @@ typedef ChestLootResult = {
     var anyClass:Bool;
     /** The list also holds items of other classes (not offered to this hero). */
     var hasOthers:Bool;
+    /** The chance of a weapon of the chest to be Legendary (0 = never), with no bad luck gathered yet; the chances of the others are scaled by 1 - legendary. */
+    var legendary:Float;
+    /** The most that bad luck can raise `legendary` to. */
+    var legendaryMax:Float;
 }
 
 /** The rules of a chest's loot that need no game data (see ChestLoot). */
@@ -61,5 +71,38 @@ class ChestMath {
         var out = new Map<String, Float>();
         for (id => p in rolled) out.set(id, p * maxItems / expected);
         return out;
+    }
+
+    /**
+     * The rarities a dropped weapon can get (ent.Hero.makeLootItem): every rarity with a chance at the drop's level, from the drop's
+     * minimum to its maximum rarity (`minIndex` / `maxIndex` null = not limited). Chances are the generationChance of the data.
+     */
+    public static function rarityWeights(all:Array<RarityGen>, level:Int, minIndex:Null<Int>, maxIndex:Null<Int>):Array<{id:String, chance:Float}> {
+        var out:Array<{id:String, chance:Float}> = [];
+        for (r in all) {
+            if (r.bands == null) continue;
+            if (minIndex != null && r.index < minIndex) continue;
+            if (maxIndex != null && r.index > maxIndex) continue;
+            for (b in r.bands) if (b.minLevel <= level && level <= b.maxLevel) { out.push({id: r.id, chance: b.chance}); break; }
+        }
+        return out;
+    }
+
+    /**
+     * The chance that a weapon is Legendary. The game rolls Legendary first (ent.Hero.makeLootItem): the odds are Legendary's share of
+     * the weights, and the luck counter Luck_LegendaryWeapon (st.Player.rollLuck) adds min(base + failures * increment, max) to them,
+     * so `extra` = the luck at `failures` failed rolls (the counter starts at 0). Everything else is picked by weight among the rest.
+     */
+    public static function legendaryChance(weights:Array<{id:String, chance:Float}>, base:Float, increment:Float, max:Float, failures:Int = 0):Float {
+        var total = 0.0, legendary = 0.0;
+        for (w in weights) {
+            total += w.chance;
+            if (w.id == "Legendary") legendary += w.chance;
+        }
+        if (legendary <= 0 || total <= 0) return 0;
+        var luck = base + failures * increment;
+        if (luck > max) luck = max;
+        var p = legendary / total + luck;
+        return p > 1 ? 1 : p;
     }
 }

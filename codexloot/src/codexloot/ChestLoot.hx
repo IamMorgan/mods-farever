@@ -26,6 +26,11 @@ class ChestLoot {
         try return G.callStatic("HItem", "hasUnitAptitude", [item, hero]) == true catch (_:Dynamic) return true;
     }
 
+    /** Weapons get their rarity rolled when they drop (Legendary among the rarities); other items keep the rarity of their data. */
+    static function isWeapon(item:Dynamic):Bool {
+        try return G.callStatic("HItem", "isSameType", [item, "Weapon"]) == true catch (_:Dynamic) return false;
+    }
+
     /** The hero's level, or null. */
     static function heroLevel(hero:Dynamic):Null<Int> {
         if (hero == null) return null;
@@ -60,7 +65,7 @@ class ChestLoot {
     }
 
     /** The chance of each item to be among the offered ones, for a hero accepted by `accept` (null = no class limit). */
-    static function offeredFor(chest:Dynamic, heroLvl:Null<Int>, accept:Dynamic->Bool, atLevel:Null<Int> = null):{chances:Map<String, Float>, pool:Int, level:Int, maxItems:Null<Int>, weighted:Bool, topFlags:Int, minRarity:String} {
+    static function offeredFor(chest:Dynamic, heroLvl:Null<Int>, accept:Dynamic->Bool, atLevel:Null<Int> = null):{chances:Map<String, Float>, pool:Int, level:Int, maxItems:Null<Int>, weighted:Bool, topFlags:Int, minRarity:String, legendary:Float, legendaryMax:Float} {
         var gain = gainOf(chest);
         var tables = Sheets.get("lootTable");
         var items = Sheets.get("item");
@@ -74,6 +79,7 @@ class ChestLoot {
         var topFlags = top == null ? 0 : Std.int(G.num(G.field(top, "flags")));
         var weighted = (topFlags & 1) != 0;
         var converted = new Map<String, Table>();
+        var legend = legendaryOf(rarity, level);
 
         function convert(id:String):Table {
             var cached = converted.get(id);
@@ -105,7 +111,46 @@ class ChestLoot {
         var pool = 0.0;
         for (p in rolled) pool += p;
         return {chances: ChestMath.offered(rolled, maxItems, weighted), pool: Math.round(pool), level: level, maxItems: maxItems, weighted: weighted,
-            topFlags: topFlags, minRarity: G.str(G.field(rarity, "min"))};
+            topFlags: topFlags, minRarity: G.str(G.field(rarity, "min")), legendary: legend.base, legendaryMax: legend.max};
+    }
+
+    /** The data's rarities in the order of their index. */
+    static function rarities():Array<ChestMath.RarityGen> {
+        var out:Array<ChestMath.RarityGen> = [];
+        for (id => rec in Sheets.get("rarity")) {
+            var chances = G.field(G.field(rec, "props"), "generationChance");
+            var bands:Array<ChestMath.RarityBand> = null;
+            if (chances != null) {
+                bands = [];
+                for (i in 0...G.len(chances)) {
+                    var b = G.at(chances, i);
+                    if (b != null) bands.push({minLevel: Std.int(G.num(G.field(b, "minLevel"))), maxLevel: Std.int(G.num(G.field(b, "maxLevel"))), chance: G.num(G.field(b, "chance"))});
+                }
+            }
+            out.push({id: id, index: Std.int(G.num(G.field(rec, "index"))), bands: bands});
+        }
+        out.sort((a, b) -> a.index - b.index);
+        return out;
+    }
+
+    /** The index of the rarity `id` in the data, null for "" or an unknown rarity (= no limit). */
+    static function rarityIndex(id:String):Null<Int> {
+        if (id == "") return null;
+        var rec = Sheets.get("rarity").get(id);
+        return rec == null ? null : Std.int(G.num(G.field(rec, "index")));
+    }
+
+    /** The chance that a weapon dropped by the chest at `level` is Legendary, and the most the luck counter can raise it to. */
+    static function legendaryOf(gainRarity:Dynamic, level:Int):{base:Float, max:Float} {
+        try {
+            var params = G.field(Sheets.get("counter").get("Luck_LegendaryWeapon"), "luckParams");
+            if (params == null) return {base: 0.0, max: 0.0};
+            var weights = ChestMath.rarityWeights(rarities(), level, rarityIndex(G.str(G.field(gainRarity, "min"))), rarityIndex(G.str(G.field(gainRarity, "max"))));
+            var base = G.num(G.field(params, "base")), inc = G.num(G.field(params, "increment")), max = G.num(G.field(params, "max"));
+            var chance = ChestMath.legendaryChance(weights, base, inc, max, 0);
+            return {base: chance, max: chance <= 0 ? 0.0 : ChestMath.legendaryChance(weights, base, inc, max, 1000000)};
+        } catch (_:Dynamic) {}
+        return {base: 0.0, max: 0.0};
     }
 
     /**
@@ -178,7 +223,7 @@ class ChestLoot {
         function add(map:Map<String, Float>, mine:Bool):Void {
             for (id => chance in map) {
                 var rec = items.get(id);
-                if (rec != null && G.field(rec, "gfx") != null && chance > 0) entries.push({item: rec, chance: chance, mine: mine});
+                if (rec != null && G.field(rec, "gfx") != null && chance > 0) entries.push({item: rec, chance: chance, mine: mine, weapon: isWeapon(rec)});
             }
         }
         add(chances, true);
@@ -190,6 +235,6 @@ class ChestLoot {
         });
         return {entries: entries, level: main.level, maxItems: main.maxItems, weighted: main.weighted, affinity: affinity, ownedLast: (main.topFlags & 8) != 0,
             minRarity: main.minRarity, pool: main.pool, anyClass: hero == null && affinity,
-            hasOthers: hero != null && Lambda.exists(entries, (e) -> !e.mine)};
+            hasOthers: hero != null && Lambda.exists(entries, (e) -> !e.mine), legendary: main.legendary, legendaryMax: main.legendaryMax};
     }
 }

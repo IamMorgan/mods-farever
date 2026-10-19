@@ -196,8 +196,8 @@ class LootUi {
     }
 
     /** A block of items under its own caption; `fallback` is the English caption for a font without Cyrillic. Returns the new count of added icons. */
-    static function block(sheet:Dynamic, icons:Dynamic, anyButton:Dynamic, title:String, fallback:String, color:Int,
-            entries:Array<LootCalc.LootEntry>, level:Int, added:Int, maxItems:Int):Int {
+    public static function block(sheet:Dynamic, icons:Dynamic, anyButton:Dynamic, title:String, fallback:String, color:Int,
+            entries:Array<LootCalc.LootEntry>, level:Int, added:Int, maxItems:Int, minRarity:String = ""):Int {
         if (entries.length == 0) return added;
         try {
             var ready = prepare(sheet, anyButton);
@@ -209,7 +209,7 @@ class LootUi {
             for (entry in entries) {
                 if (added >= maxItems) break;
                 var button:Dynamic = null;
-                try button = makeButton(entry.item, icons, level) catch (_:Dynamic) {}
+                try button = makeButton(entry.item, icons, level, minRarity) catch (_:Dynamic) {}
                 if (button == null) continue;
                 if (first) {
                     first = false;

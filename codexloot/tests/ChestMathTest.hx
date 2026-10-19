@@ -17,7 +17,7 @@ class ChestMathTest {
     static function near(a:Float, b:Float):Bool return Math.abs(a - b) < 1e-9;
 
     static function loot(?maxItems:Int, weighted = false, affinity = false, ownedLast = false, level = 25):ChestLootResult
-        return {entries: [], level: level, maxItems: maxItems, weighted: weighted, affinity: affinity, ownedLast: ownedLast, minRarity: "", pool: 0, anyClass: false, hasOthers: false};
+        return {entries: [], level: level, maxItems: maxItems, weighted: weighted, affinity: affinity, ownedLast: ownedLast, minRarity: "", pool: 0, anyClass: false, hasOthers: false, legendary: 0, legendaryMax: 0};
 
     static function main():Void {
         // the level a chest is rolled at
@@ -54,6 +54,20 @@ class ChestMathTest {
         half.set("B", 0.5);
         check("few expected items are not cut", near(ChestMath.offered(half, 2, false).get("A"), 0.5));
 
+        // the rarity of a dropped weapon (the data of the game, level 25)
+        function band(id:String, index:Int, c:Null<Float>):codexloot.ChestMath.RarityGen
+            return {id: id, index: index, bands: c == null ? null : [{minLevel: 1, maxLevel: 10, chance: 0.0}, {minLevel: 11, maxLevel: 30, chance: c}, {minLevel: 31, maxLevel: 10000, chance: 0.5}]};
+        var all = [band("Common", 0, null), band("Uncommon", 1, 0.3), band("Rare", 2, 0.5), band("Epic", 3, 0.19), band("Legendary", 4, 0.01)];
+        var epicUp = ChestMath.rarityWeights(all, 25, 3, null);
+        check("min Epic: Epic and Legendary remain", epicUp.length == 2 && epicUp[0].id == "Epic" && epicUp[1].id == "Legendary");
+        check("Common is never rolled", ChestMath.rarityWeights(all, 25, null, null).length == 4);
+        check("max Epic drops Legendary", ChestMath.rarityWeights(all, 25, null, 3).length == 3);
+        check("level out of every band: no rarity", ChestMath.rarityWeights(all, 0, null, null).length == 0);
+        check("Hero Weapon Cache: 0.01 / 0.20 + 1% luck = 6%", near(ChestMath.legendaryChance(epicUp, 0.01, 0.005, 0.25), 0.06));
+        check("after 10 failures: 5% + 6% = 11%", near(ChestMath.legendaryChance(epicUp, 0.01, 0.005, 0.25, 10), 0.11));
+        check("the luck is capped: 5% + 25%", near(ChestMath.legendaryChance(epicUp, 0.01, 0.005, 0.25, 100000), 0.30));
+        check("without Legendary among the rarities: 0", ChestMath.legendaryChance(ChestMath.rarityWeights(all, 25, null, 3), 0.01, 0.005, 0.25) == 0);
+
         // texts
         SettingsText.russian = false;
         check("english: offer", SettingsText.chestHow(loot(2, false, true)) == "Opening it offers 2 random items of the list (only for your class): you keep one. Item level: 25.", SettingsText.chestHow(loot(2, false, true)));
@@ -63,6 +77,12 @@ class ChestMathTest {
         check("english: two costs", SettingsText.chestPrice([{price: 100, currency: "Medal of Glory"}, {price: 20, currency: "Nightblood"}]) == "<b>Price:</b> 100 x Medal of Glory + 20 x Nightblood.");
         check("english: where", SettingsText.chestWhere(["A", "B"]) == "<b>Where:</b> A, B.");
         check("english: sold by", SettingsText.chestSoldBy("Mira") == "<b>Sold by:</b> Mira.");
+        var withLegendary = loot(2);
+        withLegendary.legendary = 0.06;
+        withLegendary.legendaryMax = 0.3;
+        check("english: Legendary share", SettingsText.chestHow(withLegendary).indexOf("chance of a Legendary one is 6% (it grows by 0.5% with every non-Legendary weapon dropped, up to 30%)") > 0, SettingsText.chestHow(withLegendary));
+        SettingsText.russian = true;
+        check("russian: Legendary share", SettingsText.chestHow(withLegendary).indexOf("шанс легендарного — 6% (растёт") > 0 && SettingsText.chestHow(withLegendary).indexOf("до 30%)") > 0, SettingsText.chestHow(withLegendary));
         SettingsText.russian = true;
         check("russian: offer", SettingsText.chestHow(loot(2, false, true)).indexOf("предлагаются 2 предмета из списка (только для вашего класса)") > 0, SettingsText.chestHow(loot(2, false, true)));
         check("russian: 5 and 21 and 12 items", [5, 21, 12, 1].map(n -> SettingsText.chestHow(loot(n))).join("|").indexOf("5 предметов") > 0

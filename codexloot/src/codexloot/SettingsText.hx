@@ -15,6 +15,8 @@ class SettingsText {
 
     public static function heroicCaption():String return russian ? "Героический режим" : "Heroic mode";
 
+    public static function legendaryCaption():String return russian ? "Легендарное оружие" : "Legendary weapons";
+
     public static function worldCaption():String return russian ? "Экипировка (мировой лут)" : "Equipment (world loot)";
 
     /** Tag text of a monster class: kind is "Boss", "Elite" or "Spark". */
@@ -59,6 +61,8 @@ class SettingsText {
         return n + " " + word;
     }
 
+    static function pct(p:Float):String return (Math.round(p * 1000) / 10 + "%").split(".").join(russian ? "," : ".");
+
     /** How the chest opens: what it gives, at which level, with which rarity (`rarityName` "" = not limited). */
     public static function chestHow(loot:ChestMath.ChestLootResult, rarityName:String = ""):String {
         var parts:Array<String> = [];
@@ -72,6 +76,10 @@ class SettingsText {
             parts.push(russian ? "При открытии выдаются все предметы из списка." : "Opening it gives all the items of the list.");
         if (loot.level > 0) parts.push(russian ? "Уровень предметов: " + loot.level + "." : "Item level: " + loot.level + ".");
         if (rarityName != "") parts.push(russian ? "Редкость: " + rarityName + " или выше." : "Rarity: " + rarityName + " or better.");
+        if (loot.legendary > 0)
+            parts.push(russian
+                ? "Редкость оружия определяется при выпадении: шанс легендарного — " + pct(loot.legendary) + " (растёт с каждым выпавшим не легендарным оружием на 0,5% до " + pct(loot.legendaryMax) + "), он показан отдельным блоком; у остального оружия шанс уменьшен на эту долю."
+                : "A weapon's rarity is rolled when it drops: the chance of a Legendary one is " + pct(loot.legendary) + " (it grows by 0.5% with every non-Legendary weapon dropped, up to " + pct(loot.legendaryMax) + "), shown in a block of its own; the other weapons have the chance reduced by that share.");
         if (loot.ownedLast) parts.push(russian ? "Уже имеющиеся у вас предметы предлагаются в последнюю очередь." : "Items you already own are offered last.");
         if (loot.anyClass) parts.push(russian ? "Герой не найден: показаны предметы всех классов (шанс — для героя того класса, которому предмет подходит)." : "No hero found: items of every class are shown (the chance is for a hero of the class that can use the item).");
         else if (loot.hasOthers)
