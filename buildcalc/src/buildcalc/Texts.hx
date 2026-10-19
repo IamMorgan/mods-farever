@@ -64,6 +64,8 @@ class Texts {
         "combat" => ["Combat", "Kampf", "Combat", "Тип боя", "战斗类型", "Combate", "Walka", "Savaş", "Combate", "Combattimento", "전투", "戦闘", "戰鬥類型", "Boj"],
         "melee" => ["Melee", "Nahkampf", "Mêlée", "Ближний", "近战", "Corpo a corpo", "Wręcz", "Yakın", "Cuerpo a cuerpo", "Mischia", "근접", "近接", "近戰", "Na blízko"],
         "ranged" => ["Ranged", "Fernkampf", "Distance", "Дальний", "远程", "À distância", "Dystans", "Uzak", "A distancia", "Distanza", "원거리", "遠距離", "遠程", "Na dálku"],
+        "result" => ["Result", "Ergebnis", "Résultat", "Результат", "结果", "Resultado", "Wynik", "Sonuç", "Resultado", "Risultato", "결과", "結果", "結果", "Výsledek"],
+        "show" => ["Show", "Anzeigen", "Afficher", "Показать", "显示", "Mostrar", "Pokaż", "Göster", "Mostrar", "Mostra", "보기", "表示", "顯示", "Zobrazit"],
         "calculate" => ["Calculate", "Berechnen", "Calculer", "Рассчитать", "计算", "Calcular", "Oblicz", "Hesapla", "Calcular", "Calcola", "계산", "計算", "計算", "Spočítat"],
         "templates" => ["Templates", "Vorlagen", "Modèles", "Шаблоны", "模板", "Modelos", "Szablony", "Şablonlar", "Plantillas", "Modelli", "템플릿", "テンプレート", "範本", "Šablony"],
         "template" => ["Template {0}", "Vorlage {0}", "Modèle {0}", "Шаблон {0}", "模板 {0}", "Modelo {0}", "Szablon {0}", "Şablon {0}", "Plantilla {0}", "Modello {0}", "템플릿 {0}", "テンプレート {0}", "範本 {0}", "Šablona {0}"],
@@ -124,6 +126,8 @@ class Texts {
     public static function melee():String return f("melee");
     public static function ranged():String return f("ranged");
     public static function calculate():String return f("calculate");
+    public static function show():String return f("show");
+    public static function result():String return f("result");
     public static function templates():String return f("templates");
     public static function template(i:Int):String return f("template", [i + 1]);
     public static function save():String return f("save");

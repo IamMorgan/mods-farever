@@ -18,7 +18,7 @@ class Combat {
     public var allyHeal = 0.0;
     public var ok = false;
     var fallback = 0.0;
-    /** Every damage/heal/shield result in the order of the fight (FightLog writes it). */
+    /** Every damage/heal/shield result in the order of the fight. */
     public var hits:Array<Dynamic> = [];
     public var startTime = 0.0;
 

@@ -35,6 +35,9 @@ class TestMode {
 
     /** Each frame (GameApp.update): looks for a command twice a second. */
     public static function tick(gameApp:Dynamic):Void {
+        #if release
+        return;
+        #end
         app = gameApp;
         var now = haxe.Timer.stamp();
         if (now < nextCheck) return;
@@ -96,14 +99,39 @@ class TestMode {
                 State.save();
                 if (!BuildTab.startCalc(hero, s, opts)) { answer({id: id, cmd: name, ok: false, error: "the calculation did not start (see the log)"}); return; }
                 waiting = {id: id, cmd: name};
-            case "fight":
-                var info:Dynamic = FightLog.probe(Reflect.field(cmd, "write") == true);
-                info.id = id; info.cmd = name; info.ok = true;
-                answer(info);
+            case "features":
+                // switches of the simulation's newer parts: {off:["summonAttacks","rankPassives","subUltimate","stepTick","newTarget"]} ([] = all on)
+                buildcalc.sim.Sim.off = new Map();
+                var list:Dynamic = Reflect.field(cmd, "off");
+                if (list != null) for (x in (list : Array<Dynamic>)) buildcalc.sim.Sim.off.set(Std.string(x), true);
+                answer({id: id, cmd: name, ok: true, off: [for (k in buildcalc.sim.Sim.off.keys()) k]});
             case "saveTemplate":
                 var slot = Std.int(Reflect.field(cmd, "slot"));
                 BuildTab.saveToTemplate(slot);
                 answer({id: id, cmd: name, ok: true, template: State.templates[slot]});
+            case "seedTemplate":
+                // the template becomes the last result of its questionnaire (the model of now): calculate with fresh:false,
+                // search:false values it as it is, with search it searches from it
+                var tp = State.templates[Std.int(Reflect.field(cmd, "slot"))];
+                if (tp == null || tp.build == null) { answer({id: id, cmd: name, ok: false, error: "no such template"}); return; }
+                State.setLast(tp.settings, tp.build, tp.talents, tp.skills, Optimizer.MODEL_VERSION);
+                answer({id: id, cmd: name, ok: true, settings: tp.settings});
+            case "statuses":
+                // the statuses the hero has right now (id x stacks): what an enchant (Devote, Zealot) gave in a fight
+                var hh = myHero();
+                var ids:Array<String> = [];
+                if (hh != null) {
+                    var list = G.field(G.field(hh, "statuses"), "array");
+                    for (i in 0...G.len(list)) {
+                        var st = G.at(list, i);
+                        if (st != null) ids.push(G.str(G.field(G.field(st, "inf"), "id")) + "x" + G.str(G.field(st, "stacks")));
+                    }
+                }
+                answer({id: id, cmd: name, ok: true, statuses: ids});
+            case "result":
+                // the "Result" button: the last result of this session shown again
+                BuildTab.showResult();
+                answer({id: id, cmd: name, ok: true, shown: Views.result != null});
             case "template":
                 var slot = Std.int(Reflect.field(cmd, "slot"));
                 BuildTab.openTemplate(slot);

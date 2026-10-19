@@ -252,6 +252,9 @@ class Items {
      * ent.Hero.isActiveOffhandAllowedWithWeapon: an off-hand item works, a shield only with a main weapon whose type has
      * flag 4 (one-handed: OHWeapon; a scepter, staff, book, halos or great weapon is not).
      */
+    /** The main weapon is one-handed (a shield works with it). */
+    public static function oneHanded(main:Candidate):Bool return main != null && (typeFlags(main.type) & 4) != 0;
+
     public static function offhandWorks(main:Candidate, off:Candidate):Bool {
         if (main == null || off == null) return false;
         if (!isType(off.type, "Shield")) return true;

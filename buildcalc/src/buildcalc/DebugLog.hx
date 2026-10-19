@@ -5,10 +5,10 @@ package buildcalc;
  * its call stack) is written, so a problem in the game can be found from the log alone.
  * A new game session starts with a separator line. Lines are buffered and appended to the file once a
  * frame (and when the buffer grows), so a calculation that logs a lot stays fast.
- * Turned off for releases (`enabled`).
+ * A release build (-D release) writes errors only.
  */
 class DebugLog {
-    public static var enabled = true;
+    public static var enabled = #if release false #else true #end;
     static inline var PATH = "hlx/buildcalc-debug.txt";
     static inline var MAX_SIZE = 2000000;
     static var started = false;
@@ -37,8 +37,8 @@ class DebugLog {
         } catch (_:Dynamic) {}
     }
 
-    public static function line(s:String):Void {
-        if (!enabled) return;
+    public static function line(s:String, force:Bool = false):Void {
+        if (!enabled && !force) return;
         lock.acquire();
         if (!started) {
             started = true;
@@ -57,7 +57,7 @@ class DebugLog {
     public static function error(where:String, e:Dynamic):Void {
         var stack = "";
         try stack = haxe.CallStack.toString(haxe.CallStack.exceptionStack()) catch (_:Dynamic) {}
-        line("ERROR in " + where + ": " + Std.string(e) + (stack != "" ? "\n    stack:" + StringTools.replace(stack, "\n", "\n      ") : ""));
+        line("ERROR in " + where + ": " + Std.string(e) + (stack != "" ? "\n    stack:" + StringTools.replace(stack, "\n", "\n      ") : ""), true);
         flush();
     }
 

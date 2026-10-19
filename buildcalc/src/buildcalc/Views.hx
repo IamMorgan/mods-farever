@@ -335,8 +335,16 @@ class Views {
         return id;
     }
 
+    /** The opened template's own attributes (null: no template, or one saved before they were kept). */
+    public static function savedStats():Map<String, Float> {
+        if (result != null || saved == null || saved.stats == null) return null;
+        return [for (e in saved.stats) e.id => e.v];
+    }
+
     static function attrValue(id:String, hero:Dynamic):Float {
         if (result != null && result.stats.exists(id)) return result.stats.get(id);
+        var own = savedStats();
+        if (own != null && own.exists(id)) return own.get(id);
         var all = G.field(GameData.data("attribute"), "byId");
         try return G.num(G.call("ent.GameObject", "atbVal", [hero, G.num(G.field(G.call("haxe.ds.StringMap", "get", [all, id]), "index")), null])) catch (_:Dynamic) return 0;
     }
@@ -355,6 +363,9 @@ class Views {
         if (result != null) {
             var e = result.eval, n = result.now;
             Ui.text(parent, font, Texts.totalsLine(e.dps, n.dps, e.selfHeal, n.selfHeal, e.allyHeal, n.allyHeal), 0x3F6A2A, 12, width);
+        } else if (saved != null && saved.totals != null) {
+            var t = saved.totals;
+            Ui.text(parent, font, Texts.totalsLine(t.dps, t.nowDps, t.self, t.nowSelf, t.ally, t.nowAlly), 0x3F6A2A, 12, width);
         }
     }
 
@@ -485,6 +496,38 @@ class Views {
         for (x in Sources.ownItems) if (x == item) return true;
         if (lastHero != null) for (sl in Items.SLOTS) if (GameData.equipped(lastHero, sl) == item) return true;
         return false;
+    }
+
+    public static var askedArsenal = false;
+
+    /**
+     * The tooltip (ui.TipItem) of an item shown in the arsenal is built: the game gave it its "Equipped" tag together with the
+     * arsenal's 40% (both come from the same question, st.Equipment.isEquipped). The tag is taken away: the item is not worn.
+     * The tag is the element right under the tooltip's header (ui.UIElement holding one ui.comp.FmtText with a plain word).
+     */
+    public static function tipBuilt(tip:Dynamic):Void {
+        if (!askedArsenal) return;
+        askedArsenal = false;
+        var removed = 0;
+        function walk(n:Dynamic, depth:Int):Void {
+            if (n == null || depth > 6 || removed > 0) return;
+            var kids = G.children(n);
+            if (kids.length > 1 && G.str(G.field(kids[0], "name")) == "header") {
+                var tag = kids[1];
+                var inner = G.children(tag);
+                if (G.typeName(tag) == "ui.UIElement" && inner.length == 1 && G.typeName(inner[0]) == "ui.comp.FmtText") {
+                    var text = G.str(G.field(inner[0], "text"));
+                    if (text != "" && text.indexOf("<") < 0) {
+                        G.call("h2d.Object", "remove", [tag]);
+                        removed++;
+                        return;
+                    }
+                }
+            }
+            for (k in kids) walk(k, depth + 1);
+        }
+        walk(tip, 0);
+        DebugLog.line("tooltip: arsenal item, \"Equipped\" tag " + (removed > 0 ? "removed" : "NOT found"));
     }
 
     /** For the hooks: is this one of the arsenal items shown (taken as worn in the arsenal by the game's tooltip)? */

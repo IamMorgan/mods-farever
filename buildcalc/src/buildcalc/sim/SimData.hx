@@ -13,8 +13,9 @@ typedef SScaling = {atb:String, ratio:Float, minRank:Int, maxRank:Int, equalRank
 typedef SEffect = {uid:Int, kind:String, affinity:String, physical:Bool, base:Float, scaling:Array<SScaling>, dynVal:Int, status:String, duration:Dynamic, raw:Dynamic};
 typedef SStep = {index:Int, id:String, on:String, type:String, mastery:String, masteryExclude:String, minRank:Int, maxRank:Int, equalRank:Int,
     delay:Dynamic, duration:Dynamic, tick:Dynamic, targetCd:Float, spread:Bool, hitFilter:Int, ignoreMain:Bool, presence:Bool, status:String, statusSelf:Bool,
-    statusStacks:Int, condStep:String, travel:Float, alignment:Int, globalId:String, effects:Array<SEffect>};
-typedef SAffix = {ref:String, attr:String, val:Float, minRank:Int, maxRank:Int, equalRank:Int, mastery:String};
+    statusStacks:Int, condStep:String, travel:Float, alignment:Int, globalId:String, summon:String, summonCount:Int, effects:Array<SEffect>};
+/** dyn: the dynamic value (Inst.dyn index) the affix's value follows, 0 none; dynOp: 0 multiply, 1 override, 2 add (skill@affixes@mod@dynVal). */
+typedef SAffix = {ref:String, attr:String, val:Float, minRank:Int, maxRank:Int, equalRank:Int, mastery:String, dyn:Int, dynOp:Int};
 typedef SMastery = {id:String, cooldown:Null<Float>, duration:Null<Float>, charges:Null<Int>, vars:Dynamic};
 
 /** One skill of the data (Data.skill), read once into plain values; its script parsed. */
@@ -33,6 +34,8 @@ class SkillInfo {
     public var vars:Dynamic;
     public var maxPoints = 0;
     public var subskills:Array<String> = [];
+    /** Passives the skill gives from a rank on (props.rankPassives). */
+    public var rankPassives:Array<{minRank:Int, ids:Array<String>}> = [];
     public var maxStacks = 1;
     /** The skill's flags (bit 2048: one status for every instigator, st.skill.Status.stacksWith). */
     public var flags = 0;
@@ -76,6 +79,7 @@ class SkillInfo {
         }
         var ms0 = rec.get(rec.get(props, "status"), "maxStacks");
         if (ms0 != null && num(ms0) > 1) maxStacks = Std.int(num(ms0));
+        else if (ms0 != null && num(ms0) < 0) maxStacks = 1000000; // -1: no limit
         var ro = rec.get(props, "rankOverride");
         for (i in 0...rec.len(ro)) {
             var o = rec.at(ro, i);
@@ -85,6 +89,14 @@ class SkillInfo {
         for (i in 0...rec.len(subs)) {
             var s = ref(rec.get(rec.at(subs, i), "skill"));
             if (s != "") subskills.push(s);
+        }
+        var rp = rec.get(props, "rankPassives");
+        for (i in 0...rec.len(rp)) {
+            var e = rec.at(rp, i);
+            var ids:Array<String> = [];
+            var list = rec.get(e, "passives");
+            for (k in 0...rec.len(list)) { var id = ref(rec.get(rec.at(list, k), "ref")); if (id != "") ids.push(id); }
+            rankPassives.push({minRank: Std.int(num(rec.get(e, "minRank"))), ids: ids});
         }
         var ms = rec.get(inf, "mastery");
         for (i in 0...rec.len(ms)) {
@@ -100,7 +112,8 @@ class SkillInfo {
             var c = rec.get(a, "conds");
             affixes.push({ref: ref(rec.get(a, "ref")), attr: ref(rec.get(rec.get(a, "target"), "attribute")), val: num(rec.get(a, "val")),
                 minRank: intOr(rec.get(c, "minRank"), 0), maxRank: intOr(rec.get(c, "maxRank"), 999), equalRank: intOr(rec.get(c, "equalRank"), -1),
-                mastery: ref(rec.get(c, "mastery"))});
+                mastery: ref(rec.get(c, "mastery")), dyn: Std.int(num(rec.get(rec.get(rec.get(a, "mod"), "dynVal"), "id"))),
+                dynOp: Std.int(num(rec.get(rec.get(rec.get(a, "mod"), "dynVal"), "op")))});
         }
         var st = rec.get(inf, "steps");
         for (i in 0...rec.len(st)) {
@@ -139,7 +152,8 @@ class SkillInfo {
                 duration: rec.get(s, "duration"), tick: rec.get(loop, "tick"), targetCd: num(rec.get(area, "targetCooldown")),
                 spread: (Std.int(num(rec.get(loop, "flags"))) & 1) != 0, hitFilter: Std.int(num(area != null ? rec.get(area, "hitFilter") : rec.get(rec.get(p, "projectile"), "hitFilter"))),
                 ignoreMain: rec.get(area, "ignoreMainTarget") == true, presence: rec.get(area, "detectPresence") == true, status: ref(rec.get(status, "ref")), statusSelf: target != null && num(target) == 0,
-                statusStacks: Std.int(num(rec.get(status, "stacks"))), condStep: ref(rec.get(c, "step")), travel: num(area != null ? rec.get(area, "travelTime") : rec.get(rec.get(p, "pickup"), "travelTime")), alignment: intOr(rec.get(c, "alignment"), -1), globalId: ref(rec.get(rec.get(p, "stepGlobal"), "globalId")), effects: effects});
+                statusStacks: Std.int(num(rec.get(status, "stacks"))), condStep: ref(rec.get(c, "step")), travel: num(area != null ? rec.get(area, "travelTime") : rec.get(rec.get(p, "pickup"), "travelTime")), alignment: intOr(rec.get(c, "alignment"), -1), globalId: ref(rec.get(rec.get(p, "stepGlobal"), "globalId")),
+                summon: ref(rec.get(rec.get(p, "summon"), "unit")), summonCount: Std.int(Math.max(1, num(rec.get(rec.get(p, "summon"), "count")))), effects: effects});
         }
         var src = str(rec.get(inf, "script"));
         if (src != "") try script = Script.parse(src) catch (e:Dynamic) scriptError = Std.string(e);

@@ -19,6 +19,8 @@ typedef Augment = {
  */
 class Augments {
     static var all:Array<Augment> = null;
+    /** Magic formulas (weapon enchants, skills Enchant_*): not counted anywhere (not chosen, not valued on a worn weapon). */
+    static inline var FORMULA_TYPE = "AugmentEnchantWeapon";
     static var targetRe = ~/attribute\s*:\s*([A-Za-z0-9_]+)/;
 
     static function load(hero:Dynamic):Void {
@@ -35,7 +37,7 @@ class Augments {
         for (i in 0...G.len(items)) {
             var inf = G.at(items, i);
             var type = G.str(G.field(inf, "type"));
-            if (!augTypes.exists(type)) continue;
+            if (!augTypes.exists(type) || type == FORMULA_TYPE) continue;
             var id = G.str(G.field(inf, "id"));
             var ok = true;
             try ok = G.callStatic("HItem", "hasUnitAptitude", [inf, hero]) == true catch (_:Dynamic) {}

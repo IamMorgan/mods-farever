@@ -707,11 +707,13 @@ class Optimizer {
             if (c.ranged != settings.ranged) continue;
             var trial = copy(b);
             place(trial, 0, c);
+            refillOffhand(trial);
             var v = value(trial);
             if (v > bestV) { bestV = v; best = c; }
         }
         if (best != null) {
             place(b, 0, best);
+            refillOffhand(b);
             DebugLog.line("search: the worn main weapon " + w.id + " is " + (w.ranged ? "ranged" : "melee") + ", the search starts with " + best.id);
         } else DebugLog.line("search: no " + (settings.ranged ? "ranged" : "melee") + " main weapon among the candidates: the worn one is kept");
     }
@@ -877,6 +879,28 @@ class Optimizer {
         }
         augCache.set(key, chosen);
         return chosen;
+    }
+
+    /**
+     * The main weapon has changed: the off-hand is chosen again for it. A shield works only with a one-handed weapon, so
+     * a swap from a two-handed weapon (no shield worn) to a one-handed one would otherwise be valued without the shield
+     * it brings back (and a swap the other way keeps a shield that does not count).
+     */
+    public function refillOffhand(b:Build):Void {
+        var main = b.items.get(0);
+        var off = b.items.get(Items.OFFHAND);
+        if (main == null || (off != null && Items.offhandWorks(main, off))) return;
+        var pool = pools.get(Items.OFFHAND);
+        if (pool == null) return;
+        var best:Candidate = null, bestV = value(b);
+        for (c in pool) {
+            if (!Items.offhandWorks(main, c)) continue;
+            var trial = copy(b);
+            place(trial, Items.OFFHAND, c);
+            var v = value(trial);
+            if (v > bestV) { bestV = v; best = c; }
+        }
+        if (best != null) place(b, Items.OFFHAND, best);
     }
 
     /** Puts item `c` in slot `s`: its augments; a created item keeps the slot's infusion if it can take one. */
@@ -1062,6 +1086,7 @@ class Optimizer {
             for (c in pools.get(0)) {
                 var trial = copy(b);
                 place(trial, 0, c);
+                refillOffhand(trial);
                 var e = model.evaluate(trial);
                 lines.push({c: c, v: value(trial), dps: e.dps, heal: e.selfHeal + e.allyHeal});
             }
@@ -1244,6 +1269,10 @@ class Prefilter implements Task {
     var anchored = false;
     var base:Build = null;
     var baseAxes:Array<Float> = null;
+    /** The build of the shield's valuation: a one-handed main weapon (a shield does not work with the main weapon of `base` if that is two-handed). */
+    var baseOH:Build = null;
+    var baseOHAxes:Array<Float> = null;
+    var ohMain:Candidate = null;
 
     public function new(o:Optimizer) this.o = o;
 
@@ -1269,11 +1298,27 @@ class Prefilter implements Task {
                     if (bestX != null) { base.items.set(0, bestX.c); base.augs.set(0, bestX.c.real ? cast bestX.c.realAugs : []); }
                 }
                 baseAxes = o.model.evaluate(base).axes;
+                // the shield is valued with a one-handed main weapon: the one of `base` if it is, else the best one
+                var bm = base.items.get(0);
+                baseOH = base;
+                baseOHAxes = baseAxes;
+                if (bm != null && !Items.oneHanded(bm)) {
+                    var bestO = null;
+                    for (x in scored.get(0)) if (Items.oneHanded(x.c) && (bestO == null || o.norm(x.a, now) > o.norm(bestO.a, now))) bestO = x;
+                    if (bestO != null) {
+                        ohMain = bestO.c;
+                        baseOH = Optimizer.copy(base);
+                        baseOH.items.set(0, bestO.c);
+                        baseOH.augs.set(0, bestO.c.real ? cast bestO.c.realAugs : []);
+                        baseOHAxes = o.model.evaluate(baseOH).axes;
+                    }
+                } else ohMain = bm;
+                DebugLog.line("prefilter: shields valued with main weapon " + (ohMain == null ? "-" : ohMain.id));
                 DebugLog.line("prefilter: items valued with main weapon " + (base.items.get(0) == null ? "-" : base.items.get(0).id));
             }
             if (ci < list.length) {
                 var c = list[ci++];
-                var trial = Optimizer.copy(s == 0 ? o.canon : base);
+                var trial = Optimizer.copy(s == 0 ? o.canon : (s == Items.OFFHAND ? baseOH : base));
                 // a created item takes over the infusion of the worn item it replaces (the set is not broken: see place)
                 var was = trial.items.get(s);
                 trial.items.set(s, c);
@@ -1305,10 +1350,15 @@ class Prefilter implements Task {
                     var bestX = null;
                     for (x in scored.get(s)) if (bestX == null || x.a[axis] > bestX.a[axis]) bestX = x;
                     if (bestX == null) continue;
-                    var ref = s == 0 || baseAxes == null ? now : baseAxes;
+                    var ref = s == 0 || baseAxes == null ? now : (s == Items.OFFHAND ? baseOHAxes : baseAxes);
                     if (bestX.a[axis] > ref[axis] + 1e-9 || (s == 0 && wrongMain)) {
                         b.items.set(s, bestX.c);
                         b.augs.set(s, bestX.c.real ? cast bestX.c.realAugs : []);
+                        // a shield needs a one-handed main weapon
+                        if (s == Items.OFFHAND && ohMain != null && !Items.offhandWorks(b.items.get(0), bestX.c)) {
+                            b.items.set(0, ohMain);
+                            b.augs.set(0, ohMain.real ? cast ohMain.realAugs : []);
+                        }
                     }
                 }
                 anchors.push(o.model.evaluate(b).axes);
@@ -1531,6 +1581,7 @@ class ItemPass extends Pass {
             var trial = Optimizer.copy(b);
             var old = b.items.get(s);
             o.place(trial, s, c);
+            if (s == 0) o.refillOffhand(trial);
             // the item came from another slot: the old item goes there if it fits that slot (rings, the weapons); a real
             // item is only once in the build, a created one can be had twice
             if (other >= 0) {

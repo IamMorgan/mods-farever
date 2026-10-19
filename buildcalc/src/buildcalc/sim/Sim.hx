@@ -38,6 +38,8 @@ interface SimEnv {
     function targetDefense(physical:Bool, buffs:Array<{a:SAffix, share:Float}>):Array<Float>;
     /** The hero's level (Mage_Conduit_Levels…). */
     function heroLevel():Int;
+    /** The skills a summoned unit (Data.unit) attacks with. */
+    function unitSkills(unit:String):Array<String>;
 }
 
 /** A skill of the build as the simulation is told it: rank, runes, where it comes from. */
@@ -67,6 +69,15 @@ class Names implements IObj {
     public function get(name:String):Dynamic return name;
     public function set(name:String, v:Dynamic):Void {}
     public function call(name:String, args:Array<Dynamic>):Dynamic return null;
+}
+
+/** A lasting area a step made (hit.area): a script may take it away (remove()), its remaining ticks are gone. */
+class AreaObj extends DynObj {
+    public var removed = false;
+    override public function call(name:String, args:Array<Dynamic>):Dynamic {
+        if (name == "remove") { removed = true; return null; }
+        return super.call(name, args);
+    }
 }
 
 class MathObj implements IObj {
@@ -108,6 +119,8 @@ class Unit implements IObj {
     public var statuses:Array<Status> = [];
     public var skills:Array<Inst> = [];
     public var healthRatio:Float;
+    /** What a summon is (Data.unit id); empty for the hero and the dummy. */
+    public var kind = "";
     /** Current values of resource attributes (Spark, Rage, ComboPoint…), see Sim.resGet. */
     public var res = new Map<String, Float>();
     /** 0: the hero's side (the hero, its summons), 1: the foes. */
@@ -129,6 +142,7 @@ class Unit implements IObj {
             case "isInCombat": return true;
             case "isDead": return false;
             case "isHero": return hero;
+            case "kind": return kind;
             case "owner", "ownerUnit", "unit": return this;
             case "instigatedStatuses": return [for (u in sim.units) for (s in u.statuses) if (s.instigator == this) s];
             case "statuses": return statuses.copy();
@@ -162,6 +176,13 @@ class Unit implements IObj {
             case "isType", "isStatusType": return false;
             case "hasStatusType": var t = Sim.str(a[0]); return Lambda.exists(statuses, st -> !st.removed && GameRules.isType(st.info.statusTypes, t));
             case "getStatusTypeCount": var t = Sim.str(a[0]); return Lambda.count(statuses, st -> !st.removed && GameRules.isType(st.info.statusTypes, t));
+            case "getStatuses":
+                // the statuses a filter function accepts (optionally only those a unit inflicted)
+                var f:Closure = Std.isOfType(a[0], Closure) ? a[0] : null;
+                var by:Unit = Std.isOfType(a[1], Unit) ? a[1] : null;
+                var out:Array<Dynamic> = [];
+                for (st in statuses.copy()) if (!st.removed && (by == null || st.instigator == by) && (f == null || f.run([st]) == true)) out.push(st);
+                return out;
             case "getStatusesCount":
                 // a filter function, or a status id
                 if (Std.isOfType(a[0], Closure)) { var f:Closure = a[0]; return Lambda.count(statuses, st -> !st.removed && f.run([st]) == true); }
@@ -202,6 +223,8 @@ class Inst implements IObj implements Host {
     public var slot:Int;
     public var item:Dynamic;
     public var owner:Unit;
+    /** The summon whose attack this is (its damage is the owner's, heard as onProxyDamage); null for a skill of the hero. */
+    public var proxy:Unit = null;
     public var cdEnd = 0.0;
     public var charges = 0;
     public var maxCharges = 0;
@@ -317,6 +340,15 @@ class Inst implements IObj implements Host {
             case "isRunning": return sim.time < runningUntil;
             case "isPeriodic": return info.dotHot || Lambda.exists(info.steps, st -> st.tick != null);
             case "getSkillObjects", "getProjectiles": return [];
+            case "refresh":
+                // a status lasts its whole duration again (its Refresh steps run)
+                if (isStatus()) {
+                    var st:Status = cast this;
+                    var dur = info.durationWith(st.runes);
+                    if (dur > 0 && !st.removed) st.endTime = sim.time + dur;
+                    sim.refreshSteps(st);
+                }
+                return null;
             case "consume":
                 // a status consumed: gone, its stacks returned
                 if (isStatus()) { var n = (cast this : Status).stacks; sim.removeStatus(cast this); return n; }
@@ -582,18 +614,53 @@ class Sim {
     }
 
     var summons = 0;
+    /** Switches of the parts added for the dummy logs of 2026-10-19 (the test mode and tests can turn each off to see what it changes). */
+    public static var off = new Map<String, Bool>();
 
     function summon(inst:Inst, s:SStep, dur:Float, c:Dynamic):Void {
-        var u = new Unit(this, false, inst.owner.team);
-        u.healthRatio = 1;
-        units.push(u);
-        summons++;
-        inst.fire("onSummon", [u]);
         var life = dur > 0 ? dur : 10;
-        at(time + life, () -> {
-            for (st in u.statuses.copy()) removeStatus(st);
-            units.remove(u);
-        });
+        var attacks = s.summon != "" && !off.exists("summonAttacks") ? env.unitSkills(s.summon) : [];
+        for (n in 0...s.summonCount) {
+            var u = new Unit(this, false, inst.owner.team);
+            u.healthRatio = 1;
+            u.kind = s.summon;
+            units.push(u);
+            summons++;
+            inst.fire("onSummon", [u]);
+            var endAt = time + life;
+            // the summon attacks the dummy with its own skills (Data.unit skills) for as long as it lives: one attack every
+            // cycle of the skill (its longest step: delay + duration), the first one after most of a cycle
+            for (id in attacks) {
+                var si = env.skill(id);
+                if (si == null) continue;
+                var att = new Inst(this, si, inst.rank, [], "summon", -1, null, hero);
+                att.proxy = u;
+                var cycle = 0.0;
+                for (st in si.steps) cycle = Math.max(cycle, si.value(st.delay, att.rank, att.runes, 0) + si.value(st.duration, att.rank, att.runes, 0));
+                // the skill's own duration and cooldown count too (SummonBee_HoneyBolt: 2 s and a cooldown of 1 s)
+                cycle = Math.max(cycle, si.duration) + si.cooldown;
+                if (cycle <= 0.1) continue;
+                var strike:Void->Void = null;
+                strike = function() {
+                    if (units.indexOf(u) < 0) return;
+                    summonAttack(att, si);
+                    at(time + cycle, strike);
+                };
+                at(time + cycle * 0.8, strike);
+            }
+            at(endAt, () -> {
+                for (st in u.statuses.copy()) removeStatus(st);
+                units.remove(u);
+                inst.fire("onSummonElapsed", [u]);
+            });
+        }
+    }
+
+    /** One attack of a summon: the effects of its skill's steps on the dummy. */
+    function summonAttack(att:Inst, si:SkillInfo):Void {
+        var hc = new HitObj();
+        for (st in si.steps) if (st.effects.length > 0 && si.stepActive(st, att.rank, att.runes))
+            for (e in st.effects) applyEffect(att, st, e, dummy, hc, 1);
     }
 
     public function later(dt:Float, f:Void->Void):Void at(time + Math.max(0, dt), f);
@@ -623,10 +690,18 @@ class Sim {
 
     // ---------------------------------------------------------------- stats
 
+    /** An affix whose value follows the status's dynamic value (mod.dynVal): with the value it has now. */
+    function dynAffix(a:SAffix, s:Inst):SAffix {
+        if (a.dyn <= 0) return a;
+        var d = s.dyn[a.dyn];
+        var v = switch (a.dynOp) { case 0: a.val * d; case 1: d; default: a.val + d; };
+        return {ref: a.ref, attr: a.attr, val: v, minRank: a.minRank, maxRank: a.maxRank, equalRank: a.equalRank, mastery: a.mastery, dyn: a.dyn, dynOp: a.dynOp};
+    }
+
     public function statsNow():StatsView {
         if (statsDirty || statsCache == null) {
             var buffs = [];
-            for (s in hero.statuses) for (a in s.info.affixes) if (s.info.affixActive(a, s.rank, s.runes)) buffs.push({a: a, share: (s.stacks : Float)});
+            for (s in hero.statuses) for (a in s.info.affixes) if (s.info.affixActive(a, s.rank, s.runes)) buffs.push({a: dynAffix(a, s), share: (s.stacks : Float)});
             var key = [for (b in buffs) b.a.attr + "|" + b.a.ref + "|" + b.a.val + "|" + b.share].join(",");
             var i = buffKeys.get(key);
             if (i == null) { i = buffSets.length; buffSets.push(buffs); buffKeys.set(key, i); }
@@ -687,7 +762,7 @@ class Sim {
     function targetBuffs(u:Unit):Int {
         if (u == null || u == hero) return 0;
         var buffs = [];
-        for (s in u.statuses) if (!s.removed) for (a in s.info.affixes) if (s.info.affixActive(a, s.rank, s.runes)) buffs.push({a: a, share: (s.stacks : Float)});
+        for (s in u.statuses) if (!s.removed) for (a in s.info.affixes) if (s.info.affixActive(a, s.rank, s.runes)) buffs.push({a: dynAffix(a, s), share: (s.stacks : Float)});
         if (buffs.length == 0) return 0;
         var key = [for (b in buffs) b.a.attr + "|" + b.a.ref + "|" + b.a.val + "|" + b.share].join(",");
         var i = targetBuffKeys.get(key);
@@ -873,8 +948,18 @@ class Sim {
     // ---------------------------------------------------------------- the build
 
     /** Sets up the hero's skills; `weaponSkillSlots`: how many weapon skills of the main weapon are used. */
-    public function setup(specs:Array<SkillSpec>):Void {
+    public function setup(given:Array<SkillSpec>):Void {
         var plain = [], fin:Inst = null;
+        // the passives a skill gives from a rank on (props.rankPassives: the dual axes' combo at rank 3…), each once
+        var specs = given.copy();
+        var have = [for (sp in given) sp.id => true];
+        for (sp in given) {
+            var gi = env.skill(sp.id);
+            if (gi != null && !off.exists("rankPassives")) for (rp in gi.rankPassives) if (sp.rank >= rp.minRank) for (id in rp.ids) if (!have.exists(id)) {
+                have.set(id, true);
+                specs.push({id: id, rank: sp.rank, runes: [], kind: sp.kind, slot: sp.slot, item: sp.item});
+            }
+        }
         for (sp in specs) {
             var info = env.skill(sp.id);
             if (info == null) { missing("skill data " + sp.id); continue; }
@@ -883,7 +968,7 @@ class Sim {
             hero.skills.push(inst);
             if (sp.slot == 0 && ATTACKS.indexOf(info.type) >= 0) {
                 if (info.type == "AttackCombo") fin = inst else plain.push(inst);
-            } else if (ACTIVE.indexOf(info.type) >= 0 && info.type != "PriestPrayer" && info.type != "MageConduit" && info.type != "RoguePoison"
+            } else if ((ACTIVE.indexOf(info.type) >= 0 || (info.type == "WeaponSubSkill" && inst.has("checkEnabled") && !off.exists("subUltimate"))) && info.type != "PriestPrayer" && info.type != "MageConduit" && info.type != "RoguePoison"
                 && (info.cooldown > 0 || inst.maxCharges > 0 || inst.has("checkEnabled") || info.costs.length > 0))
                 // a skill with no cooldown that its script enables (checkEnabled: an infusion's ultimate when it is ready) is used as soon as it may be
                 actives.push(inst);
@@ -1087,6 +1172,18 @@ class Sim {
         if (dur < 0 && inst.isStatus()) dur = (cast inst : Status).endTime - time;
         // a loop of an infinite status ticks until the fight ends (it stops when the status goes)
         if (!Math.isFinite(dur)) dur = Math.max(0, length - time);
+        // a script that follows the steps (Staff_SummonDemon_Skill1: the channel's ticks shoot, a shot counts itself): every
+        // tick of a looping step, or the one start of the others, is an onStepTick of the step
+        if (inst.has("onStepTick") && !off.exists("stepTick")) {
+            var so = new HitObj();
+            so.set("kind", s.id);
+            so.set("id", s.id);
+            so.set("target", target);
+            if (tick > 0 && dur > 0) {
+                var gen = inst.areaGen;
+                for (k in 0...Std.int(Math.max(1, Math.floor(dur / tick)))) at(time + k * tick, () -> if (inst.areaGen == gen) inst.fire("onStepTick", [so]));
+            } else inst.fire("onStepTick", [so]);
+        }
         if (s.type == "Projectile") {
             // the projectile flies: its hit steps when it lands
             // ent.Projectile.onHit -> BaseSkill.onHit: the projectile's own hit on its target, then its hit steps
@@ -1129,7 +1226,9 @@ class Sim {
             var n = Std.int(Math.max(1, Math.floor(dur / Math.max(tick, s.targetCd))));
             var every = Math.max(tick, s.targetCd);
             var gen = inst.areaGen;
-            for (k in 0...n) at(time + k * every, () -> if (inst.areaGen == gen) hitStep(inst, s, targets, c, s.spread ? n : 1, free));
+            var area:AreaObj = null;
+            if (s.type == "Area" && Std.isOfType(c, HitObj)) { area = new AreaObj(); (c : HitObj).set("areaObj", area); }
+            for (k in 0...n) at(time + k * every, () -> if (inst.areaGen == gen && (area == null || !area.removed)) hitStep(inst, s, targets, c, s.spread ? n : 1, free));
             return;
         }
         hitStep(inst, s, targets, c, 1, free);
@@ -1166,6 +1265,18 @@ class Sim {
         if (hit.get("isFirstHit") == true) inst.fire("onFirstHit", [hit]);
         inst.fire("onHit", [hit]);
         dispatchUnit(attacker, "onInflictHit", [hit], null); // the skill hears its own hits too (scripts check skillId == kind)
+        // the first hit of a cast on a unit: onHitNewTarget (the skill) and onInflictHitNewTarget (the attacker's scripts)
+        var isNew = true;
+        if (Std.isOfType(c, HitObj)) {
+            var ctx:HitObj = c;
+            var seen:Array<Unit> = ctx.get("hitUnits");
+            if (seen == null) { seen = []; ctx.set("hitUnits", seen); }
+            if (seen.indexOf(t) >= 0) isNew = false else seen.push(t);
+        }
+        if (isNew && !off.exists("newTarget")) {
+            inst.fire("onHitNewTarget", [hit]);
+            dispatchUnit(attacker, "onInflictHitNewTarget", [hit], null);
+        }
     }
 
     function hitStep(inst:Inst, s:SStep, targets:Array<Unit>, c:Dynamic, split:Int, free = false):Void {
@@ -1192,6 +1303,7 @@ class Sim {
         hit.set("skillId", inst.info.id);
         hit.set("kind", inst.info.id);
         hit.set("stepId", s.id);
+        if (s.type == "Area" && Std.isOfType(c, HitObj) && (c : HitObj).get("areaObj") != null) hit.set("area", (c : HitObj).get("areaObj"));
         hit.set("step", s.id);
         hit.set("target", target);
         hit.set("targetUnit", target);
@@ -1228,8 +1340,11 @@ class Sim {
         var stats = statsNow();
         var base = env.effectBase(inst, e, stats);
         if (e.dynVal > 0 && e.scaling.length == 0 && base == 0) base = inst.dyn[e.dynVal];
+        // a status with no stack limit holds an amount (Warrior_Hemorrhage_Status: the stacks are the damage it deals each tick)
+        if (inst.isStatus() && inst.info.maxStacks >= 1000000) base *= (cast inst : Status).stacks;
         base /= split;
         var hit = newHit(inst, s, target, c, attacker);
+        if (inst.proxy != null) hit.set("instigatorUnit", inst.proxy);
         hit.set("isMagic", Affinity.isMagic(e.affinity));
         hit.set("isPhysical", e.physical);
         hit.set("isDoT", inst.isStatus() && inst.info.dotHot);
@@ -1240,7 +1355,11 @@ class Sim {
         var stepMult = Std.isOfType(c, HitObj) && (c : HitObj).fields.exists("stepMult") ? num((c : HitObj).get("dmgMult")) : 1.0;
         hit.set("dmgMult", stepMult);
         var heal = e.kind != "Damage";
-        if (!heal) {
+        if (!heal && inst.proxy != null) {
+            // a summon's hit: its own skill hears it, the owner's skills hear it as a proxy damage
+            inst.fire("onDamageEval", [hit]);
+            dispatchUnit(attacker, "onProxyDamageEval", [hit], null);
+        } else if (!heal) {
             inst.fire("onDamageEval", [hit]);
             dispatchUnit(attacker, "onInflictDamageEval", [hit], null); // the skill hears its own hits too (scripts check skillId == kind)
             dispatchUnit(target, "onReceiveDamageEval", [hit], null);
@@ -1289,7 +1408,10 @@ class Sim {
             // a heal that is not only for the hero reaches an ally next to the hero as well (area filter bit 2, or no filter)
             if (s.type != "SelfEffect" && (s.hitFilter == 0 || (s.hitFilter & 2) != 0)) allyHealed += amount;
         }
-        if (!heal) {
+        if (!heal && inst.proxy != null) {
+            inst.fire("onDamage", [hit]);
+            dispatchUnit(attacker, "onProxyDamage", [hit], null);
+        } else if (!heal) {
             inst.fire("onDamage", [hit]);
             dispatchUnit(attacker, "onInflictDamage", [hit], null); // the skill hears its own hits too (scripts check skillId == kind)
             dispatchUnit(target, "onReceiveDamage", [hit], null);
@@ -1309,6 +1431,7 @@ class Sim {
     public function applyStatus(target:Unit, id:String, source:Inst, stacks:Int, ?duration:Float):Status {
         if (target == null || id == "") return null;
         var info = env.skill(id);
+        if (Sys.getEnv("TRACE") != null && id.indexOf(Sys.getEnv("TRACE")) >= 0) Sys.println("TRACE status " + id + " t=" + Math.round(time * 10) / 10);
         if (info == null) { missing("status data " + id); return null; }
         var instigator = source != null ? (source.isStatus() ? (cast source : Status).instigator : source.owner) : hero;
         var dur = duration != null && duration > 0 ? duration : info.durationWith(source != null ? source.runes : []);
@@ -1342,6 +1465,11 @@ class Sim {
         dispatchUnit(instigator, "onInflictStatusEval", [statusEval(s, target)], null);
         if (target != instigator) dispatchUnit(target, "onReceiveStatus", [s], null);
         return s;
+    }
+
+    public function refreshSteps(s:Status):Void {
+        if (s.removed) return;
+        for (step in s.info.steps) if (s.info.stepActive(step, s.rank, s.runes) && step.on == "Refresh") runStep(s, step, s.unit, ctx);
     }
 
     function statusEval(s:Status, target:Unit):HitObj {
@@ -1420,6 +1548,11 @@ class Sim {
                 // script.SkillScript.addStatus(unit, status, ?stacks, ?skill): the third argument is the stacks (rounded)
                 var n = a.length > 2 && a[2] != null ? Std.int(Math.max(1, Math.round(num(a[2])))) : 1;
                 return applyStatus(unitArg(0), str(a[1]), inst, n);
+            case "removeStatuses":
+                var u = unitArg(0);
+                var f:Closure = Std.isOfType(a[1], Closure) ? a[1] : null;
+                if (u != null && f != null) for (st in u.statuses.copy()) if (!st.removed && f.run([st]) == true) removeStatus(st);
+                return null;
             case "removeStatus":
                 var u = unitArg(0);
                 if (u != null) { var s = findStatus(u, str(a[1]), null); if (s != null) removeStatus(s); }
@@ -1542,8 +1675,8 @@ class Sim {
             case "consumeCooldown": inst.cdEnd = time + inst.info.cooldownWith(inst.runes); return null;
             case "isInCooldown": return time < inst.cdEnd;
             case "isSkillInCooldown": var t = instById(hero, str(a[0])); return t != null && time < t.cdEnd;
-            case "setDynVal": inst.dyn[Std.int(num(a[0]))] = num(a[1]); return null;
-            case "addDynVal": inst.dyn[Std.int(num(a[0]))] += num(a[1]); return null;
+            case "setDynVal": inst.dyn[Std.int(num(a[0]))] = num(a[1]); if (inst.isStatus()) statsDirty = true; return null;
+            case "addDynVal": inst.dyn[Std.int(num(a[0]))] += num(a[1]); if (inst.isStatus()) statsDirty = true; return null;
             case "getDynVal": return inst.dyn[Std.int(num(a[0]))];
             case "stop": if (inst.isStatus()) removeStatus(cast inst); return null;
             case "startSkill", "startSkillAtPosition":

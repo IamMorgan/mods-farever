@@ -158,7 +158,7 @@ class BuildTab {
         DebugLog.guard("draw: skills", () -> Views.skills(skillsCol, hero, bodyFont, skillsW));
         var statsCol = Ui.flow(bottom, true, 3, statsW);
         built.push({name: "stats", obj: statsCol});
-        Ui.text(statsCol, headFont, Views.result != null ? Texts.newStats() : Texts.nowStats(), COLOR_HEAD, 16, statsW);
+        Ui.text(statsCol, headFont, Views.result != null || Views.savedStats() != null ? Texts.newStats() : Texts.nowStats(), COLOR_HEAD, 16, statsW);
         DebugLog.guard("draw: totals", () -> Views.totals(statsCol, hero, bodyFont, statsW));
         DebugLog.guard("draw: attributes", () -> Views.attributes(statsCol, hero, bodyFont, headFont, statsW));
         DebugLog.line("draw: done");
@@ -261,6 +261,12 @@ class BuildTab {
             DebugLog.line("click: calculate with " + haxe.Json.stringify(State.settings));
             startCalc(G.call("ui.BaseElement", "get_myHero", [window]), State.settings);
         }, width);
+        // the last result, whole (build and attributes): active once a calculation is done; templates do not wipe it
+        if (job != null || lastResult == null) Ui.disabledButton(left, bodyFont, Texts.result(), 14, width);
+        else Ui.button(left, bodyFont, Texts.result(), 14, Views.result == lastResult, () -> {
+            DebugLog.line("click: result");
+            showResult();
+        }, width);
 
 
         Ui.text(left, headFont, Texts.templates(), COLOR_HEAD, 16, width);
@@ -275,9 +281,13 @@ class BuildTab {
                 Ui.disabledButton(col, bodyFont, Texts.resetOne(), 12, each);
                 continue;
             }
+            // a template button only chooses the template (what "Show" opens and "Save" writes): the window does not switch
             Ui.button(col, bodyFont, Texts.template(t) + (State.templates[t] == null ? "" : " •"), 13, State.active == t, () -> {
-                DebugLog.line("click: template " + (slot + 1) + (State.templates[slot] == null ? " (empty)" : ""));
-                openTemplate(slot);
+                DebugLog.line("click: template " + (slot + 1) + " chosen" + (State.templates[slot] == null ? " (empty)" : ""));
+                State.active = slot;
+                State.save();
+                status = "";
+                draw();
             }, each);
             var armed = resetArmed == t && haxe.Timer.stamp() < resetArmedUntil;
             Ui.button(col, bodyFont, armed ? Texts.resetConfirm() : Texts.resetOne(), 12, false, () -> {
@@ -294,20 +304,26 @@ class BuildTab {
                 draw();
             }, each);
         }
-        if (job != null) Ui.disabledButton(left, bodyFont, Texts.save(), 14, width);
+        // "Show": the chosen template in the window; "Save": the result shown (the last result) into the chosen template
+        var chosen = State.active;
+        if (job != null || chosen < 0 || State.templates[chosen] == null) Ui.disabledButton(left, bodyFont, Texts.show(), 14, width);
+        else Ui.button(left, bodyFont, Texts.show(), 14, Views.result == null && Views.saved != null, () -> {
+            DebugLog.line("click: show template " + (chosen + 1));
+            openTemplate(chosen);
+        }, width);
+        if (job != null || chosen < 0 || lastResult == null || Views.result != lastResult) Ui.disabledButton(left, bodyFont, Texts.save(), 14, width);
         else Ui.button(left, bodyFont, Texts.save(), 14, false, () -> {
-            var slot = State.active >= 0 ? State.active : 0;
-            DebugLog.line("click: save to template " + (slot + 1));
-            saveToTemplate(slot);
+            DebugLog.line("click: save the result to template " + (chosen + 1));
+            saveToTemplate(chosen);
         }, width);
         statusText = status != "" ? Ui.text(left, bodyFont, status, COLOR_NOTE, 14, width) : null;
         DebugLog.guard("draw: infusions", () -> Views.infusions(left, G.call("ui.BaseElement", "get_myHero", [window]), bodyFont, headFont, width));
     }
 
-    /** Saves the result shown (else the questionnaire) to a template: the "Save" button. */
+    /** Saves the last result (build, talents, skills, attributes, its questionnaire) to a template: the "Save" button. */
     public static function saveToTemplate(slot:Int):Void {
-            var r = Views.result;
-            if (r == null) State.saveTemplate(slot);
+            var r = lastResult;
+            if (r == null) { status = Texts.noItems(); return; }
             else {
                 var b = r.build;
                 var sigils = [];
@@ -319,7 +335,10 @@ class BuildTab {
                 State.saveTemplate(slot, [for (s => c in b.items) if (c != null) Views.templateEntry(b, s, c)], [for (id => rank in b.talents) {id: id, rank: rank}],
                     sigils, [for (id in b.skills) {id: id, runes: b.runes.exists(id) ? b.runes.get(id) : []}],
                     [for (id => n in r.infusions) {id: id, count: n}],
-                    [for (s in [0, 1]) r.eval.weaponSkills.exists(s) ? r.eval.weaponSkills.get(s).copy() : []]);
+                    [for (s in [0, 1]) r.eval.weaponSkills.exists(s) ? r.eval.weaponSkills.get(s).copy() : []],
+                    [for (id => v in r.stats) {id: id, v: v}],
+                    {dps: r.eval.dps, self: r.eval.selfHeal, ally: r.eval.allyHeal, nowDps: r.now.dps, nowSelf: r.now.selfHeal, nowAlly: r.now.allyHeal},
+                    lastSettings);
             }
             status = Texts.savedTo(slot);
             if (content != null && window != null && isOurs(window)) draw();
@@ -349,6 +368,21 @@ class BuildTab {
         }
         if (content != null && window != null && isOurs(window)) draw();
         return job != null;
+    }
+
+    /** The last finished calculation (kept while templates are looked at) and the questionnaire it was made for. */
+    static var lastResult:Optimizer.BuildResult = null;
+    static var lastSettings:State.Settings = null;
+
+    /** Shows the last result again (the "Result" button): its build and attributes, with its questionnaire. */
+    public static function showResult():Void {
+        if (lastResult == null) return;
+        Views.result = lastResult;
+        Views.saved = null;
+        if (lastSettings != null) State.settings = State.copy(lastSettings);
+        State.save();
+        status = "";
+        if (content != null && window != null && isOurs(window)) draw();
     }
 
     /** Opens a template (its button). */
@@ -405,6 +439,7 @@ class BuildTab {
         lastFrame = -1;
         Views.result = job.result;
         Views.saved = null;
+        if (job.result != null) { lastResult = job.result; lastSettings = State.copy(job.settings); }
         // kept as the start of the next calculation with the same questionnaire (Optimizer.seedFromLast)
         if (job.result != null) DebugLog.guard("keep the last result", () -> {
             var b = job.result.build;
