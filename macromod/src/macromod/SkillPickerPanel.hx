@@ -19,19 +19,19 @@ class SkillPickerPanel {
     static inline var CELL = 56.0;
     static inline var GAP = 6.0;
     static inline var PAD = 10.0;
-    static inline var LINE = 18.0; // height of one text line, in scene pixels
+    static inline var LINE = UiKit.LINE;
     static inline var CELL_BG = 0xFF2E2626;
     static inline var CELL_HOVER = 0xFF6B5634;
     static inline var CANCEL_BG = 0xFF6A2A26;
 
     var root:Dynamic;
     var caption:Dynamic;
-    var font:Dynamic;
-    var fontScale = 1.0;
     var onPick:HotbarSkill -> Void;
     var open = false;
 
-    public function new() {}
+    var ui:UiKit;
+
+    public function new(ui:UiKit) this.ui = ui;
 
     public function isOpen():Bool return open;
 
@@ -50,71 +50,13 @@ class SkillPickerPanel {
         try if (G.staticCall("hxd.Key", "isPressed", [27]) == true) hide() catch (_:Dynamic) {}
     }
 
-    /** A font from the game's own texts, preferring one that is showing non-Latin text (so it
-        has the client language's letters); the engine's default font only as a last resort. */
-    function findFont(root:Dynamic):Dynamic {
-        var tree = new GameScene();
-        var stack:Array<Dynamic> = [root];
-        var visited = 0;
-        var fallback:Dynamic = null;
-        while (stack.length > 0 && visited++ < 30000) {
-            var node = stack.pop();
-            if (G.isA(node, "h2d.Text")) {
-                var f = G.field(node, "font");
-                if (f != null) {
-                    var text = G.str(G.field(node, "text"));
-                    if (text != null) for (i in 0...text.length) if (StringTools.fastCodeAt(text, i) >= 0x400) return f;
-                    if (fallback == null) fallback = f;
-                }
-            }
-            for (kid in tree.children(node)) stack.push(kid);
-        }
-        return fallback != null ? fallback : G.staticCall("hxd.res.DefaultFont", "get", []);
-    }
-
-    function text(parent:Dynamic, value:String, color:Int, x:Float, y:Float, ?maxWidth:Float):Dynamic {
-        var t = G.create("h2d.Text", [font, parent]);
-        G.call("h2d.Text", "set_textColor", t, [color]);
-        if (maxWidth != null) G.call("h2d.Text", "set_maxWidth", t, [maxWidth / fontScale]);
-        G.call("h2d.Text", "set_text", t, [value]);
-        G.call("h2d.Object", "setScale", t, [fontScale]);
-        G.call("h2d.Object", "setPosition", t, [x, y]);
-        return t;
-    }
-
-    function box(parent:Dynamic, x:Float, y:Float, w:Float, h:Float, color:Int):Dynamic {
-        var area = G.create("h2d.Interactive", [w, h, parent, null]);
-        G.set(area, "backgroundColor", color);
-        G.call("h2d.Object", "setPosition", area, [x, y]);
-        return area;
-    }
-
     function setCaption(value:String):Void {
         if (caption != null) try G.call("h2d.Text", "set_text", caption, [value]) catch (_:Dynamic) {}
     }
 
-    /** The skill's own icon, as the action bar draws it (lib.ExtensionsUI.toTile(skill.getIcon())). */
-    function drawIcon(skill:Dynamic, parent:Dynamic):Bool {
-        try {
-            var gfx = G.call("st.skill.BaseSkill", "getIcon", skill);
-            if (gfx == null) return false;
-            var tile = G.staticCall("lib.ExtensionsUI", "toTile", [gfx]);
-            if (tile == null) return false;
-            var w = G.number(G.field(tile, "width")), h = G.number(G.field(tile, "height"));
-            if (w <= 0 || h <= 0) return false;
-            var bitmap = G.create("h2d.Bitmap", [tile, parent]);
-            var scale = (CELL - 6) / Math.max(w, h);
-            G.call("h2d.Object", "setScale", bitmap, [scale]);
-            G.call("h2d.Object", "setPosition", bitmap, [(CELL - w * scale) / 2, (CELL - h * scale) / 2]);
-            return true;
-        } catch (_:Dynamic) {
-            return false;
-        }
-    }
-
     function cell(parent:Dynamic, x:Float, y:Float, entry:HotbarSkill):Void {
-        var area = box(parent, x, y, CELL, CELL, CELL_BG);
-        if (!drawIcon(entry.skill, area)) text(area, entry.name, 0xFFF3D6, 3, 3, CELL - 6);
+        var area = ui.box(parent, x, y, CELL, CELL, CELL_BG);
+        if (!ui.drawIcon(entry.skill, area, CELL)) ui.text(area, entry.name, 0xFFF3D6, 3, 3, CELL - 6);
         var name = entry.name;
         G.set(area, "onOver", (_:Dynamic) -> { G.set(area, "backgroundColor", CELL_HOVER); setCaption(name); });
         G.set(area, "onOut", (_:Dynamic) -> { G.set(area, "backgroundColor", CELL_BG); setCaption(""); });
@@ -134,9 +76,7 @@ class SkillPickerPanel {
         hide();
         if (scene == null) return false;
         try {
-            if (font == null) font = findFont(scene);
-            var lineHeight = G.number(G.field(font, "lineHeight"), 16);
-            fontScale = lineHeight > 0 ? Math.min(1.5, Math.max(0.5, LINE / lineHeight)) : 1;
+            ui.prepare(scene);
 
             var weapons = [for (e in entries) if (e.weapon) e];
             var others = [for (e in entries) if (!e.weapon) e];
@@ -150,18 +90,18 @@ class SkillPickerPanel {
             root = G.create("h2d.Object", [scene]); // last child of the scene: drawn on top of everything
             var sceneW = G.number(G.field(scene, "width"), 1920), sceneH = G.number(G.field(scene, "height"), 1080);
             // Clicking anywhere outside the panel closes it.
-            var outside = box(root, 0, 0, sceneW, sceneH, 0x40000000);
+            var outside = ui.box(root, 0, 0, sceneW, sceneH, 0x40000000);
             G.set(outside, "onClick", (_:Dynamic) -> hide());
 
             var px = Math.max(4, Math.min(x - CELL, sceneW - width - 4));
             var py = y + 16;
             if (py + height > sceneH - 4) py = Math.max(4, y - height - 16);
-            var panel = box(root, px, py, width, height, 0xF0151212); // also keeps clicks on the panel from closing it
+            var panel = ui.box(root, px, py, width, height, 0xF0151212); // also keeps clicks on the panel from closing it
 
-            text(panel, title, 0xFFF3D6, PAD, PAD);
+            ui.text(panel, title, 0xFFF3D6, PAD, PAD);
             var rowY = PAD + LINE + GAP;
             if (rows.length == 0) {
-                text(panel, SettingsText.noSkills(russian), 0xE0D8CD, PAD, rowY, width - PAD * 2);
+                ui.text(panel, SettingsText.noSkills(russian), 0xE0D8CD, PAD, rowY, width - PAD * 2);
                 rowY += LINE;
             }
             for (r in rows) {
@@ -169,9 +109,9 @@ class SkillPickerPanel {
                 for (entry in r) { cell(panel, cx, rowY, entry); cx += CELL + GAP; }
                 rowY += CELL + GAP;
             }
-            caption = text(panel, "", 0xFFE7A8, PAD, rowY, width - PAD * 2);
-            var cancel = box(panel, width - PAD - 80, height - PAD - LINE - 4, 80, LINE + 4, CANCEL_BG);
-            text(cancel, SettingsText.cancel(russian), 0xFFF3D6, 8, 2);
+            caption = ui.text(panel, "", 0xFFE7A8, PAD, rowY, width - PAD * 2);
+            var cancel = ui.box(panel, width - PAD - 80, height - PAD - LINE - 4, 80, LINE + 4, CANCEL_BG);
+            ui.text(cancel, SettingsText.cancel(russian), 0xFFF3D6, 8, 2);
             G.set(cancel, "onClick", (_:Dynamic) -> hide());
             try G.call("h2d.Interactive", "set_cursor", cancel, [G.current("hxd.Cursor", "Button")]) catch (_:Dynamic) {}
 

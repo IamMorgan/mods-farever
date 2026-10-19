@@ -5,6 +5,8 @@ import hlx.runtime.ModConfig;
 import hlx.runtime.HlxPrefixResult;
 import macromod.GameAccess as G;
 import macromod.KeyRowScanner.RowDecorator;
+import macromod.RotationWindow.RotationHost;
+import macromod.Rotations.RotationData;
 import macromod.SkillMatch.SkillRef;
 
 typedef MacroConfig = {
@@ -70,15 +72,21 @@ class MacroMod {
 
     static var sequencer:Sequencer;
     static var keys:GameKeys;
-    static var skills:GameSkills;
+    public static var skills:GameSkills;
     static var hotbar = new HotbarSkills();
-    static var sceneRoot:Dynamic;
+    public static var sceneRoot:Dynamic;
     static var clearButtons:KeyRowScanner;
     static var stepRows:KeyRowScanner;
     static var stepBoxes = new Map<String, Dynamic>(); // step field -> its text field on screen
     static var settingsOpen = false;
     static var known:Array<SkillRef> = null;
-    static var picker = new SkillPickerPanel();
+    static var ui = new UiKit();
+    static var picker = new SkillPickerPanel(ui);
+    public static var rotations:Array<RotationData> = [];
+    public static var rotationSeq:RotationSequencer;
+    public static var rotationWindow:RotationWindow;
+    static var openRotations = false;   // the "Rotations" button of the settings was clicked
+    static var nextHotbarRead = 0.0;
     static var pickRequest:{macroNumber:Int, step:Int} = null; // which step's "Choose" was clicked
 
     static function main():Void {
@@ -87,6 +95,10 @@ class MacroMod {
         skills = new GameSkills(keys);
         skills.picks = PickStore.load();
         sequencer = new Sequencer(keys, skills);
+        rotationSeq = new RotationSequencer(keys, skills);
+        rotationWindow = new RotationWindow(ui, picker, keys);
+        rotations = Rotations.load();
+        rotationSeq.set(rotations);
         applyConfig();
 
         // The red X next to each activation key button ... (rows are found by their label, in
@@ -108,6 +120,7 @@ class MacroMod {
                     (_:Dynamic) -> pickRequest = {macroNumber: macroNumber, step: step});
             }
         }
+        Bus.subscribe("better-mod-settings/action/" + HlxRuntime.moduleName() + "/rotations_open", (_:Dynamic) -> openRotations = true);
         Bus.subscribe(
             "better-mod-settings/config-changed/" + HlxRuntime.moduleName(),
             (_:Dynamic) -> {
@@ -181,9 +194,12 @@ class MacroMod {
 
     static function applyConfig():Void {
         sequencer.stopAll(); // a running macro restarts with the new settings
+        rotationSeq.stopAll();
         sequencer.macros = MacroDefs.fromConfig(config);
         sequencer.pauseWhileMoving = config.notWhileRunning;
         sequencer.combatOnly = config.combatOnly;
+        rotationSeq.pauseWhileMoving = config.notWhileRunning;
+        rotationSeq.combatOnly = config.combatOnly;
         skills.aoeAutoAim = config.aoeNearestTarget;
         skills.invalidate();
     }
@@ -198,8 +214,22 @@ class MacroMod {
         sequencer.inCombat = hero != null && G.field(hero, "isInCombat") == true;
         try localizeSettings() catch (_:Dynamic) {}
         var now = haxe.Timer.stamp();
+        // The skills on the bars give a skill its input (needed to confirm ground-aimed skills): keep them
+        // read while playing, not only while the settings page is open.
+        if (hero != null && now >= nextHotbarRead) {
+            nextHotbarRead = now + 2;
+            try {
+                var read = hotbar.read(sceneRoot);
+                if (read.length > 0) skills.hotbar = read; // an empty read (HUD not drawn for a moment) keeps the last good one
+            } catch (_:Dynamic) {}
+        }
         try skills.update(now) catch (_:Dynamic) {}
         try sequencer.update(now) catch (_:Dynamic) {}
+        rotationSeq.hero = hero;
+        rotationSeq.inCombat = sequencer.inCombat;
+        rotationSeq.suspended = rotationWindow.isCapturing();
+        try rotationSeq.update(now) catch (_:Dynamic) {}
+        try TestMode.tick(instance) catch (_:Dynamic) {}
 
         // Both scanners are cheap (a few hundred UI nodes per frame, with a pause between passes)
         // and only find rows while the Farever Macros settings page is on screen.
@@ -219,11 +249,51 @@ class MacroMod {
             pickRequest = null;
             try openPicker(request.macroNumber, request.step) catch (_:Dynamic) {}
         }
+        if (openRotations) {
+            openRotations = false;
+            try showRotations() catch (_:Dynamic) {}
+        }
+        try rotationWindow.update(now) catch (_:Dynamic) {}
         picker.update();
         return Continue;
     }
 
-    static var russian = false;
+    /** Opens the rotation window. Its changes are saved at once and take effect for the next press of a hotkey. */
+    public static function showRotations():Bool {
+        rotationWindow.russian = russian;
+        picker.russian = russian;
+        rotationWindow.russian = russian;
+        var hero = GameSkills.localHero();
+        var snapshot = hotbar.read(sceneRoot);
+        skills.hotbar = snapshot;
+        var skillOf = (kind:String) -> {
+            for (e in snapshot) if (e.kind == kind) return e.skill;
+            return hero == null ? null : G.call("ent.GameObject", "getSkill", hero, [kind]);
+        };
+        var host:RotationHost = {
+            entries: () -> {
+                var entries = hotbar.read(sceneRoot);
+                skills.hotbar = entries;
+                return entries;
+            },
+            skillOf: skillOf,
+            nameOf: (kind:String) -> {
+                for (e in snapshot) if (e.kind == kind) return e.name;
+                var skill = skillOf(kind);
+                var name = skill == null ? "" : HotbarSkills.displayName(skill);
+                return name == "" ? kind : name;
+            },
+            macroKeys: () -> [config.m1_hotkey, config.m2_hotkey, config.m3_hotkey]
+        };
+        return rotationWindow.show(sceneRoot, rotations, host, () -> {
+            Rotations.save(rotations);
+            rotationSeq.set(rotations);
+        });
+    }
+
+    public static function closeRotations():Void rotationWindow.hide();
+
+    public static var russian = false;
     static var localizedLanguage:String = null;
     static var nextLanguageCheck = 0.0;
 
@@ -243,6 +313,7 @@ class MacroMod {
         localizedLanguage = language;
         russian = SettingsText.isRussian(language);
         picker.russian = russian;
+        rotationWindow.russian = russian;
         var path = "hlx/mods/" + HlxRuntime.moduleName() + "/configFormats.json";
         var text = SettingsText.json(russian, MacroDefs.MACROS, MacroDefs.STEPS);
         var current = try sys.io.File.getContent(path) catch (_:Dynamic) "";
@@ -264,6 +335,8 @@ class MacroMod {
     @:hlx.prefix(GameApp.dispose)
     static function beforeGameAppDispose(instance:Dynamic):HlxPrefixResult<Void> {
         sequencer.stopAll();
+        rotationSeq.stopAll();
+        rotationWindow.hide();
         picker.hide();
         return Continue;
     }

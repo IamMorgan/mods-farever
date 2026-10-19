@@ -56,7 +56,7 @@ class GameKeys implements KeyIO {
         default: -1;
     };
 
-    static function supportsModifier(code:Int):Bool
+    public static function supportsModifier(code:Int):Bool
         return (code >= 48 && code <= 57) || (code >= 96 && code <= 105) || (code >= 65 && code <= 90)
             || (code >= 112 && code <= 135) || code == 13 || code == 9 || (code >= 37 && code <= 40);
 
@@ -102,6 +102,22 @@ class GameKeys implements KeyIO {
     public function isDown(binding:Dynamic):Bool {
         var code = MacroDefs.keyCode(binding);
         return code > 0 && state(code).down;
+    }
+
+    /** Every key and extra mouse button held right now, modifiers excluded (to let the player pick a hotkey). */
+    public function heldKeys():Array<Int> {
+        var out = [];
+        for (code in 2...255) {
+            if (code == 16 || code == 17 || code == 18 || (code >= 5 && code <= 7)) continue;
+            if (rawDown(code)) out.push(code);
+        }
+        return out;
+    }
+
+    /** The held modifier in Better Mod Settings numbering (0 = Ctrl, 1 = Shift, 2 = Alt), -1 if none. */
+    public function heldModifier():Int {
+        for (m in 0...3) if (rawDown(modifierKey(m))) return m;
+        return -1;
     }
 
     /** The same call the game's window makes for a real key: it updates hxd.Key's state. */

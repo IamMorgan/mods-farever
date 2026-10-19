@@ -1,6 +1,7 @@
 package macromod;
 
 import macromod.GameAccess as G;
+import macromod.SkillIO.Readiness;
 import macromod.SkillMatch.SkillRef;
 
 /**
@@ -98,6 +99,22 @@ class GameSkills implements SkillIO {
             try return G.call(type, "allowAiming", script) == true
             catch (_:Dynamic) return G.call("script.SkillScript", "allowAiming", script) == true;
         } catch (_:Dynamic) return false;
+    }
+
+    /** The game's own check before using a skill (cooldown, silence, whether the hero can act): Ok = ready now. */
+    public function skillState(hero:Dynamic, value:String):Int {
+        if (controller() == null) return Readiness.WAITING;
+        if (hero == null) hero = localHero();
+        if (hero == null) return Readiness.WAITING;
+        try {
+            var kind = SkillMatch.kindFor(value, picks, known(hero));
+            if (kind == null) return Readiness.MISSING;
+            var skill = G.call("ent.GameObject", "getSkill", hero, [kind]);
+            if (skill == null || G.field(skill, "removed") == true) return Readiness.MISSING;
+            return enumName(G.call("st.skill.Skill", "checkUse", skill, [null])) == "Ok" ? Readiness.READY : Readiness.WAITING;
+        } catch (_:Dynamic) {
+            return Readiness.WAITING;
+        }
     }
 
     public function useSkill(macroIndex:Int, hero:Dynamic, value:String):Bool {

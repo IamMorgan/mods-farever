@@ -18,6 +18,9 @@ class SettingsTextTest {
     static function main():Void {
         check("both languages have the same settings in the same order", keys(false).join(",") == keys(true).join(","));
         check("combat-only checkbox is there", keys(false).indexOf("checkbox:combatOnly") >= 0);
+        check("rotations button is there in both languages", keys(false).indexOf("button:rotations_open") >= 0 && keys(true).indexOf("button:rotations_open") >= 0);
+        check("rotation texts differ by language", SettingsText.rotationsTitle(true) == "Ротации" && SettingsText.rotationsTitle(false) == "Rotations"
+            && SettingsText.rotationKeyTaken(true, 2, true).indexOf("макрос 2") >= 0 && SettingsText.rotationKeyTaken(false, 2, false).indexOf("rotation 2") >= 0);
         check("russian labels in russian", SettingsText.json(true, 3, 10).indexOf("Активно только в бою") >= 0);
         check("english labels in english", SettingsText.json(false, 3, 10).indexOf("Active only in combat") >= 0
             && ~/[А-Яа-я]/.match(SettingsText.json(false, 3, 10)) == false);
