@@ -152,6 +152,18 @@ class Items {
 
     static var realCount = 0;
 
+    /** A weapon fights with skills: it has at least one weapon skill (WeaponSkill) and is not a capture net. */
+    public static function combatWeapon(c:Candidate):Bool {
+        try {
+            if (G.field(G.field(c.inf, "props"), "captureNet") != null) return false;
+        } catch (_:Dynamic) {}
+        for (id in c.skills) {
+            var d = SkillData.get(id);
+            if (d != null && d.type == "WeaponSkill") return true;
+        }
+        return false;
+    }
+
     /**
      * Every item of the game the hero could wear (class, level) that `slotOk` puts in some slot and that
      * `available` says can be obtained, created by the game itself (st.Item.create at the hero's level) so its
@@ -177,6 +189,8 @@ class Items {
             var item = G.callStatic("st.Item", "create", [id, drop]);
             if (item == null || !isGear(item)) { typeFits.set(type, false); return null; }
             var c = candidate(item, "game");
+            // a weapon with no weapon skill is no combat weapon (the capture net: one capture attack, no skills, no combo)
+            if (c.weapon && !combatWeapon(c)) return null;
             // the slot rule is the item type's: a type that fits no slot is skipped from now on
             if (!slotOk(c)) { typeFits.set(type, false); return null; }
             typeFits.set(type, true);

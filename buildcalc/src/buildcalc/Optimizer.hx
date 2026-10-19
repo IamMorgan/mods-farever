@@ -73,7 +73,11 @@ class Optimizer {
     var thresholds:Array<Int> = [];
     public var points = 0;
     public var classSkills:Array<String> = [];
+    /** Class skill slots: the game gives four class skills and, from the level of the class's last skill, an ultimate. */
     public var skillSlots = 0;
+    public static inline var CLASS_SLOTS = 4;
+    /** The class's ultimate (its class skill of the highest level; "" when there is none). */
+    public var ultimate = "";
     var runesPerSkill = 1;
     public var evals = 0;
     /** Builds valued after which a search starts nothing new. */
@@ -169,7 +173,7 @@ class Optimizer {
             for (e in last.talents) if (e.rank > 0) t.set(e.id, e.rank);
             if (validTalents(t)) b.talents = t;
         }
-        if (last.skills != null && last.skills.length > 0 && last.skills.length <= Math.max(skillSlots, worn.skills.length)) {
+        if (last.skills != null && last.skills.length > 0 && skillsAllowed([for (e in last.skills) e.id])) {
             var ok = true;
             for (e in last.skills) if (classSkills.indexOf(e.id) < 0) ok = false;
             if (ok) {
@@ -501,6 +505,7 @@ class Optimizer {
             try ok = G.callStatic("HItem", "hasUnitAptitude", [inf, hero]) == true catch (_:Dynamic) {}
             if (!ok || G.num(G.field(inf, "level")) > level) continue;
             var c = Items.candidate(item, "owned");
+            if (c.weapon && !Items.combatWeapon(c)) continue;
             var fits = false;
             for (sl in Items.SLOTS) if (slotFits(c, sl)) fits = true;
             if (!fits) continue;
@@ -581,8 +586,66 @@ class Optimizer {
             b.skills.push(def.id);
             b.runes.set(def.id, GameData.skillMasteries(def.inf, active));
         }
+        // the hero lists every class skill it has learnt; the game lets it use four of them and the ultimate
+        var all = b.skills;
+        b.skills = limitSkills(hero, all, slotSkills(hero, all));
+        for (id in all) if (b.skills.indexOf(id) < 0) b.runes.remove(id);
         DebugLog.line("worn build: " + describe(b));
         return b;
+    }
+
+    /** The class's ultimate: its class skill of the highest unlock level (the others unlock earlier). */
+    public static function ultimateOf(hero:Dynamic):String {
+        var best = "", bestLevel = 0.0, tie = false;
+        var list = G.field(G.field(hero, "inf"), "skills");
+        for (i in 0...G.len(list)) {
+            var e = G.at(list, i);
+            var d = SkillData.get(GameData.idOf(G.field(e, "skill")));
+            if (d == null || d.type != "ClassSkill") continue;
+            var lv = G.num(G.field(e, "level"));
+            if (lv > bestLevel) { bestLevel = lv; best = d.id; tie = false; } else if (lv == bestLevel) tie = true;
+        }
+        return tie ? "" : best;
+    }
+
+    /** The class skills in the hero's skill slots, as far as the game's slot list can be read (the order of the slots). */
+    public static function slotSkills(hero:Dynamic, known:Array<String>):Array<String> {
+        var out = [];
+        try {
+            var arr = G.field(G.field(G.field(hero, "specialization"), "skillSlots"), "array");
+            for (i in 0...G.len(arr)) {
+                var id = GameData.idOf(G.at(arr, i));
+                if (id != "" && known.indexOf(id) >= 0 && out.indexOf(id) < 0) out.push(id);
+            }
+        } catch (_:Dynamic) {}
+        return out;
+    }
+
+    /** At most CLASS_SLOTS class skills (those of `preferred` first) and the ultimate, which has a slot of its own. */
+    public static function limitSkills(hero:Dynamic, ids:Array<String>, preferred:Array<String>):Array<String> {
+        var ultimate = ultimateOf(hero);
+        var out = [];
+        for (id in preferred.concat(ids)) if (id != ultimate && ids.indexOf(id) >= 0 && out.indexOf(id) < 0 && out.length < CLASS_SLOTS) out.push(id);
+        if (ultimate != "" && ids.indexOf(ultimate) >= 0) out.push(ultimate);
+        return out;
+    }
+
+    /** The build's class skills are allowed: at most CLASS_SLOTS ordinary ones and at most one ultimate, each only once. */
+    public function skillsAllowed(skills:Array<String>):Bool {
+        var n = 0, u = 0;
+        for (i in 0...skills.length) {
+            if (skills.indexOf(skills[i]) != i) return false;
+            if (skills[i] == ultimate && ultimate != "") u++; else n++;
+        }
+        return n <= CLASS_SLOTS && u <= 1;
+    }
+
+    /** The class skills are all chosen: CLASS_SLOTS ordinary ones (or all there are) and the ultimate when the hero has it. */
+    public function skillsFull(skills:Array<String>):Bool {
+        var n = 0, u = false;
+        for (id in skills) if (id == ultimate && ultimate != "") u = true; else n++;
+        var haveUlt = ultimate != "" && classSkills.indexOf(ultimate) >= 0;
+        return n >= skillSlots && (u || !haveUlt);
     }
 
     function readTree():Void {
@@ -631,7 +694,9 @@ class Optimizer {
         }
         var slots = 0;
         try slots = G.len(G.field(G.field(G.field(hero, "specialization"), "skillSlots"), "array")) catch (_:Dynamic) {}
-        skillSlots = worn.skills.length > 0 ? worn.skills.length : slots;
+        ultimate = ultimateOf(hero);
+        var regular = [for (id in classSkills) if (id != ultimate) id];
+        skillSlots = Std.int(Math.min(CLASS_SLOTS, regular.length));
         try {
             var second = G.num(G.field(HlxRuntime.resolveStaticField(G.type("Const"), "Hero"), "UnlockLevel_SecondMastery"));
             if (second > 0 && level >= second) runesPerSkill = 2;
@@ -891,16 +956,17 @@ class Optimizer {
         var off = b.items.get(Items.OFFHAND);
         if (main == null || (off != null && Items.offhandWorks(main, off))) return;
         var pool = pools.get(Items.OFFHAND);
-        if (pool == null) return;
         var best:Candidate = null, bestV = value(b);
-        for (c in pool) {
+        if (pool != null) for (c in pool) {
             if (!Items.offhandWorks(main, c)) continue;
             var trial = copy(b);
             place(trial, Items.OFFHAND, c);
             var v = value(trial);
             if (v > bestV) { bestV = v; best = c; }
         }
+        // an off-hand that does not work with the main weapon is not left in the build (it would be shown as worn)
         if (best != null) place(b, Items.OFFHAND, best);
+        else if (off != null) place(b, Items.OFFHAND, null);
     }
 
     /** Puts item `c` in slot `s`: its augments; a created item keeps the slot's infusion if it can take one. */
@@ -1031,6 +1097,10 @@ class Optimizer {
         model.report = rep;
         // an item in a slot the game does not allow: taken out (it would be counted as worn)
         for (s => c in b.items) if (c != null && !slotFits(c, s)) { DebugLog.line("check: " + c.id + " removed from slot " + s); b.items.remove(s); b.augs.remove(s); b.infusion.remove(s); b.bonus.remove(s); }
+        // an off-hand that does not work with the main weapon (a shield with a two-handed one) is taken out
+        refillOffhand(b);
+        var offNow = b.items.get(Items.OFFHAND);
+        if (offNow != null && !Items.offhandWorks(b.items.get(0), offNow)) { DebugLog.line("check: " + offNow.id + " removed from the off-hand slot"); b.items.remove(Items.OFFHAND); b.augs.remove(Items.OFFHAND); b.infusion.remove(Items.OFFHAND); b.bonus.remove(Items.OFFHAND); }
         DebugLog.line("check: slots of the chosen build " + checkBuild(b) + "; refused placements " + badPlace);
         var ev = model.evaluate(b);
         model.report = null;
@@ -1581,13 +1651,14 @@ class ItemPass extends Pass {
             var trial = Optimizer.copy(b);
             var old = b.items.get(s);
             o.place(trial, s, c);
-            if (s == 0) o.refillOffhand(trial);
             // the item came from another slot: the old item goes there if it fits that slot (rings, the weapons); a real
             // item is only once in the build, a created one can be had twice
             if (other >= 0) {
                 if (old != null && o.slotFits(old, other)) o.place(trial, other, old);
                 else if (c.real) o.place(trial, other, null);
             }
+            // the main weapon changed (it was put in slot 0, or the old one came to slot 0 from another slot)
+            if (s == 0 || other == 0) o.refillOffhand(trial);
             o.model.statsOnly = Optimizer.statsOnlyItem(s, c) && (other < 0 || Optimizer.statsOnlyItem(other, old));
             take(trial, o.value(trial));
             o.model.statsOnly = false;
@@ -1927,10 +1998,12 @@ class SkillPass extends Pass {
             trial.runes = new Map();
         }
         if (phase == 0) {
-            if (trial.skills.length >= o.skillSlots || o.overLimit()) { phase = 1; return false; }
+            if (o.skillsFull(trial.skills) || o.overLimit()) { phase = 1; return false; }
+            // the ordinary slots are filled first, then the ultimate (it has a slot of its own)
+            var ordinaryFull = Lambda.count(trial.skills, s -> s != o.ultimate) >= o.skillSlots;
             if (ci < o.classSkills.length) {
                 var id = o.classSkills[ci++];
-                if (trial.skills.indexOf(id) >= 0) return false;
+                if (trial.skills.indexOf(id) >= 0 || (id == o.ultimate) != ordinaryFull) return false;
                 trial.skills.push(id);
                 trial.runes.set(id, o.bestRunes(trial, id));
                 var val = o.value(trial);
@@ -1945,10 +2018,10 @@ class SkillPass extends Pass {
             ci = 0; bestId = ""; bestV = -1e30;
             return false;
         }
-        if (scratch && trial.skills.length >= o.skillSlots) {
+        if (scratch && o.skillsFull(trial.skills)) {
             current = o.value(trial);
             Optimizer.copyInto(trial, b);
-        } else if (!(trial.skills.length >= o.skillSlots && take(trial, o.value(trial)))) {
+        } else if (!(o.skillsFull(trial.skills) && take(trial, o.value(trial)))) {
             var runesOnly = Optimizer.copy(b);
             for (id in runesOnly.skills) runesOnly.runes.set(id, o.bestRunes(runesOnly, id));
             take(runesOnly, o.value(runesOnly));
