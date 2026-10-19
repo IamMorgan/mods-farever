@@ -73,11 +73,12 @@ class Optimizer {
     var thresholds:Array<Int> = [];
     public var points = 0;
     public var classSkills:Array<String> = [];
-    /** Class skill slots: the game gives four class skills and, from the level of the class's last skill, an ultimate. */
+    /**
+     * Class skill slots: four (the class's signature skill, its "ultimate" such as the priest's Divine Intervention, is
+     * a SignatureSkill the hero always has: it is not chosen and not counted here).
+     */
     public var skillSlots = 0;
     public static inline var CLASS_SLOTS = 4;
-    /** The class's ultimate (its class skill of the highest level; "" when there is none). */
-    public var ultimate = "";
     var runesPerSkill = 1;
     public var evals = 0;
     /** Builds valued after which a search starts nothing new. */
@@ -586,26 +587,12 @@ class Optimizer {
             b.skills.push(def.id);
             b.runes.set(def.id, GameData.skillMasteries(def.inf, active));
         }
-        // the hero lists every class skill it has learnt; the game lets it use four of them and the ultimate
+        // the hero lists every class skill it has learnt; the game lets it use four of them (the signature skill is a fixed extra)
         var all = b.skills;
         b.skills = limitSkills(hero, all, slotSkills(hero, all));
         for (id in all) if (b.skills.indexOf(id) < 0) b.runes.remove(id);
         DebugLog.line("worn build: " + describe(b));
         return b;
-    }
-
-    /** The class's ultimate: its class skill of the highest unlock level (the others unlock earlier). */
-    public static function ultimateOf(hero:Dynamic):String {
-        var best = "", bestLevel = 0.0, tie = false;
-        var list = G.field(G.field(hero, "inf"), "skills");
-        for (i in 0...G.len(list)) {
-            var e = G.at(list, i);
-            var d = SkillData.get(GameData.idOf(G.field(e, "skill")));
-            if (d == null || d.type != "ClassSkill") continue;
-            var lv = G.num(G.field(e, "level"));
-            if (lv > bestLevel) { bestLevel = lv; best = d.id; tie = false; } else if (lv == bestLevel) tie = true;
-        }
-        return tie ? "" : best;
     }
 
     /** The class skills in the hero's skill slots, as far as the game's slot list can be read (the order of the slots). */
@@ -621,32 +608,21 @@ class Optimizer {
         return out;
     }
 
-    /** At most CLASS_SLOTS class skills (those of `preferred` first) and the ultimate, which has a slot of its own. */
+    /** At most CLASS_SLOTS class skills (those of `preferred` first). */
     public static function limitSkills(hero:Dynamic, ids:Array<String>, preferred:Array<String>):Array<String> {
-        var ultimate = ultimateOf(hero);
         var out = [];
-        for (id in preferred.concat(ids)) if (id != ultimate && ids.indexOf(id) >= 0 && out.indexOf(id) < 0 && out.length < CLASS_SLOTS) out.push(id);
-        if (ultimate != "" && ids.indexOf(ultimate) >= 0) out.push(ultimate);
+        for (id in preferred.concat(ids)) if (ids.indexOf(id) >= 0 && out.indexOf(id) < 0 && out.length < CLASS_SLOTS) out.push(id);
         return out;
     }
 
-    /** The build's class skills are allowed: at most CLASS_SLOTS ordinary ones and at most one ultimate, each only once. */
+    /** The build's class skills are allowed: at most CLASS_SLOTS, each only once. */
     public function skillsAllowed(skills:Array<String>):Bool {
-        var n = 0, u = 0;
-        for (i in 0...skills.length) {
-            if (skills.indexOf(skills[i]) != i) return false;
-            if (skills[i] == ultimate && ultimate != "") u++; else n++;
-        }
-        return n <= CLASS_SLOTS && u <= 1;
+        for (i in 0...skills.length) if (skills.indexOf(skills[i]) != i) return false;
+        return skills.length <= CLASS_SLOTS;
     }
 
-    /** The class skills are all chosen: CLASS_SLOTS ordinary ones (or all there are) and the ultimate when the hero has it. */
-    public function skillsFull(skills:Array<String>):Bool {
-        var n = 0, u = false;
-        for (id in skills) if (id == ultimate && ultimate != "") u = true; else n++;
-        var haveUlt = ultimate != "" && classSkills.indexOf(ultimate) >= 0;
-        return n >= skillSlots && (u || !haveUlt);
-    }
+    /** The class skills are all chosen: CLASS_SLOTS of them (or all there are). */
+    public function skillsFull(skills:Array<String>):Bool return skills.length >= skillSlots;
 
     function readTree():Void {
         try {
@@ -694,9 +670,7 @@ class Optimizer {
         }
         var slots = 0;
         try slots = G.len(G.field(G.field(G.field(hero, "specialization"), "skillSlots"), "array")) catch (_:Dynamic) {}
-        ultimate = ultimateOf(hero);
-        var regular = [for (id in classSkills) if (id != ultimate) id];
-        skillSlots = Std.int(Math.min(CLASS_SLOTS, regular.length));
+        skillSlots = Std.int(Math.min(CLASS_SLOTS, classSkills.length));
         try {
             var second = G.num(G.field(HlxRuntime.resolveStaticField(G.type("Const"), "Hero"), "UnlockLevel_SecondMastery"));
             if (second > 0 && level >= second) runesPerSkill = 2;
@@ -1999,11 +1973,9 @@ class SkillPass extends Pass {
         }
         if (phase == 0) {
             if (o.skillsFull(trial.skills) || o.overLimit()) { phase = 1; return false; }
-            // the ordinary slots are filled first, then the ultimate (it has a slot of its own)
-            var ordinaryFull = Lambda.count(trial.skills, s -> s != o.ultimate) >= o.skillSlots;
             if (ci < o.classSkills.length) {
                 var id = o.classSkills[ci++];
-                if (trial.skills.indexOf(id) >= 0 || (id == o.ultimate) != ordinaryFull) return false;
+                if (trial.skills.indexOf(id) >= 0) return false;
                 trial.skills.push(id);
                 trial.runes.set(id, o.bestRunes(trial, id));
                 var val = o.value(trial);

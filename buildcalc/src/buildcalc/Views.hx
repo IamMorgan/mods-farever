@@ -209,7 +209,7 @@ class Views {
             skills.push(d.id);
             runes.set(d.id, GameData.skillMasteries(d.inf, active));
         }
-        // the hero lists every class skill it has learnt; the game lets it use four of them and the ultimate
+        // the hero lists every class skill it has learnt; the game lets it use four of them (the signature skill is a fixed extra)
         skills = Optimizer.limitSkills(hero, skills, Optimizer.slotSkills(hero, skills));
         return {skills: skills, runes: runes, mine: true};
     }
