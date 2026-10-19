@@ -7,4 +7,5 @@ buildcalc/simtest/scripts.json
 
 # offline tests of the calculator (local only)
 buildcalc/simtest/
-buildcalc/DESIGN.md
+DESIGN.md
+**/DESIGN.md
