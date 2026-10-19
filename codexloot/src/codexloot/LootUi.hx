@@ -197,7 +197,7 @@ class LootUi {
 
     /** A block of items under its own caption; `fallback` is the English caption for a font without Cyrillic. Returns the new count of added icons. */
     public static function block(sheet:Dynamic, icons:Dynamic, anyButton:Dynamic, title:String, fallback:String, color:Int,
-            entries:Array<LootCalc.LootEntry>, level:Int, added:Int, maxItems:Int, minRarity:String = ""):Int {
+            entries:Array<LootCalc.LootEntry>, level:Int, added:Int, maxItems:Int, minRarity:String = "", dimmed:LootCalc.LootEntry->Bool = null):Int {
         if (entries.length == 0) return added;
         try {
             var ready = prepare(sheet, anyButton);
@@ -216,6 +216,7 @@ class LootUi {
                     try HlxRuntime.setField(G.call("h2d.Flow", "getProperties", [icons, button]), "lineBreak", true) catch (_:Dynamic) {}
                 }
                 added++;
+                if (dimmed != null && dimmed(entry)) try HlxRuntime.setField(button, "alpha", 0.5) catch (_:Dynamic) {}
                 try { if (ready) tag(button, entry.chance < 0 ? "?" : percent(entry.chance), color, 12.0); } catch (_:Dynamic) {}
             }
         } catch (_:Dynamic) {}

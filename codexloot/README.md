@@ -69,6 +69,11 @@ The mod follows the game's own loot rules:
 
 ### Changelog
 
+#### 1.2.5
+
+- **Fix: the icons of the contents list overlapped its scroll bar;** the grid now keeps clear of the scroll bar.
+- **Fix: the Legendary weapons block listed only the weapons of your class;** it now lists every weapon of the chest, the ones of other classes dimmed like in the list above.
+
 #### 1.2.4
 
 - **Fix: the Legendary weapons block of 1.2.3 was never shown** (the weapon check passed the game a wrong argument). The Hero Weapon Cache now lists its Legendary weapons (6%) in a block of their own.
