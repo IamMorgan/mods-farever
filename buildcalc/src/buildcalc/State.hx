@@ -20,6 +20,10 @@ typedef Template = {
     @:optional var infusions:Array<{id:String, count:Int}>;
     /** The weapon skills in the hero's slots: [main weapon's, arsenal weapon's]. */
     @:optional var weaponSkills:Array<Array<String>>;
+    /** The build's attributes as the calculation showed them (a template shows its own, not the hero's). */
+    @:optional var stats:Array<{id:String, v:Float}>;
+    /** Damage and heals per second of the build and of the hero when it was saved. */
+    @:optional var totals:{dps:Float, self:Float, ally:Float, nowDps:Float, nowSelf:Float, nowAlly:Float};
 }
 
 /** The last calculation: the questionnaire and the build it gave (the next calculation starts from it too). */
@@ -198,9 +202,11 @@ class State {
     }
 
     public static function saveTemplate(slot:Int, ?build:Array<TemplateItem>, ?talents:Array<{id:String, rank:Int}>, ?sigils:Array<String>,
-            ?skills:Array<{id:String, runes:Array<String>}>, ?infusions:Array<{id:String, count:Int}>, ?weaponSkills:Array<Array<String>>):Void {
-        templates[slot] = {settings: copy(settings), savedAt: Date.now().toString(), build: build, talents: talents, sigils: sigils, skills: skills,
-            infusions: infusions, weaponSkills: weaponSkills};
+            ?skills:Array<{id:String, runes:Array<String>}>, ?infusions:Array<{id:String, count:Int}>, ?weaponSkills:Array<Array<String>>,
+            ?stats:Array<{id:String, v:Float}>, ?totals:{dps:Float, self:Float, ally:Float, nowDps:Float, nowSelf:Float, nowAlly:Float},
+            ?forSettings:Settings):Void {
+        templates[slot] = {settings: copy(forSettings != null ? forSettings : settings), savedAt: Date.now().toString(), build: build, talents: talents, sigils: sigils, skills: skills,
+            infusions: infusions, weaponSkills: weaponSkills, stats: stats, totals: totals};
         active = slot;
         save();
     }

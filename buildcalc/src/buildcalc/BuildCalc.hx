@@ -44,7 +44,15 @@ class BuildCalc {
     /** The arsenal weapon shown by the calculator (Views.asArsenal): worn, for the game's item tooltip. */
     @:hlx.prefix(st.Equipment.isEquipped)
     static function beforeIsEquipped(instance:Dynamic, item:Dynamic):HlxPrefixResult<Bool> {
-        return Views.shownInArsenal(item) ? SkipWith(true) : Continue;
+        if (!Views.shownInArsenal(item)) return Continue;
+        Views.askedArsenal = true;
+        return SkipWith(true);
+    }
+
+    /** The game's item tooltip is built: for an arsenal item its "Equipped" tag is taken away (the item is not worn). */
+    @:hlx.postfix(ui.TipItem.init)
+    static function afterTipItemInit(instance:Dynamic, result:Void):Void {
+        DebugLog.guard("TipItem.init", () -> Views.tipBuilt(instance));
     }
 
     /** ... and worn in the arsenal slot (Slot_Weapon2), so the tooltip takes that slot's share (affixFactor 0.4). */
@@ -56,26 +64,11 @@ class BuildCalc {
         return name == null ? Continue : SkipWith(name);
     }
 
-    /** Every damage result in the world: those the hero dealt go to the fight log (FightLog). */
-    @:hlx.prefix(ent.Unit.rpcReceiveDamage__impl)
-    static function beforeReceiveDamage(instance:Dynamic, damage:Dynamic):HlxPrefixResult<Void> {
-        FightLog.damage(instance, damage);
-        return Continue;
-    }
-
-    /** ... and every heal. */
-    @:hlx.prefix(ent.Unit.rpcDisplayHeal__impl)
-    static function beforeDisplayHeal(instance:Dynamic, damage:Dynamic):HlxPrefixResult<Void> {
-        FightLog.heal(instance, damage);
-        return Continue;
-    }
-
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
         DebugLog.guard("language", followLanguage);
         DebugLog.guard("layout report", BuildTab.report);
         DebugLog.guard("calculation", BuildTab.tick);
-        DebugLog.guard("fight log", FightLog.tick);
         DebugLog.guard("test mode", () -> TestMode.tick(instance));
 
         DebugLog.flush();

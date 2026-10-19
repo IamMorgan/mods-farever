@@ -17,6 +17,18 @@ class Sources {
     /** The hero's real items that are not worn (bag, mail, bank), as they are. */
     public static var ownItems:Array<Dynamic> = [];
     static var tables:Dynamic;
+    /**
+     * The level an item's way of dropping asks for: the lowest, over the ways the item drops, of the highest of the
+     * killed monster's level (a real monster, not an NPC) and the minimum level (minLvl) of the loot entries on the
+     * way. Ways with no level (world loot, codex lists, recipes) ask for none.
+     */
+    static var dropReq:Map<String, Int> = new Map();
+    /** The level the way being followed asks for (see dropReq). */
+    static var ctxReq = 0;
+    /** Monsters above this level are no monsters of the levelling world (NPCs are level 100). */
+    static inline var MAX_MOB_LEVEL = 25;
+    /** The hero's level (0: unknown, the level is not looked at). */
+    static var heroLevel = 0;
 
     static function list(v:Dynamic):Dynamic {
         var a = G.field(v, "array");
@@ -29,27 +41,38 @@ class Sources {
         return ref;
     }
 
-    static var seenTables:Map<String, Bool>;
+    static var seenTables:Map<String, Int>;
 
     static function addTable(t:Dynamic, into:Map<String, String>, where:String):Void {
         if (t == null) return;
         var tid = G.str(G.field(t, "id"));
         var key = tid + "|" + (into == craft ? "c" : "d");
-        if (tid != "" && seenTables.exists(key)) return;
-        if (tid != "") seenTables.set(key, true);
+        // a table is followed again when it is reached by a way that asks for less
+        var req = into == craft ? 0 : ctxReq;
+        if (tid != "" && seenTables.exists(key) && seenTables.get(key) <= req) return;
+        if (tid != "") seenTables.set(key, req);
         var loot = G.field(t, "loot");
+        var outer = ctxReq;
         for (i in 0...G.len(loot)) {
             var e = G.at(loot, i);
+            if (into != craft) ctxReq = Std.int(Math.max(outer, G.num(G.field(e, "minLvl"))));
             addItem(GameData.idOf(G.field(e, "item")), into, where + (tid != "" ? "/" + tid : ""));
             addTable(table(G.field(e, "lootTable")), into, where);
         }
+        ctxReq = outer;
     }
 
     static var items:Dynamic;
 
     static function addItem(id:String, into:Map<String, String>, where:String):Void {
-        if (id == "" || into.exists(id)) return;
-        into.set(id, where);
+        if (id == "") return;
+        var improved = false;
+        if (into != craft) {
+            var cur = dropReq.get(id);
+            if (cur == null || ctxReq < cur) { dropReq.set(id, ctxReq); improved = true; }
+        }
+        if (into.exists(id) && !improved) return;
+        if (!into.exists(id)) into.set(id, where);
         // a loot container (e.g. a gear cache): what it gives
         var inf = G.call("haxe.ds.StringMap", "get", [G.field(items, "byId"), id]);
         var gain = G.field(G.field(inf, "props"), "gainItem");
@@ -63,6 +86,9 @@ class Sources {
         if (uid == "" || seenUnits.exists(uid)) return;
         seenUnits.set(uid, true);
         var props = G.field(unit, "props");
+        var lvl = Std.int(G.num(G.field(unit, "lvl")));
+        var outer = ctxReq;
+        ctxReq = lvl > 0 && lvl <= MAX_MOB_LEVEL ? lvl : 0;
         for (name in ["lootTable", "bossLootTable", "heroicLootTable"]) addTable(table(G.field(props, name)), drop, uid);
         var type = G.call("haxe.ds.StringMap", "get", [G.field(GameData.data("unitType"), "byId"), G.str(G.field(unit, "type"))]);
         addTable(table(G.field(type, "lootTable")), drop, uid);
@@ -82,6 +108,7 @@ class Sources {
             var f = G.call("haxe.ds.StringMap", "get", [G.field(GameData.data("faction"), "byId"), faction]);
             if (f != null) addTable(G.callStatic("HItem", "getFactionLootTable", [f, false]), drop, uid + ":" + faction);
         } catch (_:Dynamic) {}
+        ctxReq = outer;
     }
 
     static var seenUnits:Map<String, Bool>;
@@ -169,7 +196,11 @@ class Sources {
                     var id = G.str(G.field(t, "id"));
                     if (id == "") continue;
                     if (!used.exists(id)) orphans.push(id);
+                    // a table something refers to (a monster of another place…) asks the highest level of a monster unless a way
+                    // above gave it a lower one; a map object's table (chest, rift, activity) asks none
+                    ctxReq = used.exists(id) ? MAX_MOB_LEVEL : 0;
                     addTable(t, drop, (used.exists(id) ? "table:" : "map:") + id);
+                    ctxReq = 0;
                 }
                 // loot containers (items with props.gainItem: Hero Weapon Cache, Hero Gear Cache, rift caches…): their
                 // table, whoever gives the container; their items are logged
@@ -218,9 +249,12 @@ class Sources {
                     addTable(table(G.field(c, "loot")), craft, "recipe");
                 }
                 DebugLog.line("sources: " + G.len(crafts) + " recipes give " + Lambda.count(craft) + " items; world loot items " + world);
+                var asking = [for (id => r in dropReq) if (r > 0 && !craft.exists(id)) r];
+                DebugLog.line("sources: " + asking.length + " items drop only from level " + (asking.length > 0 ? Std.string(Lambda.fold(asking, (r, m) -> Std.int(Math.min(r, m)), 1000)) : "-") + " up");
             } catch (e:Dynamic) DebugLog.error("sources: recipes", e);
         }
         if (hero != null) {
+            heroLevel = Std.int(G.num(G.field(hero, "_level")));
             own = new Map();
             ownItems = [];
             // st.Loadout.getAllInventories: equipment, bag, mail, then every bank tab
@@ -250,13 +284,20 @@ class Sources {
     public static function isDrop(id:String):Bool { build(); return drop.exists(id); }
     public static function isCraft(id:String):Bool { build(); return craft.exists(id); }
     public static function isOwn(id:String):Bool return own != null && own.exists(id);
-    public static function available(id:String):Bool return isDrop(id) || isCraft(id) || (own != null && own.exists(id));
+    /** The item drops somewhere the hero's level reaches (see dropReq). */
+    static function dropsAtLevel(id:String):Bool {
+        if (!isDrop(id)) return false;
+        var req = dropReq.get(id);
+        return heroLevel <= 0 || req == null || req <= heroLevel;
+    }
+
+    public static function available(id:String):Bool return dropsAtLevel(id) || isCraft(id) || (own != null && own.exists(id));
 
     /** Where the item comes from (for the log). */
     public static function where(id:String):String {
         build();
         if (craft.exists(id)) return "craft " + craft.get(id);
-        if (drop.exists(id)) return "drop " + drop.get(id);
+        if (drop.exists(id)) return "drop " + drop.get(id) + (dropReq.exists(id) && dropReq.get(id) > 0 ? " from level " + dropReq.get(id) : "");
         return own != null && own.exists(id) ? "hero's own" : "-";
     }
 
@@ -264,5 +305,5 @@ class Sources {
     public static function ownLabel():String return Texts.ownLabel();
 
     /** "craft", "drop" or "" (shown on the item's cell). */
-    public static function label(id:String):String return isCraft(id) ? Texts.craftLabel() : (isDrop(id) ? Texts.dropLabel() : "");
+    public static function label(id:String):String return isCraft(id) ? Texts.craftLabel() : (dropsAtLevel(id) ? Texts.dropLabel() : "");
 }

@@ -102,6 +102,19 @@ class GameEnv implements SimEnv {
 
     public function heroLevel():Int return Std.int(model.engine.level);
 
+    public function unitSkills(unit:String):Array<String> {
+        var out:Array<String> = [];
+        try {
+            var u = G.call("haxe.ds.StringMap", "get", [G.field(GameData.data("unit"), "byId"), unit]);
+            var list = G.field(u, "skills");
+            for (i in 0...G.len(list)) {
+                var id = GameData.idOf(G.field(G.at(list, i), "skill"));
+                if (id != "") out.push(id);
+            }
+        } catch (e:Dynamic) DebugLog.error("unitSkills " + unit, e);
+        return out;
+    }
+
     public function skill(id:String):SkillInfo {
         if (skills.exists(id)) return skills.get(id);
         var inf = GameData.skill(id);
