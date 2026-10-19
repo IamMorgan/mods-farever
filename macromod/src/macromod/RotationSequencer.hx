@@ -41,8 +41,6 @@ class RotationSequencer {
     public var hero:Dynamic;
     /** True while a key is being chosen in the window: hotkeys do nothing. */
     public var suspended = false;
-    /** Called when a skill is requested (rotation number from 0, cell from 0, skill); for tests and logs. */
-    public var onUse:(rotation:Int, cell:Int, skill:String) -> Void;
 
     public function new(io:KeyIO, skills:SkillIO) { this.io = io; this.skills = skills; }
 
@@ -131,7 +129,6 @@ class RotationSequencer {
             if (state == Readiness.MISSING) { runner.next++; runner.attempts = 0; continue; }
             if (state == Readiness.WAITING) return; // the rotation waits for this skill
             try skills.useSkill(slot, hero, skill) catch (_:Dynamic) {}
-            if (onUse != null) onUse(index, runner.next, skill);
             runner.awaiting = true;
             runner.attempts++;
             runner.busyUntil = now + Sequencer.MAX_QUEUE_WAIT;
