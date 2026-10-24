@@ -55,7 +55,7 @@ class Session {
     /** A member of a group (not its leader): whether the leader is searching for more players in this dungeon. */
     public function leaderSearching(activityId:String, now:Float):Bool {
         watchedActivity = activityId;
-        return now - leaderSeenAt < 8;
+        return now - leaderSeenAt < 7;
     }
 
     static function beaconName(uid:String, activityId:String):String return "dpfgroup|" + uid + "|" + activityId;

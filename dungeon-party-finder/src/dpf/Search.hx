@@ -338,6 +338,7 @@ class Search {
         token++;
         if (lobbies.inLobby()) lobbies.leave();
         leader = false;
+        count = 0;
         state = Grouped;
     }
 }

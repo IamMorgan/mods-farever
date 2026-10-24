@@ -11,7 +11,7 @@ import dpf.NativeUi as N;
  */
 class WindowDrag {
     static inline var STRIP = 46.0;
-    static inline var CLOSE_WIDTH = 64.0;
+    static inline var CLOSE_WIDTH = 90.0;
 
     var bound:Dynamic;
     var hit:Dynamic;
@@ -20,6 +20,13 @@ class WindowDrag {
     var startMouseY = 0.0;
     var startX = 0.0;
     var startY = 0.0;
+    /**
+     * Where the player left the window: put back after every frame of the game's own update, which may move it, and used for
+     * the next window too (the game builds a new window object when the lobby changes, e.g. when a search starts).
+     */
+    var placed = false;
+    var placedX = 0.0;
+    var placedY = 0.0;
 
     public function new() {}
 
@@ -29,6 +36,10 @@ class WindowDrag {
         if (G.field(screen, "parent") == null) return;
         if (bound != screen || (hit != null && G.field(hit, "parent") == null)) bind(screen);
         if (dragging) poll(screen);
+        else if (placed) G.call("h2d.Object", "setPosition", screen, [placedX, placedY]);
+        // The strip never reaches the close button, whatever the window's width is by now.
+        var width = G.number(G.call("h2d.Flow", "get_outerWidth", screen));
+        G.set(hit, "width", Math.max(40, width - CLOSE_WIDTH));
     }
 
     function bind(screen:Dynamic):Void {
@@ -40,6 +51,9 @@ class WindowDrag {
         N.absolute(screen, hit);
         G.call("h2d.Object", "setPosition", hit, [0, 0]);
         G.set(hit, "onPush", (_:Dynamic) -> begin(screen));
+        // The mouse button is read from the release events: the key state of the button is not reliable here.
+        G.set(hit, "onRelease", (_:Dynamic) -> dragging = false);
+        G.set(hit, "onReleaseOutside", (_:Dynamic) -> dragging = false);
     }
 
     function mouse(screen:Dynamic):Null<{x:Float, y:Float}> {
@@ -73,10 +87,12 @@ class WindowDrag {
 
     function poll(screen:Dynamic):Void {
         try {
-            if (G.staticCall("hxd.Key", "isDown", [0]) != true) { dragging = false; return; }
             var m = mouse(screen);
             if (m == null) return;
-            G.call("h2d.Object", "setPosition", screen, [startX + m.x - startMouseX, startY + m.y - startMouseY]);
+            placedX = startX + m.x - startMouseX;
+            placedY = startY + m.y - startMouseY;
+            placed = true;
+            G.call("h2d.Object", "setPosition", screen, [placedX, placedY]);
         } catch (error:Dynamic) { dragging = false; trace("[DPF] window drag failed: " + Std.string(error)); }
     }
 }
