@@ -30,30 +30,4 @@ class GameDungeons {
         var s = G.str(value);
         return s == null ? "" : s;
     }
-
-    /** Which difficulties of the dungeon the hero may pick (see Difficulties.available). */
-    public static function difficulties(party:GameParty, activityId:String):Array<Bool> {
-        var heroic = false, highest = 0;
-        try {
-            var inf = G.staticCall("HActivity", "getInf", [activityId]);
-            heroic = G.staticCall("HData", "checkStatus", [G.field(G.field(inf, "props"), "heroicReleaseStatus")]) == true;
-            var state = G.call("st.player.Progress", "getActivityState", G.field(party.me(), "progress"), [activityId, null]);
-            highest = G.integer(G.field(state, "highestDifficultyCompleted"), 0);
-        } catch (_:Dynamic) {}
-        return Difficulties.available(party.level(), party.maxLevel(), heroic, highest);
-    }
-
-    /** The dungeon's picture (what the game's own dialog shows), or null. */
-    public static function picture(path:String):Dynamic {
-        if (path == null || path == "") return null;
-        try return G.call("hxd.res.Any", "toTile", G.staticCall("hxd.Res", "load", [path])) catch (_:Dynamic) return null;
-    }
-
-    /** The game's icon by its id ("Dungeon_Default"), as a tile, or null. */
-    public static function icon(id:String):Dynamic {
-        try {
-            var inf = G.call("haxe.ds.StringMap", "get", G.field(G.current("Data", "icon"), "byId"), [id]);
-            return inf == null ? null : G.staticCall("lib.ExtensionsUI", "toTile", [G.field(inf, "gfx")]);
-        } catch (_:Dynamic) return null;
-    }
 }
