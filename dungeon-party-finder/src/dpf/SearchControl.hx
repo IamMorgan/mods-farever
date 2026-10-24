@@ -139,6 +139,10 @@ class SearchControl {
         var mode = session.mode();
         var here = session.activityId == DungeonScreens.activityOf(screen);
         var searching = mode == Searching && here;
+        // A member of the group sees that its leader is searching for more players.
+        var watching = mode == Idle && party.groupSize() > 1 && !party.isLeader()
+            && session.leaderSearching(DungeonScreens.activityOf(screen), haxe.Timer.stamp());
+        var busy = searching || watching;
         stage = "update: shown";
         var shown = searching || (mode == Idle && party.isGroupLeader());
         stage = "update: show button";
@@ -147,16 +151,15 @@ class SearchControl {
         if (text != buttonText) { buttonText = text; N.setButtonText(button, text); }
 
         stage = "update: status line";
-        var line = searching
+        var line = busy
             ? Locale.searching() + (session.found() > 0 ? "  " + session.found() + "/" + Session.GROUP : "")
             : (shown ? session.message : "");
         if (line != statusText) { statusText = line; N.setText(status, line); }
         N.show(status, line != "");
-        N.show(spin, searching);
+        N.show(spin, busy);
 
         stage = "update: searching";
-        if (searching) {
-            N.enable(G.field(screen, "startBtn"), false);
+        if (busy) {
             angle += dt * SPIN_SPEED;
             if (spin != null && status != null) {
                 // Only whole spoke steps: the circle then covers exactly the same area in every position, so the row of
@@ -166,6 +169,9 @@ class SearchControl {
                 var height = G.number(G.call("h2d.Text", "get_textHeight", status));
                 N.position(spin, G.number(G.field(status, "x")) - 16, G.number(G.field(status, "y")) + height / 2);
             }
+        }
+        if (searching) {
+            N.enable(G.field(screen, "startBtn"), false);
             // A different difficulty picked in the window: look for that one instead.
             var lobby = DungeonScreens.lobbyOf(screen);
             if (lobby != null && !difficultySynced) {
