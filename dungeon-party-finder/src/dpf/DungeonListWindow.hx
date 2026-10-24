@@ -131,6 +131,17 @@ class DungeonListWindow {
         G.call("h2d.Flow", "set_overflow", list, [scroll]);
         N.style(list, "overflow", scroll);
         var listDom = G.field(list, "dom");
+        // The flow's own scroll bar comes out as wide as the game's stylesheet says, which is nothing: give it a width.
+        var scrollBar = G.field(list, "scrollBar");
+        var cursor = G.field(list, "scrollBarCursor");
+        if (scrollBar != null) {
+            N.size(scrollBar, BAR - 12);
+            G.call("h2d.Flow", "set_backgroundTile", scrollBar, [G.staticCall("h2d.Tile", "fromColor", [0x5B4334, 1, 1, 0.35, null])]);
+        }
+        if (cursor != null) {
+            N.size(cursor, BAR - 12);
+            G.call("h2d.Flow", "set_backgroundTile", cursor, [G.staticCall("h2d.Tile", "fromColor", [0x8A5F46, 1, 1, 1.0, null])]);
+        }
 
         var rowWidth = inner - (entries.length > VISIBLE ? BAR : 0);
         for (i in 0...entries.length) {

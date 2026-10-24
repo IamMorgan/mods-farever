@@ -36,7 +36,7 @@ class DpfMod {
     static var party = new GameParty();
     static var lobbies = new MpLobbyApi();
     static var session = new Session(party, lobbies);
-    static var button = new DpfButton(ui);
+    static var button = new DpfButton();
     static var list = new DungeonListWindow();
     static var crowns = new CrownMarker(ui);
     static var control = new SearchControl(ui, session, party);
@@ -133,7 +133,8 @@ class DpfMod {
 
     @:hlx.postfix(ui.win.element.InstanceSelectScreen.update)
     static function afterDungeonWindowUpdate(instance:Dynamic, dt:Float, result:Void):Void {
-        try control.update(instance, dt) catch (error:Dynamic) trace("[DPF] dungeon window: " + Std.string(error));
+        if (TestFlags.has("nocontrol")) return;
+        try control.update(instance, dt) catch (error:Dynamic) trace("[DPF] dungeon window (" + control.stage + "): " + Std.string(error));
     }
 
     @:hlx.prefix(ui.win.element.InstanceSelectScreen.startAction)

@@ -23,6 +23,8 @@ class SearchControl {
     var status:Dynamic;
     var button:Dynamic;
     var spin:Dynamic;
+    /** The step being run, for the error report when a call into the game fails. */
+    public var stage = "";
     var angle = 0.0;
     var buttonText = "";
     var statusText = "";
@@ -45,6 +47,7 @@ class SearchControl {
 
     function bind(screen:Dynamic):Void {
         forget();
+        stage = "bind: find start";
         var start = G.field(screen, "startBtn");
         var parent = start == null ? null : G.field(start, "parent");
         if (parent == null) return;
@@ -54,22 +57,31 @@ class SearchControl {
         var dom = G.field(actions, "dom");
         var index = N.children(actions).indexOf(start);
         if (index < 0) { forget(); return; }
-        status = N.label(dom, "", "dpfSearchStatus");
-        button = N.button(dom, Locale.search(), "dpfSearchButton", () -> press(screen));
+        stage = "bind: status label";
+        if (!TestFlags.has("nostatus")) status = N.label(dom, "", "dpfSearchStatus");
+        stage = "bind: button";
+        if (!TestFlags.has("nobutton")) button = N.button(dom, Locale.search(), "dpfSearchButton", () -> press(screen));
         buttonText = Locale.search();
-        G.call("h2d.Object", "addChildAt", actions, [status, index]);
-        G.call("h2d.Object", "addChildAt", actions, [button, index + 2]);
+        stage = "bind: insert";
+        if (status != null) G.call("h2d.Flow", "addChildAt", actions, [status, index]);
+        if (button != null) G.call("h2d.Flow", "addChildAt", actions, [button, index + (status == null ? 1 : 2)]);
+        stage = "bind: width";
         var width = G.integer(G.field(start, "minWidth"), 0);
-        if (width > 0) N.size(button, width);
+        if (width > 0 && button != null) N.size(button, width);
 
-        spin = G.create("h2d.Object", [actions]);
-        N.absolute(actions, spin);
-        var g = ui.shapes(spin);
-        for (i in 0...SPOKES) {
-            var a0 = i * 2 * Math.PI / SPOKES, a1 = (i + 0.7) * 2 * Math.PI / SPOKES;
-            var inner = 6.0, outer = 10.0;
-            ui.poly(g, [Math.cos(a0) * inner, Math.sin(a0) * inner, Math.cos(a0) * outer, Math.sin(a0) * outer,
-                Math.cos(a1) * outer, Math.sin(a1) * outer, Math.cos(a1) * inner, Math.sin(a1) * inner], 0xFFE4AA, 0.15 + 0.85 * i / (SPOKES - 1));
+        stage = "bind: spinner";
+        // The circle is one Graphics drawn around its own origin (so turning the object turns the circle), a child of the status
+        // text: a child of the flow itself cannot be taken out of the flow's layout here (that call crashes).
+        if (status != null && !TestFlags.has("nospin")) {
+            spin = G.create("h2d.Graphics", [status]);
+            stage = "bind: spinner spokes";
+            var g = spin;
+            for (i in 0...SPOKES) {
+                var a0 = i * 2 * Math.PI / SPOKES, a1 = (i + 0.7) * 2 * Math.PI / SPOKES;
+                var inner = 6.0, outer = 10.0;
+                ui.poly(g, [Math.cos(a0) * inner, Math.sin(a0) * inner, Math.cos(a0) * outer, Math.sin(a0) * outer,
+                    Math.cos(a1) * outer, Math.sin(a1) * outer, Math.cos(a1) * inner, Math.sin(a1) * inner], 0xFFE4AA, 0.15 + 0.85 * i / (SPOKES - 1));
+            }
         }
         N.show(spin, false);
         N.show(status, false);
@@ -88,14 +100,18 @@ class SearchControl {
     public function update(screen:Dynamic, dt:Float):Void {
         if (bound != screen || (button != null && G.field(button, "parent") == null)) bind(screen);
         if (button == null) return;
+        stage = "update: mode";
         var mode = session.mode();
         var here = session.activityId == DungeonScreens.activityOf(screen);
         var searching = mode == Searching && here;
+        stage = "update: shown";
         var shown = searching || (mode == Idle && party.groupSize() == 1);
+        stage = "update: show button";
         N.show(button, shown);
         var text = searching ? Locale.cancel() : Locale.search();
         if (text != buttonText) { buttonText = text; N.setButtonText(button, text); }
 
+        stage = "update: status line";
         var line = searching
             ? Locale.searching() + (session.found() > 0 ? "  " + session.found() + "/" + Session.GROUP : "")
             : (shown ? session.message : "");
@@ -103,12 +119,15 @@ class SearchControl {
         N.show(status, line != "");
         N.show(spin, searching);
 
+        stage = "update: searching";
         if (searching) {
             N.enable(G.field(screen, "startBtn"), false);
             angle += dt * SPIN_SPEED;
-            G.call("h2d.Object", "set_rotation", spin, [angle]);
-            var height = G.number(G.call("h2d.Text", "get_textHeight", status));
-            N.position(spin, G.number(G.field(status, "x")) - 16, G.number(G.field(status, "y")) + height / 2);
+            if (spin != null && status != null) {
+                G.call("h2d.Object", "set_rotation", spin, [angle]);
+                var height = G.number(G.call("h2d.Text", "get_textHeight", status));
+                N.position(spin, -16, height / 2);
+            }
             // A different difficulty picked in the window: look for that one instead.
             var lobby = DungeonScreens.lobbyOf(screen);
             if (lobby != null && G.integer(G.field(lobby, "difficulty"), -1) != session.difficulty) {

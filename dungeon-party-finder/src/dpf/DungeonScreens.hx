@@ -65,10 +65,10 @@ class DungeonScreens {
         var group = party.group();
         if (group == null) { trace("[DPF] no group to ask for the lobby of " + activityId); failed(); return; }
         try {
-            G.call("st.Group", "tryCreateInstanceLobby", group, [activityId, (reason:String, ok:Bool) -> {
+            G.call("st.Group", "tryCreateInstanceLobby", group, [activityId, (ok:Bool) -> {
                 try {
                     var lobby = groupLobby(party, activityId);
-                    if (lobby == null) { trace("[DPF] no lobby for " + activityId + " (" + Std.string(reason) + ", " + ok + ")"); failed(); return; }
+                    if (lobby == null) { trace("[DPF] no lobby for " + activityId + " (ok=" + ok + ")"); failed(); return; }
                     ready();
                     show(lobby);
                 } catch (error:Dynamic) { trace("[DPF] opening the dungeon window failed: " + Std.string(error)); failed(); }

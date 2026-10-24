@@ -71,5 +71,5 @@ class LobbyFlow {
     }
 
     function askGroup(group:Dynamic):Void
-        G.call("st.Group", "tryCreateInstanceLobby", group, [activityId, (_:String, _:Bool) -> {}]);
+        G.call("st.Group", "tryCreateInstanceLobby", group, [activityId, (_:Bool) -> {}]);
 }
