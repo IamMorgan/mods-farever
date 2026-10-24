@@ -12,16 +12,15 @@ typedef DpfConfig = {
     var buttonScalePercent:Int;
     var panelX:Float;
     var panelY:Float;
-    var minPlayers:Int;
-    var debugLog:Bool;
 }
 
 /**
- * Dungeon Party Finder: a "DPF" button on the screen opens the list of dungeons; a dungeon opens a window like the game's own
- * dungeon dialog with a "Search" button. The search puts the player together with others who picked the same dungeon and
- * difficulty and have a level of the same bracket (see Search): the earliest searcher becomes the leader and invites the
- * others into a group with the game's own invitation; then the window turns into the dungeon lobby ("Start" for the leader,
- * "Ready" for the others). The leader of a group wears a crown in the list of party members.
+ * Dungeon Party Finder: a "DPF" button on the screen opens the list of dungeons; a dungeon opens the game's own dungeon window
+ * (the one the portal opens), with a "Search" button added under "Start". The search puts the player together with others who
+ * picked the same dungeon and difficulty and have a level of the same bracket (see Search): the earliest searcher becomes the
+ * leader and invites the others into a group with the game's own invitation, inviting someone else in place of anyone who
+ * declines. Once the group is whole, the window is the group's dungeon lobby ("Start" for the leader, "Ready" for the others).
+ * The leader of a group wears a crown in the list of party members.
  *
  * Every game object is reached through HlxRuntime (see GameAccess): importing game classes here would compile private
  * copies of them into this mod, and the game would never see anything the mod does with those copies.
@@ -30,68 +29,56 @@ typedef DpfConfig = {
 class DpfMod {
     @:hlx.config
     static var config:DpfConfig = {
-        showButton: true, unpinned: false, buttonScalePercent: 100, panelX: 12, panelY: 320, minPlayers: 4, debugLog: false
+        showButton: true, unpinned: false, buttonScalePercent: 100, panelX: 12, panelY: 320
     };
 
     static var ui = new UiKit();
     static var party = new GameParty();
     static var lobbies = new MpLobbyApi();
+    static var session = new Session(party, lobbies);
     static var button = new DpfButton(ui);
-    static var list = new DungeonListWindow(ui);
-    static var window = new SearchWindow(ui);
+    static var list = new DungeonListWindow();
     static var crowns = new CrownMarker(ui);
-    static var session:Session;
+    static var control = new SearchControl(ui, session, party);
     static var dungeons:Array<DungeonInfo> = null;
     static var dungeonsAt = -100.0;
-    static var scene:Dynamic;
     static var russian = false;
 
     static function main():Void {
         config.save();
-        applyConfig();
         button.x = config.panelX;
         button.y = config.panelY;
         button.onClick = toggleList;
-        list.whenClosed(() -> {});
-        window.whenClosed(onWindowClosed);
         Bus.subscribe(
             "better-mod-settings/config-changed/" + HlxRuntime.moduleName(),
-            (_:Dynamic) -> {
-                config = ModConfig.load(HlxRuntime.moduleName(), config);
-                applyConfig();
-            }
+            (_:Dynamic) -> config = ModConfig.load(HlxRuntime.moduleName(), config)
         );
     }
-
-    static function applyConfig():Void {
-        Log.enabled = config.debugLog;
-        var min = config.minPlayers < 2 ? 2 : (config.minPlayers > 4 ? 4 : config.minPlayers);
-        if (session != null) session.setMinPlayers(min);
-    }
-
-    static function minPlayers():Int return config.minPlayers < 2 ? 2 : (config.minPlayers > 4 ? 4 : config.minPlayers);
 
     /** The finder is out of the way until the character is in the world. */
     static var active = false;
     static var heroSeenAt = -1.0;
+    static var noWindowSince = -1.0;
     static inline var ACTIVATE_DELAY = 3.0;
+    /** A search whose window has been closed this long is given up. */
+    static inline var WINDOW_GRACE = 1.5;
 
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
-        try tick(instance) catch (error:Dynamic) Log.write("tick failed: " + Std.string(error));
+        try tick(instance) catch (error:Dynamic) trace("[DPF] tick failed: " + Std.string(error));
         return Continue;
     }
 
     static function tick(app:Dynamic):Void {
         var now = haxe.Timer.stamp();
         party.app = app;
-        scene = G.field(app, "s2d");
+        DungeonScreens.app = app;
         try localizeSettings(now) catch (_:Dynamic) {}
         var hero = G.field(app, "hero");
         if (hero == null || G.field(app, "me") == null) {
-            if (active) { active = false; button.hide(); list.hide(); window.hide(); crowns.hide(); }
+            if (active) { active = false; button.hide(); list.hide(); crowns.hide(); }
             heroSeenAt = -1;
-            if (session != null) session.update(now); // keeps its own pause while there is no hero
+            session.update(now); // keeps its own pause while there is no hero
             return;
         }
         if (!active) {
@@ -100,8 +87,9 @@ class DpfMod {
             active = true;
         }
 
-        if (session != null) session.update(now);
-        var status = session == null ? 0 : (switch session.mode() { case Idle: 0; case Searching: 1; case Party: 2; });
+        session.update(now);
+        watchWindow(now);
+        var status = switch session.mode() { case Idle: 0; case Searching: 1; case Party: 2; };
         var scale = Math.max(0.5, Math.min(2.0, config.buttonScalePercent / 100));
         button.update(config.showButton, scale, config.unpinned, status, now);
         if (button.dragEnded) {
@@ -111,36 +99,49 @@ class DpfMod {
             config.save();
         }
         list.update();
-        window.update(now);
         try crowns.update(party, now) catch (_:Dynamic) {}
+    }
+
+    /** The search button lives in the dungeon window: closing the window ends the search. */
+    static function watchWindow(now:Float):Void {
+        if (session.mode() != Searching || DungeonScreens.find() != null) { noWindowSince = -1; return; }
+        if (noWindowSince < 0) noWindowSince = now;
+        else if (now - noWindowSince > WINDOW_GRACE) { noWindowSince = -1; session.cancel(); }
     }
 
     // ---- the windows ----
 
     static function toggleList():Void {
         if (list.isOpen()) { list.hide(); return; }
-        window.hide();
-        if (session != null && !session.isBusy()) session = null;
         var now = haxe.Timer.stamp();
         if (dungeons == null || now - dungeonsAt > 30) {
             dungeons = GameDungeons.read();
             dungeonsAt = now;
-            Log.write("dungeons: " + [for (d in dungeons) d.id + " (" + d.level + ")"].join(", "));
         }
         list.russian = russian;
-        list.show(scene, dungeons, party.level(), session == null ? "" : session.dungeon.id, pick);
+        list.show(dungeons, pick);
     }
 
+    /** Opens the game's dungeon window for the dungeon (the one in front of the player is closed first). */
     static function pick(dungeon:DungeonInfo):Void {
-        list.hide();
-        // One search at a time: a running one keeps its window.
-        if (session == null || !session.isBusy()) session = new Session(dungeon, party, lobbies, minPlayers(), russian);
-        window.russian = russian;
-        window.show(scene, session);
+        var open = DungeonScreens.find();
+        if (open != null) {
+            if (DungeonScreens.activityOf(open) == dungeon.id) return;
+            if (session.mode() == Searching) session.cancel();
+            DungeonScreens.close(open);
+        }
+        DungeonScreens.open(party, dungeon.id, () -> {});
     }
 
-    static function onWindowClosed():Void {
-        if (session != null && !session.isBusy()) session = null;
+    @:hlx.postfix(ui.win.element.InstanceSelectScreen.update)
+    static function afterDungeonWindowUpdate(instance:Dynamic, dt:Float, result:Void):Void {
+        try control.update(instance, dt) catch (error:Dynamic) trace("[DPF] dungeon window: " + Std.string(error));
+    }
+
+    @:hlx.prefix(ui.win.element.InstanceSelectScreen.startAction)
+    static function beforeDungeonStart(instance:Dynamic):HlxPrefixResult<Void> {
+        // Not while a search runs, whichever way the action comes (mouse, keyboard, controller).
+        return control.blocks(instance) ? Skip : Continue;
     }
 
     // ---- language ----
@@ -162,8 +163,8 @@ class DpfMod {
         localizedLanguage = language;
         russian = Locale.isRussian(language);
         list.russian = russian;
-        window.russian = russian;
-        if (session != null) session.russian = russian;
+        control.russian = russian;
+        session.russian = russian;
         var path = "hlx/mods/" + HlxRuntime.moduleName() + "/configFormats.json";
         var text = SettingsText.json(russian);
         var current = try sys.io.File.getContent(path) catch (_:Dynamic) "";
@@ -177,11 +178,10 @@ class DpfMod {
     @:hlx.prefix(GameApp.dispose)
     static function beforeGameAppDispose(instance:Dynamic):HlxPrefixResult<Void> {
         try {
-            if (session != null) session.cancel();
+            session.cancel();
             lobbies.leave();
             button.hide();
             list.hide();
-            window.hide();
             crowns.hide();
         } catch (_:Dynamic) {}
         return Continue;

@@ -2,168 +2,174 @@ package dpf;
 
 import dpf.DungeonList.DungeonInfo;
 import dpf.GameAccess as G;
+import dpf.NativeUi as N;
 
 /**
- * The list of dungeons (name and level), in the look of the game's dialogs. A click on a row picks the dungeon; the
- * mouse wheel and the arrows scroll when the list is longer than the screen.
+ * The list of dungeons, in a window of the game itself (the same "options" window frame, header, close button and buttons as
+ * the Dungeon Button mod's list). It shows all of them; ten rows are visible and the rest is reached with the mouse wheel or the
+ * scroll bar. A click on a row picks the dungeon.
  */
 class DungeonListWindow {
-    static inline var WIDTH = 460.0;
-    static inline var HEADER = 52.0;
-    static inline var ROW_H = 50.0;
-    static inline var ROW_GAP = 6.0;
-    static inline var PAD = 22.0;
-    static inline var MAX_ROWS = 10;
+    static inline var WIDTH = 480;
+    static inline var HEADER = 48;
+    static inline var SIDE = 12;
+    static inline var ROW = 34;
+    static inline var GAP = 4;
+    static inline var VISIBLE = 10;
+    static inline var BAR = 10;
 
     public var russian = false;
 
-    var ui:UiKit;
-    var scene:Dynamic;
-    var root:Dynamic;
-    var wheel:Dynamic;
-    var entries:Array<DungeonInfo> = [];
-    var heroLevel = 0;
-    var active = "";
+    var window:Dynamic;
     var onPick:DungeonInfo -> Void;
     var onClose:Void -> Void;
-    var first = 0;
-    var perPage = MAX_ROWS;
-    var open = false;
 
-    public function new(ui:UiKit) {
-        this.ui = ui;
-        wheel = (e:Dynamic) -> {
-            var delta = G.number(G.field(e, "wheelDelta"));
-            if (delta != 0) scrollBy(delta > 0 ? 1 : -1);
-        };
-    }
-
-    public function isOpen():Bool return open;
-
-    public function hide():Void {
-        open = false;
-        ui.remove(root);
-        root = null;
-    }
-
-    /** `active` is the id of the dungeon that is being searched, shown marked. */
-    public function show(scene:Dynamic, entries:Array<DungeonInfo>, heroLevel:Int, active:String, onPick:DungeonInfo -> Void):Void {
-        hide();
-        if (scene == null) return;
-        this.scene = scene;
-        this.entries = entries;
-        this.heroLevel = heroLevel;
-        this.active = active;
-        this.onPick = onPick;
-        first = 0;
-        open = true;
-        try rebuild() catch (error:Dynamic) { trace("[DPF] list failed: " + Std.string(error)); hide(); }
-    }
-
-    /** Every frame while open: the window goes away with the game's UI. */
-    public function update():Void {
-        if (open && (root == null || G.field(root, "allocated") != true)) hide();
-    }
-
-    function scrollBy(rows:Int):Void {
-        var max = Std.int(Math.max(0, entries.length - perPage));
-        var target = Std.int(Math.max(0, Math.min(max, first + rows)));
-        if (target == first) return;
-        first = target;
-        try rebuild() catch (_:Dynamic) {}
-    }
-
-    function rebuild():Void {
-        ui.remove(root);
-        ui.prepare(scene);
-        var sceneW = G.number(G.field(scene, "width"), 1920), sceneH = G.number(G.field(scene, "height"), 1080);
-        var chrome = HEADER + 40 + 44;
-        perPage = Std.int(Math.max(3, Math.min(MAX_ROWS, Math.floor((sceneH - 40 - chrome) / (ROW_H + ROW_GAP)))));
-        var count = entries.length;
-        first = Std.int(Math.max(0, Math.min(first, Math.max(0, count - perPage))));
-        var shown = Std.int(Math.max(0, Math.min(perPage, count - first)));
-        var body = count == 0 ? 40.0 : shown * (ROW_H + ROW_GAP) - ROW_GAP;
-        var footer = count > perPage ? 44.0 : 14.0;
-        var height = HEADER + 40 + body + footer + 14;
-        var scale = Math.min(1.0, Math.min((sceneH - 20) / height, (sceneW - 20) / WIDTH));
-
-        root = G.create("h2d.Object", [scene]); // last child of the scene: drawn on top of everything
-        G.call("h2d.Object", "setScale", root, [scale]);
-        G.call("h2d.Object", "setPosition", root, [Math.round((sceneW - WIDTH * scale) / 2), Math.round((sceneH - height * scale) / 2)]);
-
-        var g = ui.shapes(root);
-        Style.frame(ui, g, WIDTH, height, HEADER);
-        var blocker = ui.area(root, 0, 0, WIDTH, height);
-        G.set(blocker, "onWheel", wheel);
-        ui.centered(root, Locale.listTitle(russian), Style.TITLE, WIDTH / 2, 14, 24);
-        closeButton(WIDTH - 30, HEADER / 2 + 1);
-        ui.centered(root, Locale.listHint(russian), Style.DIM, WIDTH / 2, HEADER + 11, 17);
-
-        var top = HEADER + 40;
-        if (count == 0) ui.centered(root, Locale.listEmpty(russian), Style.DIM, WIDTH / 2, top + 8, 20);
-        for (i in 0...shown) {
-            var entry = entries[first + i];
-            var y = top + i * (ROW_H + ROW_GAP);
-            row(entry, PAD, y, WIDTH - PAD * 2, ROW_H);
-        }
-        if (count > perPage) {
-            var y = top + body + 8;
-            arrow(WIDTH / 2 - 62, y, true);
-            arrow(WIDTH / 2 + 34, y, false);
-            ui.centered(root, Locale.page(russian, first + 1, first + shown, count), Style.DIM, WIDTH / 2, y + 6, 17);
-        }
-    }
-
-    function closeButton(cx:Float, cy:Float):Void {
-        var g = ui.shapes(root);
-        Style.cross(ui, g, cx, cy, 8, Style.CLOSE);
-        var hover = ui.shapes(root);
-        Style.cross(ui, hover, cx, cy, 8, Style.CLOSE_HOVER);
-        ui.visible(hover, false);
-        var hit = ui.area(root, cx - 16, cy - 16, 32, 32);
-        ui.handCursor(hit);
-        G.set(hit, "onOver", (_:Dynamic) -> ui.visible(hover, true));
-        G.set(hit, "onOut", (_:Dynamic) -> ui.visible(hover, false));
-        G.set(hit, "onClick", (_:Dynamic) -> close());
-    }
-
-    function close():Void {
-        hide();
-        if (onClose != null) onClose();
-    }
+    public function new() {}
 
     public function whenClosed(handler:Void -> Void):Void onClose = handler;
 
-    function arrow(x:Float, y:Float, up:Bool):Void {
-        var g = ui.shapes(root);
-        var cx = x + 14, cy = y + 14;
-        ui.framed(g, x, y, 28, 28, 5, Style.BUTTON, Style.LINE, 1.5);
-        ui.poly(g, up ? [cx - 7, cy + 4, cx + 7, cy + 4, cx, cy - 5] : [cx - 7, cy - 4, cx + 7, cy - 4, cx, cy + 5], Style.BUTTON_TEXT);
-        var hit = ui.area(root, x, y, 28, 28);
-        ui.handCursor(hit);
-        G.set(hit, "onWheel", wheel);
-        G.set(hit, "onClick", (_:Dynamic) -> scrollBy(up ? -1 : 1));
+    public function isOpen():Bool {
+        return window != null && G.field(window, "parent") != null && G.field(window, "removed") != true;
     }
 
-    function row(entry:DungeonInfo, x:Float, y:Float, w:Float, h:Float):Void {
-        var g = ui.shapes(root);
-        var chosen = entry.id == active;
-        ui.framed(g, x, y, w, h, 7, chosen ? Style.ROW_HOVER : Style.ROW, chosen ? Style.STRIPE : Style.CARD_LINE, chosen ? 2.5 : 1.5);
-        var hover = ui.shapes(root);
-        ui.framed(hover, x, y, w, h, 7, Style.ROW_HOVER, Style.LINE, 2);
-        ui.visible(hover, false);
-        var capable = entry.level <= heroLevel;
-        ui.text(root, entry.name, capable ? Style.DARK : Style.DIM, x + 16, y + 12, 23, w - 120);
-        // the level pill
-        var pillW = 78.0, pillH = 28.0, px = x + w - pillW - 12, py = y + (h - pillH) / 2;
-        var pill = ui.shapes(root);
-        ui.framed(pill, px, py, pillW, pillH, 6, capable ? 0xC9D6A6 : 0xD9BDB5, capable ? 0x8FA06A : Style.CARD_LINE, 1.5);
-        ui.centered(root, Locale.level(russian, entry.level), capable ? Style.DARK : Style.DIM, px + pillW / 2, py + 4, 19);
-        var hit = ui.area(root, x, y, w, h);
-        ui.handCursor(hit);
-        G.set(hit, "onWheel", wheel);
-        G.set(hit, "onOver", (_:Dynamic) -> ui.visible(hover, true));
-        G.set(hit, "onOut", (_:Dynamic) -> ui.visible(hover, false));
-        G.set(hit, "onClick", (_:Dynamic) -> { var pick = onPick; if (pick != null) pick(entry); });
+    public function hide():Void {
+        var old = window;
+        window = null;
+        if (old == null) return;
+        if (G.field(old, "parent") != null) DungeonScreens.close(old);
+    }
+
+    /** Every frame while the hero is in the world: notices a window the game closed by itself (Esc). */
+    public function update():Void {
+        if (window != null && !isOpen()) {
+            window = null;
+            if (onClose != null) onClose();
+        }
+    }
+
+    public function show(entries:Array<DungeonInfo>, onPick:DungeonInfo -> Void):Void {
+        hide();
+        this.onPick = onPick;
+        var gui = DungeonScreens.gui();
+        if (gui == null) return;
+        try build(gui, entries) catch (error:Dynamic) {
+            trace("[DPF] list failed: " + Std.string(error));
+            hide();
+        }
+    }
+
+    function flagBit(name:String):Int return 1 << Type.enumIndex(G.current("ui.win.WindowFlags", name));
+
+    function build(gui:Dynamic, entries:Array<DungeonInfo>):Void {
+        var rows = Std.int(Math.max(1, Math.min(VISIBLE, entries.length)));
+        var bodyH = rows * ROW + (rows - 1) * GAP;
+        var height = HEADER + SIDE + bodyH + SIDE + 4;
+        var inner = WIDTH - SIDE * 2;
+
+        var win = G.create("ui.win.TitleWindow", ["Options", null]);
+        window = win;
+        var flags = flagBit("PreventCloseOther") | flagBit("FreeCursor") | flagBit("AutoRegisterLayer") | flagBit("BlockInputs") | flagBit("BlockSkills");
+        G.call("ui.win.BaseWindow", "set_windowFlags", win, [flags]);
+        var root = G.field(gui, "root");
+        G.call("h2d.Flow", "addChildAt", root, [win, G.integer(G.call("h2d.Object", "get_numChildren", root))]);
+        G.call("ui.BaseUI", "displayWindow", gui, [win, null]);
+        N.absolute(root, win);
+
+        var dom = G.field(win, "dom");
+        var content = G.field(dom, "contentRoot");
+        G.set(dom, "component", G.staticCall("domkit.Component", "get", ["options-window", null]));
+        if (content == null) throw "The window's content is unavailable";
+        N.size(win, WIDTH, height);
+        N.padding(win, 0);
+        for (child in N.children(win)) {
+            if (G.field(child, "bgMask") == null) continue;
+            N.absolute(win, child);
+            N.padding(child, 0);
+            N.size(child, WIDTH, height);
+            N.position(child, 0, 0);
+        }
+
+        var header = G.field(win, "header");
+        N.absolute(win, header);
+        N.padding(header, 0);
+        N.size(header, WIDTH - 2, HEADER);
+        N.position(header, 0, 0);
+        G.call("ui.win.TitleWindow", "setHeader", win, [null, Locale.listTitle(russian)]);
+        var title = G.field(header, "headerTitle");
+        var left = G.current("h2d.Align", "Left");
+        G.call("h2d.Text", "set_textAlign", title, [left]);
+        N.style(title, "text-align", left);
+        N.absolute(header, title);
+        G.call("ui.comp.FmtText", "updateScale", title, []);
+        N.position(title,
+            (WIDTH - G.number(G.call("h2d.Text", "get_textWidth", title)) * G.number(G.field(title, "scaleX"), 1)) / 2,
+            (HEADER - G.number(G.call("h2d.Text", "get_textHeight", title)) * G.number(G.field(title, "scaleY"), 1)) / 2);
+        var closeBtn = G.field(header, "closeBtn");
+        N.show(closeBtn, true);
+        N.absolute(header, closeBtn);
+        N.size(closeBtn, 32, 32);
+        N.position(closeBtn, WIDTH - 44, 8);
+        G.call("ui.UIElement", "set_onClick", closeBtn, [() -> hide()]);
+
+        N.absolute(win, content);
+        N.padding(content, 0);
+        N.size(content, inner, height - HEADER - SIDE);
+        N.position(content, SIDE, HEADER);
+
+        // The rows live in a vertical flow that scrolls: ten show, the wheel and the bar reach the rest.
+        var list = G.field(N.node("flow", dom, [], "dpfDungeonList", "vertical"), "obj");
+        N.absolute(content, list);
+        N.padding(list, 0);
+        N.size(list, inner, bodyH);
+        N.position(list, 0, 0);
+        G.call("h2d.Flow", "set_verticalSpacing", list, [GAP]);
+        N.style(list, "vspacing", GAP);
+        var top = G.current("h2d.FlowAlign", "Top");
+        G.call("h2d.Flow", "set_verticalAlign", list, [top]);
+        N.style(list, "content-valign", top);
+        var scroll = G.current("h2d.FlowOverflow", "Scroll");
+        G.call("h2d.Flow", "set_overflow", list, [scroll]);
+        N.style(list, "overflow", scroll);
+        var listDom = G.field(list, "dom");
+
+        var scrollBar = G.field(list, "scrollBar");
+        var cursor = G.field(list, "scrollBarCursor");
+        if (scrollBar != null && cursor != null) {
+            var right = G.current("h2d.FlowAlign", "Right");
+            N.absolute(list, scrollBar);
+            N.padding(scrollBar, 0);
+            N.size(scrollBar, BAR);
+            N.size(cursor, BAR);
+            var layout = G.call("h2d.Flow", "getProperties", list, [scrollBar]);
+            G.set(layout, "horizontalAlign", right);
+            G.set(layout, "verticalAlign", top);
+            N.style(scrollBar, "halign", right);
+            N.style(scrollBar, "valign", top);
+        }
+
+        var rowWidth = inner - (entries.length > VISIBLE ? BAR + 6 : 0);
+        for (i in 0...entries.length) {
+            var entry = entries[i];
+            var text = Locale.level(russian, entry.level) + "  |  " + entry.name;
+            var row = N.button(listDom, text, "dpfDungeon" + i, () -> pick(entry));
+            N.inFlow(list, row);
+            N.size(row, rowWidth, ROW);
+        }
+        if (entries.length == 0) {
+            var empty = N.label(listDom, Locale.listEmpty(russian), "dpfDungeonEmpty");
+            N.inFlow(list, empty);
+        }
+
+        // Centered on the screen.
+        var scene = G.field(gui, "s2d");
+        var scale = Math.max(0.01, G.number(G.field(root, "scaleX"), 1));
+        var sceneW = G.number(G.field(scene, "width"), 1920) / scale, sceneH = G.number(G.field(scene, "height"), 1080) / scale;
+        N.position(win, Math.max(0, (sceneW - WIDTH) / 2), Math.max(0, (sceneH - height) / 2));
+    }
+
+    function pick(entry:DungeonInfo):Void {
+        var handler = onPick;
+        hide();
+        if (handler != null) handler(entry);
     }
 }
