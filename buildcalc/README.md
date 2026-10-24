@@ -45,29 +45,8 @@ For manual installation:
 
 ### Changelog
 
-**2026-10-24 (3)**
-- A High priority is no longer given up for lower ones: the build keeps at least 97% of the worn build's value on that axis (a build with 8% less damage was advised for +10% defense and health at Low priority, because by the axes' ranges the sum came out higher). The search also never ends below the worn build by its own score.
-- The model fight is two minutes (was 40 s): slow stacks fill up (Nova's ultimate "Release of Wrath" now fires once, the skill is put in the signature slot by its status), cooldowns of a minute or two are used more than once, and the difference between builds is less noisy.
-- The training dummy is now a pack of foes that fights back: three foes near the hero (the enemy-count conditions hold: Sword Craft passive, Crescent Upgrade, Water Daggers), each foe lives 20 s, dies (kill triggers, "target below X% health" conditions, statuses go with the foe) and is replaced. Foes hit the hero for 12 per level every 3 s (a shield now counts by the damage it takes in, which is enough to fill any shield) and every hit is blocked (block triggers: cooldown resets, buffs for a block).
-- Rogue: Opportunity Strike (a basic attack that applies the poison hits again) is valued.
-
-**2026-10-24 (2)**
-- The worn item's twin (the same item made again, or a copy from the bag, that shows no better in rarity or upgrade level) is no longer a candidate, so a weapon the hero already wears is never offered as "improve".
-- Simulation, found by checking every skill, talent and infusion against its description:
-  - Rogue: a poison applied again now blasts (the script hook `onTryAddStatus` was never called), which also values Deadly Poison, Venom Infusion, Leeching Poison, Footwork and the Manfish infusion's crowd-control stack; Death Mark's damage bonus on the marked target (the hit had no source object) works; Urge to Kill makes the finisher's cooldown 1 s.
-  - Warrior: Battle Shout's group buff was put on the dummy instead of the party (it did nothing).
-  - Weapons that replace a skill by a recast (Light Monk's dash, Void Fangs, Expulse with water spheres) now recast; water spheres are objects the hero can grab; a totem heals and erupts when a skill is used; a summon's lasting healing step works; periodic effects are read from the status types' flags as the game does.
-  - Class skills that have no steps, script or code in the game data (Mage Overload, Warrior Burst of Anger, Priest Miracle, Rogue Darkness) cannot be valued.
-
 **2026-10-24**
-- New checkbox "Criticality" under the damage priority (see Main features).
-- A ranged build no longer gets a melee main weapon: swapping the main weapon with the arsenal one could put the arsenal's melee weapon in the main hand.
-- A weapon (or any item) that is the same as the one the hero wears is no longer shown as "improve": a change that gains less than a swap needs goes back to the worn item at the end of the search.
-- Runes: a rune is chosen for the axes you gave a priority (a healing rune is no longer advised for a damage-only build because of a "not important" gain); with nothing to gain on those axes your own runes stay, and a rune slot is never left empty.
-- Weapon skill slots are filled when the weapon has enough skills (a skill the simulation cannot value no longer leaves a slot empty).
-- Warrior: the bleed (Hemorrhage and the other damage-over-time statuses with no stack limit) now ticks for as long as it lasts, also when refreshed, and pays its damage out over its duration, so talents that react to bleed ticks (Red Tempo) are valued instead of ignored.
-- Mage: the Chaincast talent was never granted in the simulation (a script call without a count was read as "remove"), so every talent that works with it (Chainstrike, Kinetic Surge, Echoing Life, High Voltage, Reverberate) and its free weapon skill counted for nothing; now they are valued.
-- Multipliers that a skill's script puts on the cast itself (damage, physical / magic damage, healing, crit chance: e.g. the Great Axe's Demon King passive, Surging Tide, Phase Strike after Blink) are now applied to its hits; the cast's own hooks run before its steps hit, as in the game, and `onStart` gets the cast.
+- Criticality checkbox under the damage priority; a High priority is kept (at least 97% of the worn build's value) instead of being traded for lower ones, and the search never ends below the worn build; no twin of a worn item or ranged/melee mix-up is offered as "improve"; runes follow the prioritized axes; the model fight is two minutes against a pack of three foes that die every 20 s, hit the hero and are blocked (kill, block, enemy-count and low-target-health conditions hold, shields count by what they take in); many skills, talents and infusions that were valued wrongly or not at all now work (rogue poison blast, Opportunity Strike and Urge to Kill, warrior bleed and Battle Shout, mage Chaincast, Nova's ultimate, recasts, water spheres, totems, cast multipliers, filled weapon skill slots).
 
 **2026-10-19**
 - Class skills: at most 4 class skills are chosen; the class's signature skill is fixed and not counted (before, 5 class skills could be offered, which inflated the damage estimate).
