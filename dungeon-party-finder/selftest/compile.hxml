@@ -1,0 +1,6 @@
+-lib hlx-runtime
+-D hl-ver=1.16.0
+-cp src
+-main selftest.SelfTest
+-dce full
+-hl build/dpf-selftest/dpf-selftest.hl
