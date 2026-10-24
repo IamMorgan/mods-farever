@@ -146,19 +146,17 @@ class SearchTest {
             check("four players form one party", states(ps) == "Grouped,Grouped,Grouped,Grouped", states(ps));
             check("the earliest searcher leads the party", w.groupOf("acc4")[0] == "acc1" && w.groupOf("acc4").length == 4);
         }
-        // fewer than the minimum never starts, the minimum starts after a pause
+        // the first searcher found is invited at once; the party goes on once the minimum has joined
         {
             var w = new FakeWorld();
             var a = player(w, 1, 3), b = player(w, 2, 3), c = player(w, 3, 3);
             a.search.start(KEY, a.api.peer, 0);
             b.search.start(KEY, b.api.peer, 0);
             var t = run(w, [a, b], 0, 30);
-            check("two of three required keep searching", states([a, b]) == "InLobby,InLobby", states([a, b]));
+            check("a found searcher is invited, the party waits for the minimum", a.search.state == Inviting && w.groupOf("acc2").length == 2, states([a, b]));
             c.search.start(KEY, c.api.peer, t);
-            t = run(w, [a, b, c], t, 6);
-            check("no start right after the last arrival", a.search.state == InLobby);
-            t = run(w, [a, b, c], t, 10);
-            check("start once the lobby has been quiet", states([a, b, c]) == "Grouped,Grouped,Grouped", states([a, b, c]));
+            t = run(w, [a, b, c], t, 20);
+            check("the third joins and the party starts", states([a, b, c]) == "Grouped,Grouped,Grouped", states([a, b, c]));
         }
         // different keys never meet
         {
@@ -196,11 +194,12 @@ class SearchTest {
         {
             var w = new FakeWorld();
             var a = player(w, 1, 3), b = player(w, 2, 3);
+            b.api.autoAccept = false;
             a.search.start(KEY, a.api.peer, 0);
             b.search.start(KEY, b.api.peer, 0);
             var t = run(w, [a, b], 0, 3);
             b.search.cancel();
-            t = run(w, [a, b], t, 12);
+            t = run(w, [a, b], t, Search.INVITE_TIMEOUT + 4);
             check("the leader keeps searching alone", a.search.state == InLobby && w.lobbies.length == 1 && w.lobbies[0].members.length == 1);
         }
         // an invitation nobody accepts times out, the leader searches again

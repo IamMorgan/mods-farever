@@ -20,7 +20,7 @@ Other players need the mod too: it finds only players who use it.
 - **Dungeon window:** the game's own dungeon window (the one the portal opens). The mod adds a **Search** button under **Start**.
 - **Searching:** a circle turns and *Searching...* is written above the buttons, **Start** is off and **Search** has become **Cancel**. Closing the dungeon window ends the search.
 - **Matching:** you meet only players who chose the **same dungeon**, the **same difficulty** and whose level is in the **same bracket**: 1-3, 4-7, 8-10, 11-14, 15-18, 19-20, 21-24 and the maximum level on its own (level-25 players only meet level-25 players). The difficulties you cannot use (the maximum-level one below the maximum level, the heroic one before it is unlocked for this dungeon) are greyed out, by the game's own rules.
-- **Leader:** the player who started searching earliest leads. When enough players are found the leader sends the game's own group invitation (in-game, not a Steam invite) to the others. Accept it in the game's invitation window. Whoever declines or does not answer within 30 seconds is set aside and the leader invites the next searcher who arrives, until the group is full of four. The leader can press **Cancel** to go on with fewer.
+- **Leader:** the player who started searching earliest leads. As soon as a second player is found the leader sends the game's own group invitation (in-game, not a Steam invite) to the others. Accept it in the game's invitation window. Whoever declines or does not answer within 30 seconds is set aside and the leader invites the next searcher who arrives, until the group is full of four. The leader can press **Cancel** to go on with fewer.
 - **Dungeon lobby:** after you are grouped everyone gets the group's dungeon window of the game, with its usual **Start** (leader) and **Ready** (the others).
 - **Crown:** the group leader is marked with a small crown in the list of party members on the left of the screen.
 - **Language:** the windows and the settings page follow the client's language (all 14 languages of the game; English for any other).
@@ -44,6 +44,7 @@ Other players need the mod too: it finds only players who use it.
 
 - The dungeon list is a window of the game itself (like the Dungeon Button mod's), with all dungeons and a scroll bar for the rows beyond the first ten.
 - The dungeon window is the game's own; the mod adds a **Search** button under **Start**, which is off while a search runs. The turning circle of the search now turns.
+- The invitation goes out as soon as a second searcher is found (it used to wait for a full group); later arrivals are invited as they come.
 - A declined or ignored group invitation is replaced by the next searcher; the search goes on until the group is full.
 - The mod's texts and settings page follow the client's language, whichever of the game's 14 it is. A click on a dungeon opens its window (the group is read from the hero's player, as the game's own dungeon buttons do), the list's scroll bar is the flow's own and shows itself.
 - The DPF button is one of the game's own buttons (as in the Esc menu). The list has a visible scroll bar.
