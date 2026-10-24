@@ -39,6 +39,7 @@ class CrownMarker {
                 var mark = marks.filter(m -> m.banner == banner)[0];
                 if (wanted && mark == null) marks.push({banner: banner, crown: makeCrown(banner)});
                 else if (!wanted && mark != null) { ui.remove(mark.crown); marks.remove(mark); }
+                else if (mark != null) place(banner, mark.crown);
             }
         } catch (_:Dynamic) {}
     }
@@ -74,8 +75,15 @@ class CrownMarker {
         G.call("h2d.FlowProperties", "set_isAbsolute", properties, [true]);
         G.set(properties, "offsetX", 0);
         G.set(properties, "offsetY", 0);
-        G.call("h2d.Object", "setPosition", crown, [-6, -9]);
+        place(banner, crown);
         Style.crown(ui, ui.shapes(crown), 0, 0, SIZE);
         return crown;
+    }
+
+    /** The crown sits on the banner's top right corner. */
+    function place(banner:Dynamic, crown:Dynamic):Void {
+        var width = 0.0;
+        try width = G.number(G.call("h2d.Flow", "get_outerWidth", banner)) catch (_:Dynamic) {}
+        G.call("h2d.Object", "setPosition", crown, [width > SIZE ? width - SIZE + 6 : -6, -9]);
     }
 }

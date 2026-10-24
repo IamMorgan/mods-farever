@@ -29,10 +29,20 @@ class Session {
     var flow:LobbyFlow;
     var inParty = false;
     var lostAt = -1.0;
+    // The group's leader searching for more players is visible to the other members through a lobby of its own (the
+    // "beacon"): the leader keeps one open while it searches, the members look for it.
+    var beacon:LobbyApi;
+    var beaconPending = false;
+    var beaconKey = "";
+    var watchedActivity = "";
+    var watchPending = false;
+    var nextWatch = 0.0;
+    var leaderSeenAt = -100.0;
 
-    public function new(party:GameParty, lobbies:LobbyApi) {
+    public function new(party:GameParty, lobbies:LobbyApi, ?beacon:LobbyApi) {
         this.party = party;
         this.lobbies = lobbies;
+        this.beacon = beacon;
         search = new Search(lobbies, party, () -> Date.now().getTime(), GROUP, GROUP);
         flow = new LobbyFlow(party);
     }
@@ -40,7 +50,42 @@ class Session {
     public function mode():Mode return inParty ? Party : (search.isActive() ? Searching : Idle);
 
     /** Players found in the platform lobby so far (the player included). */
-    public function found():Int return search.count;
+    public function found():Int return search.count > 0 ? party.groupSize() - 1 + search.count : party.groupSize();
+
+    /** A member of a group (not its leader): whether the leader is searching for more players in this dungeon. */
+    public function leaderSearching(activityId:String, now:Float):Bool {
+        watchedActivity = activityId;
+        return now - leaderSeenAt < 8;
+    }
+
+    static function beaconName(uid:String, activityId:String):String return "dpfgroup|" + uid + "|" + activityId;
+
+    function updateBeacon(now:Float):Void {
+        if (beacon == null) return;
+        var size = party.groupSize();
+        var leading = mode() == Searching && size > 1 && party.isLeader();
+        if (!leading) {
+            if (beacon.inLobby()) { beacon.leave(); beaconKey = ""; }
+        } else if (!beacon.inLobby() && !beaconPending) {
+            beaconPending = true;
+            var me:Peer = {id: lobbies.selfId(), uid: party.uid(), name: party.name(), level: party.level()};
+            var made = beaconName(party.uid(), activityId);
+            beacon.create(made, now, me, 2, ok -> { beaconPending = false; beaconKey = ok ? made : ""; });
+        } else if (beacon.inLobby() && beaconKey != beaconName(party.uid(), activityId)) {
+            beacon.leave();
+            beaconKey = "";
+        }
+        // Members: look for the leader's beacon.
+        if (size > 1 && !party.isLeader() && watchedActivity != "" && !watchPending && now >= nextWatch) {
+            nextWatch = now + 3;
+            watchPending = true;
+            var leaderUid = party.leaderUid();
+            beacon.list(beaconName(leaderUid, watchedActivity), found -> {
+                watchPending = false;
+                if (found.length > 0) leaderSeenAt = haxe.Timer.stamp();
+            }, why -> watchPending = false);
+        }
+    }
 
     public function isInvited():Bool return Type.enumEq(search.state, Inviting);
 
@@ -73,6 +118,7 @@ class Session {
         try {
             if (party.hero() == null) return; // loading between zones: wait
             search.update(now);
+            updateBeacon(now);
             switch search.state {
                 case Grouped if (!inParty):
                     inParty = true;

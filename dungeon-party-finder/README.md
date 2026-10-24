@@ -46,6 +46,9 @@ Other players need the mod too: it finds only players who use it.
 - The dungeon window is the game's own; the mod adds a **Search** button under **Start**, which is off while a search runs. The turning circle of the search now turns.
 - The invitation goes out as soon as a second searcher is found (it used to wait for a full group); later arrivals are invited as they come.
 - After **Cancel** the leader of a group that is still short of players keeps the **Search** button and can search again for the missing places.
+- The dungeon window can be moved by its title strip.
+- The counter next to "Searching..." counts the whole group, and the other members of the group see that their leader is searching.
+- The crown of the group leader sits at the right edge of the character plate.
 - A declined or ignored group invitation is replaced by the next searcher; the search goes on until the group is full.
 - The mod's texts and settings page follow the client's language, whichever of the game's 14 it is. A click on a dungeon opens its window (the group is read from the hero's player, as the game's own dungeon buttons do), the list's scroll bar is the flow's own and shows itself.
 - The DPF button is one of the game's own buttons (as in the Esc menu). The list has a visible scroll bar.

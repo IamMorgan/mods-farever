@@ -55,6 +55,11 @@ class GameParty implements PartyApi {
         return l != null && l == me();
     }
 
+    public function leaderUid():String {
+        var l = leader();
+        return l == null ? "" : textOf(G.field(l, "uid"));
+    }
+
     public function isGroupLeader():Bool return groupSize() < 2 || isLeader();
 
     public function groupSize():Int return players().length;

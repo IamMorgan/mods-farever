@@ -241,11 +241,12 @@ class Search {
         if (self != "" && !present) {
             if (++absent >= ABSENT_POLLS) { restart(1); return; }
         } else absent = 0;
-        var peers = all.filter(p -> p.uid != "");
-        for (p in peers) if (p.id != self) seen.set(p.uid, true);
+        var group = party.groupUids();
+        // Members of my own group are not "found": they are already with me.
+        for (p in all) if (p.uid != "" && p.id != self) seen.set(p.uid, true);
+        var peers = all.filter(p -> p.uid != "" && (p.id == self || group.indexOf(p.uid) < 0));
 
         // The game's party has formed around someone from this lobby: the search is over.
-        var group = party.groupUids();
         if (group.length > 1) {
             for (u in group) if (u != me.uid && seen.exists(u)) { finishToParty(); return; }
         }
@@ -304,6 +305,7 @@ class Search {
         var self = lobbies.selfId();
         var peers = lobbies.members().filter(p -> p.uid != "" && p.id != self && p.uid != me.uid);
         for (p in peers) seen.set(p.uid, true);
+        count = 1 + peers.filter(p -> group.indexOf(p.uid) < 0).length;
 
         var lapsed = [for (u in invitedAt.keys()) if (group.indexOf(u) < 0 && now - invitedAt.get(u) >= INVITE_TIMEOUT) u];
         for (u in lapsed) { rejected.set(u, true); invitedAt.remove(u); lastChange = now; }
