@@ -107,10 +107,10 @@ class Optimizer {
     /** The weights of the score: the player's priorities (3 high … 1 low), "not important" = 0.02 (only breaks ties). */
     var used:Array<Float>;
     /**
-     * Weight of each priority level: not important, low, medium, high — the agreed TZ (DESIGN.md): High 3, Medium 2,
+     * Weight of each priority level: not important, low, medium, high — the agreed TZ (DESIGN.md): High 6 (twice the weight of what its "3" meant: a High priority must not be outweighed by a Medium one that moves further in its range), Medium 2,
      * Low 1; "not important" only breaks ties. (The tiers 100/10/1 made every lower priority worthless: all went to damage.)
      */
-    static var TIER = [0.01, 1.0, 2.0, 3.0];
+    static var TIER = [0.01, 1.0, 2.0, 6.0];
     /**
      * Unit of the score's thresholds: the sum of the weights (one axis moving its whole range at weight 1 = 1 / unit). A
      * gain is measured against it, not against the score itself: the score has the worn build in it, so a share of it
@@ -181,7 +181,7 @@ class Optimizer {
      * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2; chances without luck = 3). A last result
      * valued by another version is not a start for the search (it would keep a build the model of now does not choose).
      */
-    public static inline var MODEL_VERSION = 9;
+    public static inline var MODEL_VERSION = 10;
     /**
      * The search goes round until a whole round takes nothing (at most this many rounds): a search that stopped after
      * 3 rounds or a round under 0.2% was not done, and the next calculation (from its result) went on and moved.
@@ -515,7 +515,7 @@ class Optimizer {
         if (weights[3] > 0) { kinds.push("Heal"); kinds.push("Shield"); }
         model.valuedKinds = kinds.length > 0 ? kinds : ["Damage"];
         DebugLog.line("priorities: damage " + weights[0] + ", defense " + weights[1] + ", health " + weights[2] + ", heal " + weights[3]
-            + ", crit chance " + weights[4] + " -> weights " + used.join("/") + " (score = sum of weight x (1 + (value - worn value) / range of the axis); high 3, medium 2, low 1, not important 0.01;"
+            + ", crit chance " + weights[4] + " -> weights " + used.join("/") + " (score = sum of weight x (1 + (value - worn value) / range of the axis); high 6, medium 2, low 1, not important 0.01;"
             + " a change must gain a share of " + r3(unit) + ", the sum of the weights)" + (last != null ? "; the last result (" + last.savedAt + ") is a start too" : ""));
 
         readTree();
