@@ -733,9 +733,8 @@ class Model {
 
     /** Damage and heals come from a simulated fight (buildcalc.sim.Sim running the skills' scripts). */
     public var useSim = true;
-    /** Length of the simulated fight against the training dummy, seconds. */
-    /** Seconds of the model fight: every skill with a cooldown up to two minutes is used in it. */
-    public static var FIGHT = 40.0;
+    /** Seconds of the model fight (two minutes): every skill with a cooldown up to two minutes is used in it, a slow stack (Nova's ultimate) is full. */
+    public static var FIGHT = 120.0;
     public var lastSim:buildcalc.sim.Sim.SimResult = null;
 
     /**

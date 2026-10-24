@@ -43,6 +43,8 @@ class SkillInfo {
     public var costs:Array<{atb:String, amount:Float}> = [];
     /** The status's types (props.status.types: Poison, Poison_Dose, Buff…). */
     public var statusTypes:Array<String> = [];
+    /** The skills the status puts in the hero's skill slots while it lasts (props.status.skillOverride: Nova's ultimate). */
+    public var overrides:Array<String> = [];
     /** The farthest reach of its hitting steps (projectiles, areas, effects on the target), in metres. */
     public var reach = 0.0;
     public var dotHot = false;
@@ -78,6 +80,11 @@ class SkillInfo {
         for (i in 0...rec.len(types)) {
             var t = ref(rec.get(rec.at(types, i), "type"));
             if (t != "") statusTypes.push(t);
+        }
+        var so = rec.get(rec.get(props, "status"), "skillOverride");
+        for (i in 0...rec.len(so)) {
+            var o = ref(rec.get(rec.at(so, i), "skill"));
+            if (o != "") overrides.push(o);
         }
         // HSkill.isDoT / isHoT: a status type flagged periodic damage or healing
         if (!dotHot && GameRules.typesFlag(statusTypes, 9)) dotHot = true;

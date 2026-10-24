@@ -153,24 +153,31 @@ class Optimizer {
 
     /** The least an axis must keep (0: none). */
     public var floor:Array<Float> = null;
-    static inline var FLOOR_COST = 10.0;
+    static inline var FLOOR_COST = 40.0;
     /** The TZ: a High priority keeps at least 80% of the most its axis can reach (the highest of the anchors). */
     static inline var HIGH_KEEPS = 0.8;
+    /**
+     * A High priority is not given up for the lower ones: its axis keeps what the worn build has, less the noise of the fight
+     * (a build with 8% less damage was suggested for 10% more defense and health at Low: by the ranges the sum came out better,
+     * for the player it was a worse build).
+     */
+    static inline var HIGH_TOLERANCE = 0.03;
 
     /**
      * Floors from what each axis can reach (Prefilter's anchors), not from the build the search starts with: the same
      * for any worn build, so a change the player made does not move them.
      */
     public function setFloors():Void {
-        floor = [for (a in 0...AXES) weights[a] >= 3 && hi != null ? hi[a] * HIGH_KEEPS : 0.0];
-        DebugLog.line("priorities: floors (High keeps " + Math.round(HIGH_KEEPS * 100) + "% of the most its axis reaches): " + floor.map(r3).join("/"));
+        floor = [for (a in 0...AXES) weights[a] >= 3 && hi != null ? Math.max(hi[a] * HIGH_KEEPS, now != null ? now[a] * (1 - HIGH_TOLERANCE) : 0) : 0.0];
+        DebugLog.line("priorities: floors (High keeps " + Math.round(HIGH_KEEPS * 100) + "% of the most its axis reaches and " + Math.round((1 - HIGH_TOLERANCE) * 100)
+            + "% of the worn build's): " + floor.map(r3).join("/"));
     }
 
     /**
      * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2; chances without luck = 3). A last result
      * valued by another version is not a start for the search (it would keep a build the model of now does not choose).
      */
-    public static inline var MODEL_VERSION = 7;
+    public static inline var MODEL_VERSION = 8;
     /**
      * The search goes round until a whole round takes nothing (at most this many rounds): a search that stopped after
      * 3 rounds or a round under 0.2% was not done, and the next calculation (from its result) went on and moved.
@@ -1571,6 +1578,8 @@ class Search implements Task {
     var passStart = 0.0;
     var pass:Pass = null;
     var started = false;
+    var startBuild:Build = null;
+    var startValue = 0.0;
     /** The talents the search started with (the hero's, the last result's): they stay unless the others gain clearly. */
     var refTalents:Array<Map<String, Int>> = [];
     var t0 = 0.0;
@@ -1624,6 +1633,9 @@ class Search implements Task {
                 DebugLog.line("test: infusions of the start build set: " + [for (sl => inf in ov.infusions) sl + "=" + inf].join(", ") + " -> score " + current);
             }
             start = current;
+            startBuild = Optimizer.copy(o.worn);
+            o.startWeapon(startBuild);
+            startValue = o.value(startBuild);
             before = current - 1;
             t0 = haxe.Timer.stamp();
             e0 = o.evals;
@@ -1634,6 +1646,11 @@ class Search implements Task {
                 DebugLog.line("search " + o.stage + ": score " + start + " -> " + current + ", " + (o.evals - e0) + " builds in "
                     + Math.round((haxe.Timer.stamp() - t0) * 1000) + " ms, " + round + " rounds" + (o.overLimit() ? " (limit)" : ""));
                 if (rounds > 0) { o.keepTalents(b, refTalents); o.polish(b); }
+                // never worse than the worn build by the search's own score (it started from scratch talents and a last result)
+                if (rounds > 0 && o.value(b) < startValue - 1e-9) {
+                    DebugLog.line("search: the result's score " + o.value(b) + " is below the worn build's " + startValue + ": the worn build is kept");
+                    b = startBuild;
+                }
                 onDone(b);
                 return true;
             }
