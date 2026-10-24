@@ -48,12 +48,15 @@ enum SearchState {
  * The matchmaking itself, free of the game: everyone with the same key meets in one platform lobby. The lobby's owner is the
  * leader, and the oldest lobby wins: whoever finds nothing creates a lobby, a younger lobby's owner moves into an older one,
  * so the earliest searcher ends up leading. When the lobby is full (or has enough players and has not changed for a while)
- * the leader invites everyone else into a game party and leaves the lobby; the others see the party form and leave too.
+ * the leader invites the others with the game's own group invitation. Whoever accepts sees the party form and leaves the
+ * lobby; whoever declines or lets the invitation lapse is set aside and the leader keeps looking: the next searcher to
+ * arrive in the lobby is invited in their place, until the party is full.
  */
 class Search {
     public static inline var POLL = 1.0;          // seconds between looks at the lobby
     public static inline var SETTLE = 8.0;        // a lobby below full is started this long after its last change
-    public static inline var INVITE_TIMEOUT = 40.0;
+    public static inline var INVITE_TIMEOUT = 30.0;  // an invitation not accepted by then counts as declined
+    public static inline var LOBBY_CAP = 8;          // room for searchers who declined and are still sitting in the lobby
     public static inline var RETRY = 3.0;
     public static inline var MERGE_EVERY = 4.0;
     public static inline var MAX_FAILURES = 5;
@@ -85,8 +88,8 @@ class Search {
     var failures = 0;
     var absent = 0;
     var lastChange = 0.0;
-    var invited:Array<String> = [];
-    var inviteAt = 0.0;
+    var invitedAt:Map<String, Float> = new Map();   // account uid -> when its invitation was sent
+    var rejected:Map<String, Bool> = new Map();     // declined or ignored: not invited again in this search
     var seen:Map<String, Bool> = new Map();
 
     /** `clock` is the cross-player time stamp of lobbies (server or wall time), `maxPlayers` the party size. */
@@ -106,6 +109,8 @@ class Search {
         this.key = key;
         this.me = me;
         seen = new Map();
+        invitedAt = new Map();
+        rejected = new Map();
         if (me == null || me.uid == "" || party.groupUids().length > 1) { state = Failed("party"); return; }
         begin();
     }
@@ -117,6 +122,8 @@ class Search {
         if (lobbies.inLobby()) lobbies.leave();
         leader = false;
         count = 0;
+        invitedAt = new Map();
+        rejected = new Map();
         state = Idle;
     }
 
@@ -130,6 +137,7 @@ class Search {
         leader = false;
         count = 0;
         failures = 0;
+        invitedAt = new Map();
         state = Listing;
         nextList = now;
     }
@@ -202,7 +210,7 @@ class Search {
     function createLobby():Void {
         state = Creating;
         var t = token;
-        lobbies.create(key, clock(), me, maxPlayers, ok -> {
+        lobbies.create(key, clock(), me, LOBBY_CAP, ok -> {
             if (t != token) { if (ok) lobbies.leave(); return; }
             if (ok) enterLobby();
             else { state = Listing; nextList = now + RETRY; }
@@ -244,8 +252,9 @@ class Search {
         leader = self != "" && lobbies.ownerId() == self;
         if (!leader) return;
 
-        var n = peers.length;
-        if (n >= 2 && (n >= maxPlayers || (n >= minPlayers && now - lastChange >= SETTLE))) { invite(peers, self); return; }
+        var open = peers.filter(p -> !rejected.exists(p.uid));
+        var n = open.length;
+        if (n >= 2 && (n >= maxPlayers || (n >= minPlayers && now - lastChange >= SETTLE))) { invite(open, self); return; }
 
         if (!mergePending && now >= nextMerge) {
             nextMerge = now + MERGE_EVERY;
@@ -273,22 +282,50 @@ class Search {
     }
 
     function invite(peers:Array<Peer>, self:String):Void {
-        invited = [];
-        for (p in peers) if (p.id != self && p.uid != me.uid) invited.push(p.uid);
-        if (invited.length == 0) return;
-        for (u in invited) party.inviteUid(u);
-        inviteAt = now;
-        nextPoll = now + POLL;
+        invitedAt = new Map();
         state = Inviting;
+        nextPoll = now;
+        pollInviting();
     }
 
+    /**
+     * The leader's look while invitations are out: invites go to as many searchers as there are free places, the ones who
+     * did not accept in time are set aside, and the places they leave are offered to whoever else is in the lobby.
+     */
     function pollInviting():Void {
         var group = party.groupUids();
-        var accepted = 0;
-        for (u in invited) if (group.indexOf(u) >= 0) accepted++;
-        if (accepted == invited.length || now - inviteAt >= INVITE_TIMEOUT) {
-            if (group.length > 1) finishToParty();
-            else restart(1);
+        if (!lobbies.inLobby()) {
+            if (group.length > 1) finishToParty(); else restart(1);
+            return;
+        }
+        var self = lobbies.selfId();
+        var peers = lobbies.members().filter(p -> p.uid != "" && p.id != self && p.uid != me.uid);
+        for (p in peers) seen.set(p.uid, true);
+
+        var lapsed = [for (u in invitedAt.keys()) if (group.indexOf(u) < 0 && now - invitedAt.get(u) >= INVITE_TIMEOUT) u];
+        for (u in lapsed) { rejected.set(u, true); invitedAt.remove(u); lastChange = now; }
+
+        var free = maxPlayers - group.length;
+        if (free <= 0) { finishToParty(); return; }
+
+        var outstanding = [for (u in invitedAt.keys()) if (group.indexOf(u) < 0) u].length;
+        for (p in peers) {
+            if (outstanding >= free) break;
+            if (group.indexOf(p.uid) >= 0 || rejected.exists(p.uid) || invitedAt.exists(p.uid)) continue;
+            party.inviteUid(p.uid);
+            invitedAt.set(p.uid, now);
+            outstanding++;
+            lastChange = now;
+        }
+        if (outstanding > 0) return;
+
+        if (group.length > 1) {
+            // Everyone answered and nobody else is waiting: go on with a short party if it is allowed to start.
+            if (group.length >= minPlayers) finishToParty();
+        } else {
+            // Nobody accepted: back to waiting for searchers (the ones who declined are not asked again).
+            state = InLobby;
+            lastChange = now;
         }
     }
 
