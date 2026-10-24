@@ -80,6 +80,7 @@ class FakeApi implements LobbyApi implements PartyApi {
 
     public function inviteUid(uid:String):Void world.invites.push({from: peer.uid, to: uid});
     public function groupUids():Array<String> return world.groupOf(peer.uid);
+    public function isGroupLeader():Bool return world.groupOf(peer.uid)[0] == peer.uid;
 }
 
 class SearchTest {
@@ -157,6 +158,20 @@ class SearchTest {
             c.search.start(KEY, c.api.peer, t);
             t = run(w, [a, b, c], t, 20);
             check("the third joins and the party starts", states([a, b, c]) == "Grouped,Grouped,Grouped", states([a, b, c]));
+        }
+        // the leader cancels a short group and searches again for the missing players
+        {
+            var w = new FakeWorld();
+            var a = player(w, 1, 3), b = player(w, 2, 3), c = player(w, 3, 3);
+            a.search.start(KEY, a.api.peer, 0);
+            b.search.start(KEY, b.api.peer, 0);
+            var t = run(w, [a, b], 0, 30);
+            a.search.cancel();
+            check("cancelled with two in the group", a.search.state == Idle && w.groupOf("acc2").length == 2);
+            a.search.start(KEY, a.api.peer, t);
+            c.search.start(KEY, c.api.peer, t);
+            t = run(w, [a, b, c], t, 30);
+            check("the group leader searches again and gets the third", w.groupOf("acc3").length == 3 && w.groupOf("acc3")[0] == "acc1", states([a, b, c]));
         }
         // different keys never meet
         {
@@ -268,7 +283,7 @@ class SearchTest {
         // already in a party
         {
             var w = new FakeWorld();
-            w.form("acc1", ["acc9"]);
+            w.form("acc9", ["acc1"]);
             var a = player(w, 1, 2);
             a.search.start(KEY, a.api.peer, 0);
             check("no search from inside a party", Type.enumEq(a.search.state, Failed("party")));

@@ -140,7 +140,7 @@ class SearchControl {
         var here = session.activityId == DungeonScreens.activityOf(screen);
         var searching = mode == Searching && here;
         stage = "update: shown";
-        var shown = searching || (mode == Idle && party.groupSize() == 1);
+        var shown = searching || (mode == Idle && party.isGroupLeader());
         stage = "update: show button";
         N.show(button, shown);
         var text = searching ? Locale.cancel() : Locale.search();

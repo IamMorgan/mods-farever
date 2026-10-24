@@ -48,7 +48,7 @@ class Session {
         if (mode() != Idle) return;
         message = "";
         if (party.hero() == null || party.me() == null) { message = Locale.noHero(); return; }
-        if (party.groupSize() > 1) { message = Locale.inParty(); return; }
+        if (party.groupSize() > 1 && !party.isGroupLeader()) { message = Locale.inParty(); return; }
         this.activityId = activityId;
         this.difficulty = difficulty;
         var key = SearchKey.make(activityId, difficulty, LevelBrackets.index(party.level(), party.maxLevel()));
