@@ -170,7 +170,7 @@ class Optimizer {
      * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2; chances without luck = 3). A last result
      * valued by another version is not a start for the search (it would keep a build the model of now does not choose).
      */
-    public static inline var MODEL_VERSION = 6;
+    public static inline var MODEL_VERSION = 7;
     /**
      * The search goes round until a whole round takes nothing (at most this many rounds): a search that stopped after
      * 3 rounds or a round under 0.2% was not done, and the next calculation (from its result) went on and moved.
@@ -530,6 +530,14 @@ class Optimizer {
         return rarityRanks.exists(r) ? rarityRanks.get(r) : 0;
     }
 
+    /** Rank of the rarity the item itself has (a weapon is made at the rarity it dropped at; the data's `inf` holds the item type's own). */
+    function itemRarityRank(c:Candidate):Int {
+        rarityRank(c);
+        var r = "";
+        try r = G.str(G.field(c.item, "rarity")) catch (_:Dynamic) {}
+        return rarityRanks.exists(r) ? rarityRanks.get(r) : rarityRank(c);
+    }
+
     function pools0():Void {
         // the hero's own items (bag, mail, bank), as they are, that the hero can wear
         var level = Std.int(G.num(G.field(hero, "_level")));
@@ -560,7 +568,9 @@ class Optimizer {
             for (c in all) {
                 if (!slotFits(c, s)) continue;
                 if (s == 0 && c.ranged != settings.ranged) continue; // main weapon: melee or ranged as asked
-
+                // the worn item's twin (the same item made again, or a copy from the bag) that shows no better than it
+                // (rarity, upgrade) is no candidate: the result would say "improve" and show the weapon the hero wears
+                if (w != null && c != w && c.id == w.id && itemRarityRank(c) <= itemRarityRank(w) && c.upgrade <= w.upgrade) continue;
                 list.push(c);
             }
             full.set(s, list);

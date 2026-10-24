@@ -45,6 +45,14 @@ For manual installation:
 
 ### Changelog
 
+**2026-10-24 (2)**
+- The worn item's twin (the same item made again, or a copy from the bag, that shows no better in rarity or upgrade level) is no longer a candidate, so a weapon the hero already wears is never offered as "improve".
+- Simulation, found by checking every skill, talent and infusion against its description:
+  - Rogue: a poison applied again now blasts (the script hook `onTryAddStatus` was never called), which also values Deadly Poison, Venom Infusion, Leeching Poison, Footwork and the Manfish infusion's crowd-control stack; Death Mark's damage bonus on the marked target (the hit had no source object) works; Urge to Kill makes the finisher's cooldown 1 s.
+  - Warrior: Battle Shout's group buff was put on the dummy instead of the party (it did nothing).
+  - Weapons that replace a skill by a recast (Light Monk's dash, Void Fangs, Expulse with water spheres) now recast; water spheres are objects the hero can grab; a totem heals and erupts when a skill is used; a summon's lasting healing step works; periodic effects are read from the status types' flags as the game does.
+  - Class skills that have no steps, script or code in the game data (Mage Overload, Warrior Burst of Anger, Priest Miracle, Rogue Darkness) cannot be valued.
+
 **2026-10-24**
 - New checkbox "Criticality" under the damage priority (see Main features).
 - A ranged build no longer gets a melee main weapon: swapping the main weapon with the arsenal one could put the arsenal's melee weapon in the main hand.

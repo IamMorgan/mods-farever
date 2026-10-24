@@ -121,6 +121,10 @@ class Unit implements IObj {
     public var healthRatio:Float;
     /** What a summon is (Data.unit id); empty for the hero and the dummy. */
     public var kind = "";
+    /** The skill that summoned it (empty for the hero and the dummy). */
+    public var summonOf = "";
+    /** When a summon goes (addLifetime puts it off). */
+    public var lifeEnd = 0.0;
     /** Current values of resource attributes (Spark, Rage, ComboPoint…), see Sim.resGet. */
     public var res = new Map<String, Float>();
     /** 0: the hero's side (the hero, its summons), 1: the foes. */
@@ -161,6 +165,7 @@ class Unit implements IObj {
 
     public function call(name:String, a:Array<Dynamic>):Dynamic {
         switch (name) {
+            case "addLifetime": lifeEnd += Sim.num(a[0]); return null;
             case "isAlly": return Std.isOfType(a[0], Unit) && (a[0] : Unit).team == team;
             case "isEnemy": return Std.isOfType(a[0], Unit) && (a[0] : Unit).team != team;
             case "addStatus": return sim.applyStatus(this, Sim.str(a[0]), Std.isOfType(a[2], Inst) ? a[2] : null, Std.int(Math.max(1, Sim.num(a[1]))), a.length > 4 ? Sim.num(a[4]) : null);
@@ -238,6 +243,8 @@ class Inst implements IObj implements Host {
     /** Raised by stopAreas / cancelWaits: lasting areas and waits started before end. */
     public var areaGen = 0;
     public var waitGen = 0;
+    /** The lasting objects the skill's steps made (water spheres): what getSkillObjects gives. */
+    public var objects:Array<SkillObj> = [];
     var vars:VarsObj;
 
     public function new(sim:Sim, info:SkillInfo, rank:Int, runes:Array<String>, kind:String, slot:Int, item:Dynamic, owner:Unit) {
@@ -339,7 +346,8 @@ class Inst implements IObj implements Host {
             case "reduceCooldown": cdEnd -= Sim.num(a[0]); return null;
             case "isRunning": return sim.time < runningUntil;
             case "isPeriodic": return info.dotHot || Lambda.exists(info.steps, st -> st.tick != null);
-            case "getSkillObjects", "getProjectiles": return [];
+            case "getSkillObjects": objects = [for (o in objects) if (o.alive()) o]; return objects.copy();
+            case "getProjectiles": return [];
             case "refresh":
                 // a status lasts its whole duration again (its Refresh steps run)
                 if (isStatus()) {
@@ -349,6 +357,10 @@ class Inst implements IObj implements Host {
                     sim.refreshSteps(st);
                 }
                 return null;
+            case "playStep", "playGlobalStep":
+                // a status's own step played by a script that holds it (the poison's Blast), at the status's unit
+                return sim.api(this, name, a.length > 1 ? a : [a[0], isStatus() ? (cast this : Status).unit : null]);
+            case "remove": if (isStatus()) sim.removeStatus(cast this); return null;
             case "consume":
                 // a status consumed: gone, its stacks returned
                 if (isStatus()) { var n = (cast this : Status).stacks; sim.removeStatus(cast this); return n; }
@@ -458,6 +470,29 @@ class VarsObj implements IObj {
 }
 
 /** A hit (damage, heal) or a cast context as scripts see it. */
+/** A lasting object of a skill (a water sphere): it can be pulled to the hero by a script, which takes it. */
+class SkillObj implements IObj {
+    public var until:Float;
+    public var gone = false;
+    var sim:Sim;
+    public function new(sim:Sim, until:Float) { this.sim = sim; this.until = until; }
+    public function alive():Bool return !gone && sim.time < until;
+    public function get(name:String):Dynamic return null;
+    public function set(name:String, v:Dynamic):Void {}
+    public function call(name:String, args:Array<Dynamic>):Dynamic {
+        switch (name) {
+            case "magnetTo":
+                // flies to the unit: its callback runs on arrival (the sphere is taken then)
+                var f:Closure = Std.isOfType(args[1], Closure) ? args[1] : null;
+                var src = sim.current;
+                if (f != null && src != null) sim.at(sim.time + 0.3, () -> if (!gone) { sim.current = src; f.run([this]); });
+                return null;
+            case "consume": gone = true; return null;
+            default: sim.missing("skillObject." + name + "()"); return null;
+        }
+    }
+}
+
 class HitObj extends DynObj {
     public function new() super();
     override public function get(name:String):Dynamic {
@@ -630,6 +665,7 @@ class Sim {
             var u = new Unit(this, false, inst.owner.team);
             u.healthRatio = 1;
             u.kind = s.summon;
+            u.summonOf = inst.info.id;
             units.push(u);
             summons++;
             inst.fire("onSummon", [u]);
@@ -645,6 +681,11 @@ class Sim {
                 for (st in si.steps) cycle = Math.max(cycle, si.value(st.delay, att.rank, att.runes, 0) + si.value(st.duration, att.rank, att.runes, 0));
                 // the skill's own duration and cooldown count too (SummonBee_HoneyBolt: 2 s and a cooldown of 1 s)
                 cycle = Math.max(cycle, si.duration) + si.cooldown;
+                // a summon's lasting step with a tick (the totem's waves of healing): every tick
+                if (cycle <= 0.1) for (st in si.steps) {
+                    var tk = si.value(st.tick, att.rank, att.runes, 0);
+                    if (tk > 0 && st.effects.length > 0) cycle = cycle <= 0.1 ? tk : Math.min(cycle, tk);
+                }
                 if (cycle <= 0.1) continue;
                 var strike:Void->Void = null;
                 strike = function() {
@@ -654,11 +695,15 @@ class Sim {
                 };
                 at(time + cycle * 0.8, strike);
             }
-            at(endAt, () -> {
+            u.lifeEnd = endAt;
+            var expire:Void->Void = null;
+            expire = function() {
+                if (u.lifeEnd > time + 1e-9) { at(u.lifeEnd, expire); return; }
                 for (st in u.statuses.copy()) removeStatus(st);
                 units.remove(u);
                 inst.fire("onSummonElapsed", [u]);
-            });
+            };
+            at(endAt, expire);
         }
     }
 
@@ -666,7 +711,7 @@ class Sim {
     function summonAttack(att:Inst, si:SkillInfo):Void {
         var hc = new HitObj();
         for (st in si.steps) if (st.effects.length > 0 && si.stepActive(st, att.rank, att.runes))
-            for (e in st.effects) applyEffect(att, st, e, dummy, hc, 1);
+            for (e in st.effects) applyEffect(att, st, e, e.kind == "Heal" || e.kind == "Shield" ? hero : dummy, hc, 1);
     }
 
     public function later(dt:Float, f:Void->Void):Void at(time + Math.max(0, dt), f);
@@ -680,7 +725,7 @@ class Sim {
     /** A projectile step played by a script (getStepById(..).generateProjectile): as when the skill plays it. */
     public function fireProjectile(inst:Inst, s:SStep, target:Unit):Void runStepNow(inst, s, target, ctx, true);
 
-    function at(t:Float, f:Void->Void):Void {
+    public function at(t:Float, f:Void->Void):Void {
         queue.push({t: t, f: f, seq: seq++});
     }
 
@@ -966,6 +1011,23 @@ class Sim {
                 specs.push({id: id, rank: sp.rank, runes: [], kind: sp.kind, slot: sp.slot, item: sp.item});
             }
         }
+        // the skills one replaces while it can be recast (getOverrideSkill) are the hero's too
+        var ovr = ~/return\s+Skill\.(\w+)/;
+        for (sp in specs.copy()) {
+            var gi = env.skill(sp.id);
+            if (gi == null) continue;
+            var at = gi.scriptText.indexOf("function getOverrideSkill");
+            if (at < 0) continue;
+            var body = gi.scriptText.substr(at);
+            while (ovr.match(body)) {
+                var id = ovr.matched(1);
+                body = ovr.matchedRight();
+                if (!have.exists(id) && env.skill(id) != null) {
+                    have.set(id, true);
+                    specs.push({id: id, rank: sp.rank, runes: [], kind: sp.kind, slot: sp.slot, item: sp.item});
+                }
+            }
+        }
         for (sp in specs) {
             var info = env.skill(sp.id);
             if (info == null) { missing("skill data " + sp.id); continue; }
@@ -1046,7 +1108,14 @@ class Sim {
         var cdMod = Math.max(0, 1 - timingStat("CooldownReduction"));
         var castMod = Math.max(0.1, 1 - timingStat("SpellCastTimeReduction"));
         var pick:Inst = null;
-        for (a in actives) {
+        // a skill that is replaced by another while it can be used again (getOverrideSkill: the recast of a dash, of a throw of fangs
+        // or of spheres): the player recasts at once, whatever the first skill's cooldown
+        for (a in actives) if (a.has("getOverrideSkill")) {
+            var r = a.fire("getOverrideSkill", []);
+            var o = r == null ? null : instById(hero, str(r));
+            if (o != null && o != a && time >= o.cdEnd) { pick = o; break; }
+        }
+        if (pick == null) for (a in actives) {
             var ready = usesCharges(a) ? a.charges > 0 && time >= a.cdEnd : time >= a.cdEnd;
             if (ready && a.has("checkEnabled")) {
                 var r = a.fire("checkEnabled", []);
@@ -1064,7 +1133,10 @@ class Sim {
             dur = d > 0 ? Math.max(0.2, d * castMod) : 0.02;
             // a skill its script plays at once (shouldPlayInstantly: the mace's skill after a critical combo)
             if (pick.has("shouldPlayInstantly") && pick.fire("shouldPlayInstantly", []) == true) dur = 0.02;
-            pick.cdEnd = time + pick.info.cooldownWith(pick.runes) * cdMod;
+            var cd = pick.info.cooldownWith(pick.runes) * cdMod;
+            // a script that sets its own cooldown (the finisher during Urge to Kill: 1 s)
+            if (pick.has("onCooldownEval")) { var r = pick.fire("onCooldownEval", [ctx, cd]); if (r != null) cd = num(r); }
+            pick.cdEnd = time + cd;
             if (usesCharges(pick)) pick.charges--;
             pay(pick);
             castSkill(pick, dur);
@@ -1206,6 +1278,18 @@ class Sim {
             for (t in (s.statusSelf ? [inst.owner] : targets)) applyStatus(t, s.status, inst, s.statusStacks, stepStatusTime(inst, s));
         }
         if (s.type == "Summon") { summon(inst, s, dur, c); return; }
+        if (s.type == "SkillObject" && Lambda.exists(hero.skills, k -> k.info.scriptText.indexOf("getSkillObjects") >= 0)) {
+            // a script of the hero takes such objects (Expulse grabs the water spheres): the sphere lies where it fell until it ends
+            // (one the hero does not grab is walked through before it ends: the skill's Pickup steps run then)
+            var obj = new SkillObj(this, time + Math.max(0.1, dur)), src = inst;
+            inst.objects.push(obj);
+            at(obj.until, () -> {
+                if (obj.gone) return;
+                obj.gone = true;
+                for (n in src.info.steps) if (n.on == "Pickup" && src.info.stepActive(n, src.rank, src.runes)) runStepNow(src, n, hero, c, true);
+            });
+            return;
+        }
         if (s.type == "SkillObject") {
             // a pickup object (a water orb): it lands, the hero takes it, the skill's Pickup steps run on the hero
             var src = inst;
@@ -1339,6 +1423,7 @@ class Sim {
         hit.set("source", attacker);
         hit.set("sourceUnit", attacker);
         hit.set("instigator", attacker);
+        hit.set("sourceObject", attacker);
         hit.set("ctx", c);
         hit.set("status", inst.isStatus() ? inst : null);
         hit.set("isSkill", inst.isSkillHit());
@@ -1480,6 +1565,11 @@ class Sim {
         if (Sys.getEnv("TRACE") != null && id.indexOf(Sys.getEnv("TRACE")) >= 0) Sys.println("TRACE status " + id + " t=" + Math.round(time * 10) / 10);
         if (info == null) { missing("status data " + id); return null; }
         var instigator = source != null ? (source.isStatus() ? (cast source : Status).instigator : source.owner) : hero;
+        // the instigator's scripts see the status about to be added (the rogue's poison: added again, it blasts)
+        var tryObj = new HitObj();
+        tryObj.set("id", id);
+        tryObj.set("kind", id);
+        dispatchUnit(instigator, "onTryAddStatus", [tryObj, target], null);
         var dur = duration != null && duration > 0 ? duration : info.durationWith(source != null ? source.runes : []);
         // st.skill.Status.stacksWith: the same status stacks on one that is just as lasting (infinite or not), of the same
         // instigator unless its flags share it (2048); a lasting and an infinite one live side by side
@@ -1732,7 +1822,7 @@ class Sim {
                 if (info == null) return null;
                 var free = new Inst(this, info, inst.rank, inst.runes, "triggered", inst.slot, inst.item, hero);
                 castSkill(free, 0);
-                return null;
+                return ctx;
             case "chargePrayer", "addCharges":
                 var cap = inst.info.type == "PriestPrayer" ? Std.int(Math.max(1, inst.maxCharges)) : 99;
                 inst.charges = Std.int(Math.min(cap, inst.charges + (name == "addCharges" ? Math.max(1, num(a[0])) : 1)));
@@ -1751,7 +1841,8 @@ class Sim {
                         ally: false, buffs: buffIndex, tbuffs: 0, dyn: false, amount: amount});
                 }
                 return null;
-            case "getSummons", "getTotems", "getAreas", "getProjectiles": return [];
+            case "getSummons", "getTotems": var of = a.length > 0 && a[0] != null ? str(a[0]) : null; return [for (u in units) if (u.summonOf != "" && (of == null || u.summonOf == of)) u];
+            case "getAreas", "getProjectiles": return [];
             case "getStepById":
                 var o = new StepObj(inst, str(a[0]));
                 return o;
@@ -1763,7 +1854,10 @@ class Sim {
                 if (f != null) f.run([hero]);
                 return null;
             case "isSkillFromPrayer": return Std.isOfType(a[0], Inst) && (a[0] : Inst).info.type == "PriestPrayer";
-            case "isCrowdControl": return false;
+            case "isCrowdControl":
+                // a status about to be added (onTryAddStatus) or a status: one of its types is a crowd control (Data.statusType flags)
+                var ci:SkillInfo = Std.isOfType(a[0], HitObj) ? env.skill(str((a[0] : HitObj).get("id"))) : (Std.isOfType(a[0], Inst) ? (a[0] : Inst).info : null);
+                return ci != null && GameRules.typesFlag(ci.statusTypes, 2);
             case "getAtb": return a.length > 1 ? atbValue(unitArg(0), str(a[1])) : atbValue(hero, str(a[0]));
             // ---- resources (ent.Unit.addResource; Attribute.X are names)
             case "addAtb": resAdd(unitArg(0), str(a[1]), num(a[2])); return null;
@@ -1838,7 +1932,8 @@ class Sim {
             case "getPartyHeroesWithinRange": return [hero];
             case "countEnemiesInRange": return targetDistance <= num(a[a.length - 1]) ? 1 : 0;
             case "isInRange": return true;
-            case "sortByDistance", "destroyProjectiles", "extendSummonDuration", "setCooldownProgress": return null;
+            case "sortByDistance": return a[0];
+            case "destroyProjectiles", "extendSummonDuration", "setCooldownProgress": return null;
             case "isCrowdControlled", "isCCImmune": return false;
             // ---- maths and time
             case "clamp": return Math.max(num(a[1]), Math.min(num(a[2]), num(a[0])));
