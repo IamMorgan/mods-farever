@@ -42,6 +42,12 @@ class WindowDrag {
         G.set(hit, "width", Math.max(40, width - CLOSE_WIDTH));
     }
 
+    /** Called for every element the game draws; only the dungeon window is moved. */
+    public function place(element:Dynamic):Void {
+        if (!placed || dragging || element != bound) return;
+        try G.call("h2d.Object", "setPosition", element, [placedX, placedY]) catch (_:Dynamic) {}
+    }
+
     function bind(screen:Dynamic):Void {
         bound = screen;
         hit = null;
