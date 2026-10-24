@@ -57,10 +57,7 @@ class DpfMod {
     /** The finder is out of the way until the character is in the world. */
     static var active = false;
     static var heroSeenAt = -1.0;
-    static var noWindowSince = -1.0;
     static inline var ACTIVATE_DELAY = 3.0;
-    /** A search whose window has been closed this long is given up. */
-    static inline var WINDOW_GRACE = 1.5;
 
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
@@ -87,7 +84,6 @@ class DpfMod {
         }
 
         session.update(now);
-        watchWindow(now);
         var status = switch session.mode() { case Idle: 0; case Searching: 1; case Party: 2; };
         var scale = Math.max(0.5, Math.min(2.0, config.buttonScalePercent / 100));
         button.update(config.showButton, scale, config.unpinned, status, now);
@@ -101,16 +97,18 @@ class DpfMod {
         try crowns.update(party, now) catch (_:Dynamic) {}
     }
 
-    /** The search button lives in the dungeon window: closing the window ends the search. */
-    static function watchWindow(now:Float):Void {
-        if (session.mode() != Searching || DungeonScreens.find() != null) { noWindowSince = -1; return; }
-        if (noWindowSince < 0) noWindowSince = now;
-        else if (now - noWindowSince > WINDOW_GRACE) { noWindowSince = -1; session.cancel(); }
-    }
-
     // ---- the windows ----
 
     static function toggleList():Void {
+        // A search runs: the button brings back the window of its dungeon (closing the window does not end the search).
+        if (session.mode() == Searching && session.activityId != "") {
+            list.hide();
+            var open = DungeonScreens.find();
+            if (open != null && DungeonScreens.activityOf(open) == session.activityId) return;
+            if (open != null) DungeonScreens.close(open);
+            DungeonScreens.open(party, session.activityId, () -> {}, () -> {});
+            return;
+        }
         if (list.isOpen()) { list.hide(); return; }
         var now = haxe.Timer.stamp();
         if (dungeons == null || now - dungeonsAt > 30) {
