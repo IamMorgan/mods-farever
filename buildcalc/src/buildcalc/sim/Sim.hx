@@ -397,6 +397,12 @@ class Status extends Inst {
     public var instigator:Unit;
     public var source:Inst;
     public var stacks = 1;
+    /**
+     * A status with no stack limit holds an amount of damage (Warrior_Hemorrhage_Status: "x% of the damage dealt over its duration"):
+     * every application adds to the pool, every tick pays `payFrac` of it (-1: not a tick of a pool).
+     */
+    public var pool = 0.0;
+    public var payFrac = -1.0;
     public var endTime = 0.0;
     public var start = 0.0;
     public var removed = false;
@@ -458,7 +464,7 @@ class HitObj extends DynObj {
         var v = fields.get(name);
         if (v == null && !fields.exists(name)) {
             switch (name) {
-                case "dmgMult", "healMult": return 1.0;
+                case "dmgMult", "healMult", "physicalDmgMult", "magicDmgMult": return 1.0;
                 case "dmgAdd", "critChance", "magicArmorIgnore", "armorIgnore", "threatMultiplier", "amount", "totalHits", "block": return 0.0;
                 default:
             }
@@ -1106,7 +1112,13 @@ class Sim {
         var c = newCtx(inst);
         ctx = c;
         dispatchUnit(hero, "onUseSkill", [c], null);
-        inst.fire("onStart", []);
+        inst.fire("onStart", [c]);
+        // st.skill.Skill.start: BaseSkill.start (onStart), then tryConsumeCharge: onPreSkillProc first (the mage's spark is paid
+        // there), then onProc and onSkillProc. The steps hit in the frames after: what these scripts put on the cast's context
+        // (ctx.dmgMult += …) is there when they do
+        dispatchUnit(hero, "onPreSkillProc", [c], null);
+        inst.fire("onProc", [c]);
+        dispatchUnit(hero, "onSkillProc", [c], null);
         for (s in inst.info.steps) if (inst.info.stepActive(s, inst.rank, inst.runes)) {
             if (s.on == "Start") runStep(inst, s, null, c);
             if (s.on == "CastEnd" || s.on == "Finish" || s.on == "StepEnd") { var st = s; at(time + dur, () -> runStep(inst, st, null, c)); }
@@ -1115,10 +1127,6 @@ class Sim {
         var st = inst;
         at(time + Math.max(0.01, dur), () -> st.fire("onStop", [c]));
         ctx = c;
-        // st.skill.Skill: onPreSkillProc first (the mage's spark is paid there), then onProc and onSkillProc
-        dispatchUnit(hero, "onPreSkillProc", [c], null);
-        inst.fire("onProc", [c]);
-        dispatchUnit(hero, "onSkillProc", [c], null);
     }
 
     /** One step of a skill: its effects on its targets (loops: every tick), statuses, then the steps that follow its hits. */
@@ -1222,6 +1230,27 @@ class Sim {
             });
         }
         if (s.effects.length == 0 && s.type != "Area" && s.type != "EffectTarget" && s.type != "Mono") return;
+        // the loop of a status that lasts as long as the status (step duration -1) ticks for as long as the status is there, also
+        // after it was refreshed (st.skill.SkillStep.applyTicks runs while the step runs); a pool of damage pays out over it
+        if (tick > 0 && inst.isStatus() && !s.spread && s.effects.length > 0 && inst.info.maxStacks >= 1000000 && inst.info.value(s.duration, inst.rank, inst.runes, 0) < 0) {
+            var st:Status = cast inst;
+            var every = Math.max(tick, s.targetCd);
+            var t0 = time;
+            var gen = inst.areaGen;
+            var tickAt:Int->Void = null;
+            tickAt = function(k:Int):Void {
+                if (inst.areaGen != gen || st.removed) return;
+                if (k > 0 && (k + 1) * every > st.endTime - t0 + 1e-9) return;
+                st.payFrac = Math.min(1, every / Math.max(every, st.endTime - time));
+                var share = st.pool * st.payFrac;
+                hitStep(inst, s, targets, c, 1, free);
+                st.pool -= share;
+                st.payFrac = -1;
+                at(t0 + (k + 1) * every, () -> tickAt(k + 1));
+            };
+            at(time, () -> tickAt(0));
+            return;
+        }
         if (tick > 0 && dur > 0) {
             var n = Std.int(Math.max(1, Math.floor(dur / Math.max(tick, s.targetCd))));
             var every = Math.max(tick, s.targetCd);
@@ -1340,8 +1369,13 @@ class Sim {
         var stats = statsNow();
         var base = env.effectBase(inst, e, stats);
         if (e.dynVal > 0 && e.scaling.length == 0 && base == 0) base = inst.dyn[e.dynVal];
-        // a status with no stack limit holds an amount (Warrior_Hemorrhage_Status: the stacks are the damage it deals each tick)
-        if (inst.isStatus() && inst.info.maxStacks >= 1000000) base *= (cast inst : Status).stacks;
+        // a status with no stack limit holds an amount (Warrior_Hemorrhage_Status): a tick pays its share of the pool
+        var pooled = false;
+        if (inst.isStatus() && inst.info.maxStacks >= 1000000) {
+            var ps:Status = cast inst;
+            if (ps.payFrac >= 0) { base *= ps.pool * ps.payFrac; pooled = true; }
+            else base *= ps.stacks;
+        }
         base /= split;
         var hit = newHit(inst, s, target, c, attacker);
         if (inst.proxy != null) hit.set("instigatorUnit", inst.proxy);
@@ -1351,9 +1385,21 @@ class Sim {
         var dot = inst.isStatus() && inst.info.dotHot;
         hit.set("critChance", dot ? 0.0 : stats.get("CritChance"));
         hit.set("critDmgMult", stats.get("CritDamage"));
-        // a multiplier the script put on the step's context (playStep returns it: ctx.dmgMult = …)
-        var stepMult = Std.isOfType(c, HitObj) && (c : HitObj).fields.exists("stepMult") ? num((c : HitObj).get("dmgMult")) : 1.0;
+        // what the scripts put on the context of the cast (ctx.dmgMult += … in onUseSkill, onStart, onProc, onSkillProc) or of a step the
+        // script played (playStep returns it: ctx.dmgMult = …): the multipliers of the damage, its kind, the heal, the crit chance. Only
+        // for the skill's own hits: a status started during the cast has its own context in the game
+        var stepMult = 1.0, ctxCrit = 0.0;
+        if (Std.isOfType(c, HitObj) && (c : HitObj).get("skill") == inst) {
+            var co:HitObj = c;
+            stepMult = num(co.get("dmgMult"));
+            if (e.kind == "Damage") {
+                if (e.physical) stepMult *= num(co.get("physicalDmgMult"));
+                else if (Affinity.isMagic(e.affinity)) stepMult *= num(co.get("magicDmgMult"));
+            } else if (e.kind == "Heal") stepMult *= num(co.get("healMult"));
+            ctxCrit = num(co.get("critChance"));
+        }
         hit.set("dmgMult", stepMult);
+        if (ctxCrit != 0 && !dot) hit.set("critChance", num(hit.get("critChance")) + ctxCrit);
         var heal = e.kind != "Damage";
         if (!heal && inst.proxy != null) {
             // a summon's hit: its own skill hears it, the owner's skills hear it as a proxy damage
@@ -1394,7 +1440,7 @@ class Sim {
                 ccAdd: ccHit - stats.get("CritChance"), cdAdd: cdHit - stats.get("CritDamage"), crit: critOk,
                 ignore: Math.min(1, num(hit.get(e.physical ? "armorIgnore" : "magicArmorIgnore"))), kind: e.kind == "Damage" ? 0 : (e.kind == "Heal" ? 1 : 2),
                 self: target == hero, ally: s.type != "SelfEffect" && (s.hitFilter == 0 || (s.hitFilter & 2) != 0),
-                buffs: buffIndex, tbuffs: heal ? 0 : targetBuffs(target), dyn: e.dynVal > 0 && e.scaling.length == 0, amount: expected});
+                buffs: buffIndex, tbuffs: heal ? 0 : targetBuffs(target), dyn: pooled || (e.dynVal > 0 && e.scaling.length == 0), amount: expected});
         var id = inst.info.id;
         if (!heal) damage.set(id, (damage.exists(id) ? damage.get(id) : 0) + amount);
         else if (target == hero && e.kind == "Shield") {
@@ -1447,6 +1493,7 @@ class Sim {
             s.start = time;
             target.statuses.push(s);
         } else s.stacks = Std.int(Math.min(info.maxStacks, s.stacks + Math.max(1, stacks)));
+        if (info.maxStacks >= 1000000) s.pool += Math.max(1, stacks);
         s.endTime = dur > 0 ? time + dur : Math.POSITIVE_INFINITY;
         if (target == hero) statsDirty = true;
         var st = s;
@@ -1625,7 +1672,8 @@ class Sim {
             case "setStatus":
                 var u = unitArg(0);
                 if (u == null) return null;
-                var n = Std.int(num(a[2]));
+                // script.SkillScript.setStatus(unit, status, ?stacks): without the count it is one (the Chaincast talent, Heartsteel)
+                var n = a.length > 2 && a[2] != null ? Std.int(num(a[2])) : 1;
                 var s = findStatus(u, str(a[1]), null);
                 if (n <= 0) { if (s != null) removeStatus(s); return null; }
                 if (s == null) s = applyStatus(u, str(a[1]), inst, 1);
