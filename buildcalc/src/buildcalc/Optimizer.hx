@@ -1537,7 +1537,7 @@ class Prefilter implements Task {
             }
             if (ci < list.length) {
                 var c = list[ci++];
-                if ((s == 0 || s == 1) && base.items.get(1 - s) != null && base.items.get(1 - s).id == c.id) return false;
+                if (s == 1 && base != null && base.items.get(0) != null && base.items.get(0).id == c.id) return false;
                 var trial = Optimizer.copy(s == 0 ? o.canon : (s == Items.OFFHAND ? baseOH : base));
                 // a created item takes over the infusion of the worn item it replaces (the set is not broken: see place)
                 var was = trial.items.get(s);
