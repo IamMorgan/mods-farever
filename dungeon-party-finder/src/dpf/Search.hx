@@ -47,8 +47,8 @@ enum SearchState {
 /**
  * The matchmaking itself, free of the game: everyone with the same key meets in one platform lobby. The lobby's owner is the
  * leader, and the oldest lobby wins: whoever finds nothing creates a lobby, a younger lobby's owner moves into an older one,
- * so the earliest searcher ends up leading. When the lobby is full (or has enough players and has not changed for a while)
- * the leader invites the others with the game's own group invitation. Whoever accepts sees the party form and leaves the
+ * so the earliest searcher ends up leading. As soon as a second searcher is in the lobby the leader invites everyone
+ * there with the game's own group invitation, and goes on inviting whoever arrives later. Whoever accepts sees the party form and leaves the
  * lobby; whoever declines or lets the invitation lapse is set aside and the leader keeps looking: the next searcher to
  * arrive in the lobby is invited in their place, until the party is full.
  */
@@ -254,7 +254,7 @@ class Search {
 
         var open = peers.filter(p -> !rejected.exists(p.uid));
         var n = open.length;
-        if (n >= 2 && (n >= maxPlayers || (n >= minPlayers && now - lastChange >= SETTLE))) { invite(open, self); return; }
+        if (n >= 2) { invite(open, self); return; }
 
         if (!mergePending && now >= nextMerge) {
             nextMerge = now + MERGE_EVERY;

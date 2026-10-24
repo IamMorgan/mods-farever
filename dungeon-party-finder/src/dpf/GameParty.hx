@@ -71,10 +71,17 @@ class GameParty implements PartyApi {
 
     // ---- PartyApi ----
 
+    /** The player object owns the whispers (the game's own invite buttons reach them as `player.whispers`); the app's `me` is the fallback. */
+    function whispers():Dynamic {
+        var player = G.field(hero(), "player");
+        var w = player == null ? null : G.field(player, "whispers");
+        return w != null ? w : G.field(me(), "whispers");
+    }
+
     public function inviteUid(uid:String):Void {
-        var whispers = G.field(me(), "whispers");
-        if (whispers == null) return;
-        G.call("st.player.Whispers", "sendInviteGroup", whispers, [uid]);
+        var w = whispers();
+        if (w == null) { trace("[DPF] no whispers to invite " + uid); return; }
+        try G.call("st.player.Whispers", "sendInviteGroup", w, [uid]) catch (error:Dynamic) trace("[DPF] invite of " + uid + " failed: " + Std.string(error));
     }
 
     public function groupUids():Array<String> {
