@@ -387,6 +387,8 @@ class Model {
      * The infusion bonus attribute of the item in this slot: the one chosen for it; a real item infused again keeps its
      * own attribute, or takes the first one if it had none (the player picks it when infusing).
      */
+    public static inline var COUNT_BONUS = false;
+
     public function bonusOf(b:Build, slot:Int, c:Candidate):String {
         if (b.bonus.exists(slot) && b.bonus.get(slot) != null) return b.bonus.get(slot);
         if (!c.real) return null;
@@ -398,6 +400,9 @@ class Model {
      * item's only when the build infuses it again (its own bonus is already in its affixes, `sums` leaves it out then).
      */
     function addedBonus(b:Build, slot:Int, c:Candidate):Affix {
+        // the infusion bonus attribute works only on items of the infusion's faction: the choice of infusions must rest on
+        // the effects of the sets, not on factions (the player's rule), so the attribute adds nothing to the value
+        if (!COUNT_BONUS) return null;
         if (!c.infusable) return null;
         if (c.real && !reinfused(b, slot, c)) return null;
         var inf = b.infusion.get(slot);
