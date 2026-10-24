@@ -29,6 +29,8 @@ interface PartyApi {
     function inviteUid(uid:String):Void;
     /** Account ids of everyone in my current group (me included; a lone player is a group of one). */
     function groupUids():Array<String>;
+    /** Whether I lead my group (true for a lone player too). */
+    function isGroupLeader():Bool;
 }
 
 enum SearchState {
@@ -111,7 +113,7 @@ class Search {
         seen = new Map();
         invitedAt = new Map();
         rejected = new Map();
-        if (me == null || me.uid == "" || party.groupUids().length > 1) { state = Failed("party"); return; }
+        if (me == null || me.uid == "" || party.groupUids().length > 1 && !party.isGroupLeader()) { state = Failed("party"); return; }
         begin();
     }
 
@@ -249,7 +251,8 @@ class Search {
         }
 
         if (peers.length != count) { count = peers.length; lastChange = now; }
-        leader = self != "" && lobbies.ownerId() == self;
+        // The leader of a group that is still short of players invites from whatever lobby it is in.
+        leader = self != "" && (lobbies.ownerId() == self || (group.length > 1 && party.isGroupLeader()));
         if (!leader) return;
 
         var open = peers.filter(p -> !rejected.exists(p.uid));

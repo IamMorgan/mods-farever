@@ -55,6 +55,8 @@ class GameParty implements PartyApi {
         return l != null && l == me();
     }
 
+    public function isGroupLeader():Bool return groupSize() < 2 || isLeader();
+
     public function groupSize():Int return players().length;
 
     public function playerName(player:Dynamic):String return textOf(G.field(player, "name"));
