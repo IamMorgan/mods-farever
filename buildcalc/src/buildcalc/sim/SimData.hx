@@ -47,6 +47,8 @@ class SkillInfo {
     public var reach = 0.0;
     public var dotHot = false;
     public var script:Script = null;
+    /** The script's source (to read which skills it names). */
+    public var scriptText = "";
     public var scriptError = "";
     var rec:Rec;
     var varCache = new Map<String, Null<Float>>();
@@ -77,6 +79,8 @@ class SkillInfo {
             var t = ref(rec.get(rec.at(types, i), "type"));
             if (t != "") statusTypes.push(t);
         }
+        // HSkill.isDoT / isHoT: a status type flagged periodic damage or healing
+        if (!dotHot && GameRules.typesFlag(statusTypes, 9)) dotHot = true;
         var ms0 = rec.get(rec.get(props, "status"), "maxStacks");
         if (ms0 != null && num(ms0) > 1) maxStacks = Std.int(num(ms0));
         else if (ms0 != null && num(ms0) < 0) maxStacks = 1000000; // -1: no limit
@@ -151,11 +155,12 @@ class SkillInfo {
                 maxRank: intOr(rec.get(c, "maxRank"), 999), equalRank: intOr(rec.get(c, "equalRank"), -1), delay: rec.get(s, "delay"),
                 duration: rec.get(s, "duration"), tick: rec.get(loop, "tick"), targetCd: num(rec.get(area, "targetCooldown")),
                 spread: (Std.int(num(rec.get(loop, "flags"))) & 1) != 0, hitFilter: Std.int(num(area != null ? rec.get(area, "hitFilter") : rec.get(rec.get(p, "projectile"), "hitFilter"))),
-                ignoreMain: rec.get(area, "ignoreMainTarget") == true, presence: rec.get(area, "detectPresence") == true, status: ref(rec.get(status, "ref")), statusSelf: target != null && num(target) == 0,
+                ignoreMain: rec.get(area, "ignoreMainTarget") == true, presence: rec.get(area, "detectPresence") == true, status: ref(rec.get(status, "ref")), statusSelf: target != null && (num(target) == 0 || num(target) == 2), // Self; Group (the party: Battle Shout) holds the hero
                 statusStacks: Std.int(num(rec.get(status, "stacks"))), condStep: ref(rec.get(c, "step")), travel: num(area != null ? rec.get(area, "travelTime") : rec.get(rec.get(p, "pickup"), "travelTime")), alignment: intOr(rec.get(c, "alignment"), -1), globalId: ref(rec.get(rec.get(p, "stepGlobal"), "globalId")),
                 summon: ref(rec.get(rec.get(p, "summon"), "unit")), summonCount: Std.int(Math.max(1, num(rec.get(rec.get(p, "summon"), "count")))), effects: effects});
         }
         var src = str(rec.get(inf, "script"));
+        scriptText = src;
         if (src != "") try script = Script.parse(src) catch (e:Dynamic) scriptError = Std.string(e);
     }
 
@@ -311,6 +316,17 @@ class GameRules {
     public static function readStatusType(rec:Rec, line:Dynamic):Void {
         var p = id(rec, rec.get(line, "parent"));
         if (p != "") statusParents.set(id(rec, rec.get(line, "id")), p);
+        var fl = rec.get(line, "flags");
+        if (fl != null) statusFlags.set(id(rec, rec.get(line, "id")), Std.int(Std.parseFloat(Std.string(fl))));
+    }
+
+    /** The flags of the status types (Data.statusType.flags: 1 periodic damage, 2 crowd control, 4 hard crowd control, 8 periodic healing). */
+    public static var statusFlags = new Map<String, Int>();
+
+    /** Some of the status types has one of the flags (HSkill.hasStatusFlag). */
+    public static function typesFlag(types:Array<String>, flags:Int):Bool {
+        for (t in types) if (statusFlags.exists(t) && (statusFlags.get(t) & flags) != 0) return true;
+        return false;
     }
 
     /** One line of Data.constant: a number (v.float / v.int) or a list of numbers (v.floats[].v). */
