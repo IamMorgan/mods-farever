@@ -46,7 +46,8 @@ Other players need the mod too: it finds only players who use it.
 - The dungeon window is the game's own; the mod adds a **Search** button under **Start**, which is off while a search runs. The turning circle of the search now turns.
 - A declined or ignored group invitation is replaced by the next searcher; the search goes on until the group is full.
 - The mod's texts and settings page follow the client's language, whichever of the game's 14 it is. A click on a dungeon opens its window (the group is read from the hero's player, as the game's own dungeon buttons do), the list's scroll bar is the flow's own and shows itself.
-- The DPF button is one of the game's own buttons (as in the Esc menu). The list has a visible scroll bar. Checked in the running game with the helper mod in `selftest/` (it only writes what the UI looks like to a file).
+- The DPF button is one of the game's own buttons (as in the Esc menu). The list has a visible scroll bar.
+- Closing the dungeon window no longer ends the search; the DPF button, while a search runs, opens the window of the searched dungeon again.
 - While a search runs the window keeps its height (the turning circle no longer resizes the bottom of the window), and the mod loads a dungeon's picture again if the game has dropped its texture.
 - The settings "players needed to start" and "write a log" are gone.
 - First version: the DPF button, the dungeon list, matching by dungeon, difficulty and level bracket, group invitations and the crown of the group leader.

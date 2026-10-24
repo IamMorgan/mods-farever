@@ -27,6 +27,9 @@ class SearchControl {
     public var stage = "";
     var angle = 0.0;
     var pictureCheckAt = 0.0;
+    /** False until the window's difficulty is the one the running search is for (a window opened again starts at the default). */
+    var difficultySynced = false;
+    var nextSync = 0.0;
     var buttonText = "";
     var statusText = "";
 
@@ -45,6 +48,8 @@ class SearchControl {
         actions = status = button = spin = null;
         buttonText = statusText = "";
         pictureCheckAt = 0.0;
+        difficultySynced = false;
+        nextSync = 0.0;
     }
 
     /**
@@ -163,7 +168,13 @@ class SearchControl {
             }
             // A different difficulty picked in the window: look for that one instead.
             var lobby = DungeonScreens.lobbyOf(screen);
-            if (lobby != null && G.integer(G.field(lobby, "difficulty"), -1) != session.difficulty) {
+            if (lobby != null && !difficultySynced) {
+                if (G.integer(G.field(lobby, "difficulty"), -1) == session.difficulty) difficultySynced = true;
+                else if (haxe.Timer.stamp() >= nextSync) {
+                    nextSync = haxe.Timer.stamp() + 1.0;
+                    G.call("st.player.InstanceLobby", "setDifficulty", lobby, [session.difficulty, null]);
+                }
+            } else if (lobby != null && G.integer(G.field(lobby, "difficulty"), -1) != session.difficulty) {
                 var activity = session.activityId;
                 var difficulty = G.integer(G.field(lobby, "difficulty"));
                 session.cancel();
