@@ -11,6 +11,7 @@ import selftest.GameAccess as G;
 @:build(hlx.runtime.Mod.build())
 class SelfTest {
     static var next = 0.0;
+    static var dumped = false;
     static var lines:Array<String> = [];
 
     static function main():Void {}
@@ -61,9 +62,19 @@ class SelfTest {
     }
 
     static function tree(o:Dynamic, depth:Int):Void {
-        if (depth > 7 || lines.length > 150) return;
+        if (depth > 10 || lines.length > 400) return;
         var info = typeName(o) + " x=" + Std.int(G.number(G.field(o, "x"))) + " y=" + Std.int(G.number(G.field(o, "y"))) + " vis=" + G.field(o, "visible");
         if (G.isA(o, "h2d.Flow")) info += " w=" + G.integer(G.call("h2d.Flow", "get_outerWidth", o)) + " h=" + G.integer(G.call("h2d.Flow", "get_outerHeight", o));
+        if (G.isA(o, "h2d.Mask")) info += " mask=" + G.field(o, "width") + "x" + G.field(o, "height") + " scroll=" + G.field(o, "scrollX") + "," + G.field(o, "scrollY");
+        if (G.isA(o, "h2d.Bitmap")) {
+            var tile = G.field(o, "tile");
+            info += " tile=" + (tile != null);
+            if (tile != null) {
+                info += " " + Std.int(G.number(G.field(tile, "width"))) + "x" + Std.int(G.number(G.field(tile, "height")));
+                var tex = G.field(tile, "innerTex");
+                if (tex != null) info += " tex=" + (try Std.string(G.call("h3d.mat.Texture", "isDisposed", tex)) catch (_:Dynamic) "?");
+            }
+        }
         if (G.isA(o, "h2d.Text")) info += " '" + G.text(G.str(G.field(o, "text"))) + "'";
         lines.push(StringTools.lpad("", " ", depth * 2 + 2) + info);
         for (c in children(o)) tree(c, depth + 1);
@@ -74,6 +85,18 @@ class SelfTest {
         if (now < next) return;
         next = now + 0.5;
         lines = [];
+        if (!dumped) {
+            dumped = true;
+            var out = [];
+            for (entry in G.array(G.staticCall("HActivity", "allFiltered", [null]))) {
+                var inf = G.field(entry, "inf");
+                if (inf == null || G.staticCall("HActivity", "isDungeon", [inf]) != true) continue;
+                out.push(G.text(G.str(G.field(inf, "id"))) + " rift=" + G.staticCall("HActivity", "isRift", [inf]) + " loadingScreen=" + G.str(G.field(G.field(inf, "props"), "loadingScreen")));
+            }
+            sys.io.File.saveContent("hlx/logs/dpf-selftest-activities.txt", out.join("
+") + "
+");
+        }
         var hero = G.field(app, "hero");
         var gui = G.field(app, "gui");
         lines.push("time " + Std.int(now) + " hero=" + (hero != null) + " gui=" + (gui != null));

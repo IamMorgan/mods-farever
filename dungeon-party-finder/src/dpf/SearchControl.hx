@@ -26,6 +26,7 @@ class SearchControl {
     /** The step being run, for the error report when a call into the game fails. */
     public var stage = "";
     var angle = 0.0;
+    var pictureCheckAt = 0.0;
     var buttonText = "";
     var statusText = "";
 
@@ -43,6 +44,32 @@ class SearchControl {
         bound = null;
         actions = status = button = spin = null;
         buttonText = statusText = "";
+        pictureCheckAt = 0.0;
+    }
+
+    /**
+     * The dungeon's picture is loaded by the game when it builds the window. If its texture has been dropped by then (the game
+     * frees textures it has not drawn for a while, which a picture shown once before can be), the window shows an empty frame:
+     * load the picture again.
+     */
+    function keepPicture(screen:Dynamic):Void {
+        var now = haxe.Timer.stamp();
+        if (now < pictureCheckAt) return;
+        pictureCheckAt = now + 0.5;
+        stage = "update: picture";
+        var mask = G.field(screen, "activityThumbnailMask");
+        if (mask == null) return;
+        var inf = G.staticCall("HActivity", "getInf", [DungeonScreens.activityOf(screen)]);
+        var path = inf == null ? null : G.str(G.field(G.field(inf, "props"), "loadingScreen"));
+        if (path == null || path == "") return;
+        for (bitmap in N.children(mask)) {
+            if (!G.isA(bitmap, "h2d.Bitmap")) continue;
+            var tile = G.field(bitmap, "tile");
+            var tex = tile == null ? null : G.field(tile, "innerTex");
+            if (tex != null && G.call("h3d.mat.Texture", "isDisposed", tex) != true) continue;
+            trace("[DPF] the dungeon picture was lost, loading it again: " + path);
+            G.call("h2d.Bitmap", "set_tile", bitmap, [G.call("hxd.res.Any", "toTile", G.staticCall("hxd.Res", "load", [path]))]);
+        }
     }
 
     function bind(screen:Dynamic):Void {
@@ -70,10 +97,12 @@ class SearchControl {
         if (width > 0 && button != null) N.size(button, width);
 
         stage = "bind: spinner";
-        // The circle is one Graphics drawn around its own origin (so turning the object turns the circle), a child of the status
-        // text: a child of the flow itself cannot be taken out of the flow's layout here (that call crashes).
+        // The circle is one Graphics drawn around its own origin (so turning the object turns the circle), a child of the row
+        // taken out of its layout: a child of the status text would count in the text's size, and the row (and so the whole
+        // window) would change its height as the circle turns.
         if (status != null && !TestFlags.has("nospin")) {
-            spin = G.create("h2d.Graphics", [status]);
+            spin = G.create("h2d.Graphics", [actions]);
+            G.call("h2d.FlowProperties", "set_isAbsolute", G.call("h2d.Flow", "getProperties", actions, [spin]), [true]);
             stage = "bind: spinner spokes";
             var g = spin;
             for (i in 0...SPOKES) {
@@ -99,6 +128,7 @@ class SearchControl {
     /** Every frame the game updates the dungeon window `screen`. */
     public function update(screen:Dynamic, dt:Float):Void {
         if (bound != screen || (button != null && G.field(button, "parent") == null)) bind(screen);
+        keepPicture(screen);
         if (button == null) return;
         stage = "update: mode";
         var mode = session.mode();
@@ -124,9 +154,12 @@ class SearchControl {
             N.enable(G.field(screen, "startBtn"), false);
             angle += dt * SPIN_SPEED;
             if (spin != null && status != null) {
-                G.call("h2d.Object", "set_rotation", spin, [angle]);
+                // Only whole spoke steps: the circle then covers exactly the same area in every position, so the row of
+                // controls (which counts the text's children in its size) keeps its height while the circle turns.
+                var step = 2 * Math.PI / SPOKES;
+                G.call("h2d.Object", "set_rotation", spin, [Math.floor(angle / step) * step]);
                 var height = G.number(G.call("h2d.Text", "get_textHeight", status));
-                N.position(spin, -16, height / 2);
+                N.position(spin, G.number(G.field(status, "x")) - 16, G.number(G.field(status, "y")) + height / 2);
             }
             // A different difficulty picked in the window: look for that one instead.
             var lobby = DungeonScreens.lobbyOf(screen);
