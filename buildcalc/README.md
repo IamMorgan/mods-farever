@@ -45,6 +45,12 @@ For manual installation:
 
 ### Changelog
 
+**2026-10-24 (3)**
+- A High priority is no longer given up for lower ones: the build keeps at least 97% of the worn build's value on that axis (a build with 8% less damage was advised for +10% defense and health at Low priority, because by the axes' ranges the sum came out higher). The search also never ends below the worn build by its own score.
+- The model fight is two minutes (was 40 s): slow stacks fill up (Nova's ultimate "Release of Wrath" now fires once, the skill is put in the signature slot by its status), cooldowns of a minute or two are used more than once, and the difference between builds is less noisy.
+- The training dummy is now a pack of foes that fights back: three foes near the hero (the enemy-count conditions hold: Sword Craft passive, Crescent Upgrade, Water Daggers), each foe lives 20 s, dies (kill triggers, "target below X% health" conditions, statuses go with the foe) and is replaced. Foes hit the hero for 12 per level every 3 s (a shield now counts by the damage it takes in, which is enough to fill any shield) and every hit is blocked (block triggers: cooldown resets, buffs for a block).
+- Rogue: Opportunity Strike (a basic attack that applies the poison hits again) is valued.
+
 **2026-10-24 (2)**
 - The worn item's twin (the same item made again, or a copy from the bag, that shows no better in rarity or upgrade level) is no longer a candidate, so a weapon the hero already wears is never offered as "improve".
 - Simulation, found by checking every skill, talent and infusion against its description:

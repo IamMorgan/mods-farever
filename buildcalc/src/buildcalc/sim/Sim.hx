@@ -609,7 +609,41 @@ class Sim {
         stdObj = new DynObj();
         hero = new Unit(this, true);
         dummy = new Unit(this, false);
+        dummy.healthRatio = 1;
         units = [hero, dummy];
+        // the rest of the pack: other foes next to the dummy (they answer the questions about nearby enemies, nothing hits them)
+        for (i in 1...Std.int(Math.max(1, ENEMIES))) { var u = new Unit(this, false); u.healthRatio = 1; pack.push(u); }
+    }
+
+    /** Foes near the hero in the fight (the dummy and its pack): what a script asking for the enemies around hears. */
+    public static var ENEMIES = 3;
+    /** Seconds a foe lives: it dies then and a new one takes its place (kills, low health of the target, statuses gone with the foe). */
+    public static var ENEMY_LIFE = 20.0;
+    var pack:Array<Unit> = [];
+    var enemySince = 0.0;
+    public var kills = 0;
+
+    /** The foe's health runs out with time (no build's damage decides it: every build gets the same kills); dead, a new one comes. */
+    function enemyUpdate():Void {
+        dummy.healthRatio = Math.max(0, 1 - (time - enemySince) / ENEMY_LIFE);
+        for (u in pack) u.healthRatio = dummy.healthRatio;
+        if (dummy.healthRatio > 1e-9) return;
+        var hit = new HitObj();
+        hit.set("target", dummy);
+        hit.set("targetUnit", dummy);
+        hit.set("source", hero);
+        hit.set("sourceUnit", hero);
+        hit.set("instigator", hero);
+        hit.set("amount", 0.0);
+        hit.set("critical", false);
+        hit.set("skillId", "");
+        hit.set("kind", "");
+        kills++;
+        dispatchUnit(hero, "onKill", [hit], null);
+        dispatchUnit(dummy, "onReceiveKill", [hit], null);
+        for (st in dummy.statuses.copy()) removeStatus(st);
+        dummy.healthRatio = 1;
+        enemySince = time;
     }
 
     /**
@@ -1065,17 +1099,19 @@ class Sim {
         tick = function() {
             if (time > seconds) return;
             regenResources(PASSIVE_EVENTS_EVERY);
+            enemyUpdate();
             dispatchAll("onRegUpdate", [PASSIVE_EVENTS_EVERY]);
             dispatchAll("onUpdate", [PASSIVE_EVENTS_EVERY]);
             at(time + PASSIVE_EVENTS_EVERY, tick);
         };
         at(0, tick);
         at(0, act);
-        // the dummy does not fight back: a hit of 1 damage every INCOMING_EVERY seconds wakes what reacts to hits taken
+        // the foes hit the hero: a hit of INCOMING_PER_LEVEL × level every INCOMING_EVERY seconds, each one blocked (what reacts to
+        // hits taken and blocks wakes; shields have something to take in)
         var incoming:Void->Void = null;
         incoming = function() {
             if (time > seconds) return;
-            receiveHit(hero, dummy, 1);
+            receiveHit(hero, dummy, INCOMING_PER_LEVEL * Math.max(1, env.heroLevel()));
             at(time + INCOMING_EVERY, incoming);
         };
         at(INCOMING_EVERY, incoming);
@@ -1114,6 +1150,17 @@ class Sim {
             var r = a.fire("getOverrideSkill", []);
             var o = r == null ? null : instById(hero, str(r));
             if (o != null && o != a && time >= o.cdEnd) { pick = o; break; }
+        }
+        // a status that puts a skill in a slot (GS_Nova_Ultimate_Proc: the ultimate in the signature slot) lets the hero use it at once
+        if (pick == null) for (st in hero.statuses) if (!st.removed && st.info.overrides.length > 0) for (id in st.info.overrides) {
+            var o = instById(hero, id);
+            if (o == null) {
+                var oi = env.skill(id);
+                if (oi == null) continue;
+                o = new Inst(this, oi, st.rank, st.runes, "hero", st.slot, st.item, hero);
+                hero.skills.push(o);
+            }
+            if (time >= o.cdEnd) { pick = o; break; }
         }
         if (pick == null) for (a in actives) {
             var ready = usesCharges(a) ? a.charges > 0 && time >= a.cdEnd : time >= a.cdEnd;
@@ -1614,6 +1661,8 @@ class Sim {
         o.set("status", s);
         o.set("target", target);
         o.set("kind", s.info.id);
+        // the skill whose hit brings the status (the cast in progress)
+        o.set("fromSkill", ctx != null ? ctx.get("skill") : null);
         return o;
     }
 
@@ -1632,11 +1681,12 @@ class Sim {
 
     /** Calls `fn` on every skill of the unit and every status on it (except `skip`). */
     /** Seconds between the 1-damage hits the hero takes (see run). */
-    public static var INCOMING_EVERY = 1.0;
+    public static var INCOMING_EVERY = 3.0;
+    /** What a hit of the foes takes, per level of the hero: big enough for every shield to be filled (a shield counts by what it takes in). */
+    public static var INCOMING_PER_LEVEL = 12.0;
 
     /** A plain hit `target` takes from `source` (not a skill of the build: it adds no damage or heal of its own). */
     function receiveHit(target:Unit, source:Unit, amount:Float):Void {
-        if (target == hero) absorb(amount);
         var hit = new HitObj();
         hit.set("target", target);
         hit.set("targetUnit", target);
@@ -1652,8 +1702,14 @@ class Sim {
         hit.set("skillId", "");
         hit.set("kind", "");
         dispatchUnit(target, "onReceiveDamageEval", [hit], null);
+        if (target == hero) absorb(amount * Math.max(0, num(hit.get("dmgMult"))));
         dispatchUnit(source, "onInflictDamage", [hit], null);
         dispatchUnit(target, "onReceiveDamage", [hit], null);
+        // the hero blocks the attack (GameBeat.AttackBlock: shields' cooldowns, buffs for a block)
+        if (target == hero) {
+            hit.set("block", 0.0);
+            dispatchUnit(hero, "onGameBeat", [Names.of("AttackBlock"), hit], null);
+        }
     }
 
     public function dispatchUnit(u:Unit, fn:String, args:Array<Dynamic>, skip:Inst):Void {
@@ -1745,6 +1801,26 @@ class Sim {
                 var src = inst;
                 at(time, () -> runStep(src, s, target, sc, true));
                 return sc;
+            case "getDamageStepIndex":
+                // the index of the skill's first step that deals damage (-1: none)
+                var sk:Inst = Std.isOfType(a[0], Inst) ? a[0] : null;
+                if (sk != null) for (st in sk.info.steps) for (e in st.effects) if (e.kind == "Damage") return st.index;
+                return -1;
+            case "playStepIndexOnSkill":
+                // the step `index` of another skill played on a target (the rogue's basic attack hitting again)
+                var sk:Inst = Std.isOfType(a[1], Inst) ? a[1] : null;
+                var idx = Std.int(num(a[0]));
+                if (sk == null || idx < 0 || idx >= sk.info.steps.length) return null;
+                var sc = new HitObj();
+                sc.set("stepMult", true);
+                sc.set("dmgMult", 1.0);
+                sc.set("skill", sk);
+                sc.set("aimTarget", dummy);
+                sc.set("target", dummy);
+                var tg = unitArg(2), stp = sk.info.steps[idx];
+                at(time, () -> runStep(sk, stp, tg, sc, true));
+                return sc;
+            case "procLimit": return true;
             case "playAreaStepFromPt":
                 // script.SkillScript.playAreaStepFromPt(step, from, ctx, to): the area flies from `from` and lands at `to`
                 // (area.travelTime later); the points scripts pass are units' positions, at a dummy: the target's
@@ -1829,7 +1905,7 @@ class Sim {
                 dispatchUnit(hero, "onPrayerCharged", [inst], null);
                 return null;
             case "getAllyUnitsWithinRange", "getAllies": return [hero];
-            case "getEnemiesInRange", "getEnemies": return [dummy];
+            case "getEnemiesInRange", "getEnemies": return [dummy].concat(pack);
             case "isHittable": return true;
             case "isAlly": var u = unitArg(0); return u != null && u.team == inst.owner.team;
             case "isEnemy": var u = unitArg(0); return u != null && u.team != inst.owner.team;
@@ -1930,7 +2006,7 @@ class Sim {
                 return o;
             // ---- units around (one dummy; the hero's side at one place)
             case "getPartyHeroesWithinRange": return [hero];
-            case "countEnemiesInRange": return targetDistance <= num(a[a.length - 1]) ? 1 : 0;
+            case "countEnemiesInRange": return targetDistance <= num(a[a.length - 1]) ? 1 + pack.length : 0;
             case "isInRange": return true;
             case "sortByDistance": return a[0];
             case "destroyProjectiles", "extendSummonDuration", "setCooldownProgress": return null;
