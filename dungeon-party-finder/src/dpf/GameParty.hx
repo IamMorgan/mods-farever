@@ -11,7 +11,12 @@ class GameParty implements PartyApi {
 
     public function me():Dynamic return G.field(app, "me");
     public function hero():Dynamic return G.field(app, "hero");
-    public function group():Dynamic return G.field(me(), "group");
+    /** The group of the hero's player (the way the game's own dungeon buttons reach it); the app's `me` is the fallback. */
+    public function group():Dynamic {
+        var player = G.field(hero(), "player");
+        var g = player == null ? null : G.field(player, "group");
+        return g != null ? g : G.field(me(), "group");
+    }
 
     public function uid():String return textOf(G.field(me(), "uid"));
     public function name():String return textOf(G.field(me(), "name"));

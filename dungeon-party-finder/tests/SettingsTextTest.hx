@@ -8,26 +8,45 @@ class SettingsTextTest {
         Sys.println((ok ? "ok   " : "FAIL ") + name + (!ok && info != null ? ": " + info : ""));
     }
 
-    static function keys(russian:Bool):String
-        return [for (c in (SettingsText.build(russian).configs : Array<Dynamic>)) Std.string(Reflect.field(c, "type")) + ":" + Std.string(Reflect.field(c, "key"))].join(",");
+    static function keys(code:String):String {
+        Locale.setLanguage(code);
+        return [for (c in (SettingsText.build().configs : Array<Dynamic>)) Std.string(Reflect.field(c, "type")) + ":" + Std.string(Reflect.field(c, "key"))].join(",");
+    }
+
+    static function texts():Array<String>
+        return [Locale.listTitle(), Locale.listEmpty(), Locale.level(5), Locale.search(), Locale.searching(), Locale.cancel(), Locale.inParty(),
+            Locale.platformDown(), Locale.noHero(), Locale.partyLost(), Locale.f("showButton"), Locale.f("unpinned"), Locale.f("buttonScale")];
 
     static function main():Void {
-        check("both languages have the same settings in the same order", keys(false) == keys(true));
-        check("the unpin checkbox is there", keys(false).indexOf("checkbox:unpinned") >= 0);
-        check("russian page in russian", SettingsText.json(true).indexOf("Открепить") >= 0);
-        check("english page has no russian", ~/[А-Яа-я]/.match(SettingsText.json(false)) == false);
-        check("ru, ru-RU and RU are russian", Locale.isRussian("ru") && Locale.isRussian("ru-RU") && Locale.isRussian("RU"));
-        check("en and empty are not", !Locale.isRussian("en") && !Locale.isRussian("") && !Locale.isRussian(null));
+        var english = keys("en");
+        var all = true;
+        for (code in Locale.LANGS) all = all && keys(code) == english;
+        check("every language has the same settings in the same order", all);
+        check("the unpin checkbox is there", english.indexOf("checkbox:unpinned") >= 0);
+        check("no player-count or log setting", english.indexOf("minPlayers") < 0 && english.indexOf("debugLog") < 0);
 
-        var english = [Locale.listTitle(false), Locale.listEmpty(false), Locale.level(false, 5), Locale.search(false), Locale.searching(false),
-            Locale.cancel(false), Locale.inParty(false), Locale.platformDown(false), Locale.noHero(false), Locale.partyLost(false)];
-        var russian = [Locale.listTitle(true), Locale.listEmpty(true), Locale.level(true, 5), Locale.search(true), Locale.searching(true),
-            Locale.cancel(true), Locale.inParty(true), Locale.platformDown(true), Locale.noHero(true), Locale.partyLost(true)];
+        Locale.setLanguage("ru");
+        check("russian page in russian", SettingsText.json().indexOf("Открепить") >= 0);
+        check("ru, ru-RU, RU and ru_RU are russian", ["ru", "ru-RU", "RU", "ru_RU"].map(c -> Locale.setLanguage(c)).join(",") == "ru,ru,ru,ru");
+        check("pt and pt-BR are pt-BR, zh-TW stays zh-TW, zh is zh",
+            [Locale.setLanguage("pt"), Locale.setLanguage("pt-BR"), Locale.setLanguage("zh-TW"), Locale.setLanguage("zh-CN"), Locale.setLanguage("zh")].join(",") == "pt-BR,pt-BR,zh-TW,zh,zh");
+        check("unknown, empty and null are english", [Locale.setLanguage("xx"), Locale.setLanguage(""), Locale.setLanguage(null)].join(",") == "en,en,en");
+
+        Locale.setLanguage("en");
+        var base = texts();
         var cyrillic = ~/[А-Яа-я]/;
-        check("english texts are english", english.filter(s -> cyrillic.match(s)).length == 0);
-        check("russian texts are russian", russian.filter(s -> !cyrillic.match(s)).length == 0, russian.filter(s -> !cyrillic.match(s)).join("|"));
-        check("search/cancel as the spec names them", Locale.search(true) == "Поиск" && Locale.searching(true) == "Поиск..." && Locale.cancel(true) == "Отмена");
-        check("no player-count or log setting", keys(false).indexOf("minPlayers") < 0 && keys(false).indexOf("debugLog") < 0);
+        check("english texts are english", base.filter(s -> cyrillic.match(s)).length == 0);
+        check("english page has no russian", !cyrillic.match(SettingsText.json()));
+        for (code in Locale.LANGS) {
+            Locale.setLanguage(code);
+            var own = texts();
+            check(code + ": every text is there", own.filter(s -> s == "").length == 0 && own.length == base.length);
+        }
+        Locale.setLanguage("ru");
+        check("russian texts are russian", texts().filter(s -> !cyrillic.match(s)).length == 0, texts().filter(s -> !cyrillic.match(s)).join("|"));
+        check("search/cancel as the spec names them", Locale.search() == "Поиск" && Locale.searching() == "Поиск..." && Locale.cancel() == "Отмена");
+        check("level fills the number", Locale.level(7) == "Ур. 7");
+        Locale.setLanguage("en");
 
         Sys.println(failures == 0 ? "ALL PASSED" : failures + " FAILED");
         Sys.exit(failures == 0 ? 0 : 1);

@@ -59,19 +59,20 @@ class DungeonScreens {
 
     /**
      * Asks the group for the dungeon's lobby (the leader makes it, the others join it) and shows the window once the game
-     * has answered. `failed` gets the reason when the game refuses.
+     * has answered; `ready` runs just before the window is shown, `failed` when it cannot be.
      */
-    public static function open(party:GameParty, activityId:String, failed:Void -> Void):Void {
+    public static function open(party:GameParty, activityId:String, ready:Void -> Void, failed:Void -> Void):Void {
         var group = party.group();
-        if (group == null) { failed(); return; }
+        if (group == null) { trace("[DPF] no group to ask for the lobby of " + activityId); failed(); return; }
         try {
-            G.call("st.Group", "tryCreateInstanceLobby", group, [activityId, (_:String, ok:Bool) -> {
+            G.call("st.Group", "tryCreateInstanceLobby", group, [activityId, (reason:String, ok:Bool) -> {
                 try {
                     var lobby = groupLobby(party, activityId);
-                    if (lobby == null) { failed(); return; }
+                    if (lobby == null) { trace("[DPF] no lobby for " + activityId + " (" + Std.string(reason) + ", " + ok + ")"); failed(); return; }
+                    ready();
                     show(lobby);
-                } catch (_:Dynamic) failed();
+                } catch (error:Dynamic) { trace("[DPF] opening the dungeon window failed: " + Std.string(error)); failed(); }
             }]);
-        } catch (_:Dynamic) failed();
+        } catch (error:Dynamic) { trace("[DPF] asking for the lobby failed: " + Std.string(error)); failed(); }
     }
 }
