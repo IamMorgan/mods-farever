@@ -79,7 +79,7 @@ class MpLobbyApi implements LobbyApi {
                             id: userId(l),
                             created: G.number(G.field(data, "ts")),
                             members: G.array(G.callVirtual(l, "getMembers")).length,
-                            max: max < 1 || max > 4 ? 4 : max,
+                            max: max < 1 || max > Search.LOBBY_CAP ? Search.LOBBY_CAP : max,
                             handle: l
                         });
                     }

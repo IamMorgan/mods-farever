@@ -216,16 +216,33 @@ class SearchTest {
             check("nobody accepted: the leader is searching again", a.search.state == InLobby || a.search.state == Listing || a.search.state == Creating || a.search.state == Joining, Std.string(a.search.state));
             check("the one who declined is still searching", b.search.isActive());
         }
-        // one of two invited accepts, one does not: the party goes on with the one who did
+        // one of two invited accepts, one does not: the leader keeps looking and a newcomer takes the free place
         {
             var w = new FakeWorld();
-            var a = player(w, 1, 3), b = player(w, 2, 3), c = player(w, 3, 3);
+            var a = player(w, 1, 3), b = player(w, 2, 3), c = player(w, 3, 3), d = player(w, 4, 3);
             c.api.autoAccept = false;
             var t = 0.0;
             for (p in [a, b, c]) { p.search.start(KEY, p.api.peer, t); t = run(w, [a, b, c], t, 1); }
-            run(w, [a, b, c], t, 12 + Search.INVITE_TIMEOUT);
-            check("the party goes on with who accepted", a.search.state == Grouped && b.search.state == Grouped && w.groupOf("acc1").length == 2, states([a, b, c]));
+            t = run(w, [a, b, c], t, 12 + Search.INVITE_TIMEOUT);
+            check("the one who accepted waits in the party", b.search.state == Grouped && w.groupOf("acc1").length == 2, states([a, b, c]));
+            check("the leader keeps looking for a replacement", a.search.isActive() && a.search.state != Grouped, states([a, b, c]));
             check("the decliner stays in the search", c.search.isActive());
+            d.search.start(KEY, d.api.peer, t);
+            run(w, [a, b, c, d], t, 15);
+            check("the newcomer is invited and the party is whole", a.search.state == Grouped && d.search.state == Grouped && w.groupOf("acc1").length == 3 && w.groupOf("acc1").indexOf("acc3") < 0, states([a, b, c, d]));
+        }
+        // the decliner is not asked a second time
+        {
+            var w = new FakeWorld();
+            var a = player(w, 1, 2), b = player(w, 2, 2);
+            b.api.autoAccept = false;
+            a.search.start(KEY, a.api.peer, 0);
+            b.search.start(KEY, b.api.peer, 0);
+            run(w, [a, b], 0, 12 + Search.INVITE_TIMEOUT);
+            var sent = 0;
+            w.invites = [];
+            run(w, [a, b], 60, 30, false);
+            check("no second invitation to the decliner", w.invites.length == 0, Std.string(w.invites.length));
         }
         // a failing join is retried
         {
@@ -272,19 +289,6 @@ class SearchTest {
             run(w, [a, b], 16, 15);
             check("and invited once the data is there", a.search.state == Grouped, Std.string(a.search.state));
         }
-        // a late accepter of a stale invitation is pulled out of the search
-        {
-            var w = new FakeWorld();
-            var a = player(w, 1, 3), b = player(w, 2, 3), c = player(w, 3, 3);
-            c.api.autoAccept = false;
-            var t = 0.0;
-            for (p in [a, b, c]) { p.search.start(KEY, p.api.peer, t); t = run(w, [a, b, c], t, 1); }
-            t = run(w, [a, b, c], t, 12 + Search.INVITE_TIMEOUT);
-            w.form("acc1", ["acc2", "acc3"]);
-            run(w, [a, b, c], t, 3);
-            check("late accepter joins the party", c.search.state == Grouped, Std.string(c.search.state));
-        }
-
         // removed from the lobby by the platform: the search starts over and finds a lobby again
         {
             var w = new FakeWorld();
