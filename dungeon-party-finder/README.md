@@ -46,7 +46,7 @@ Other players need the mod too: it finds only players who use it.
 - The dungeon window is the game's own; the mod adds a **Search** button under **Start**, which is off while a search runs. The turning circle of the search now turns.
 - The invitation goes out as soon as a second searcher is found (it used to wait for a full group); later arrivals are invited as they come.
 - After **Cancel** the leader of a group that is still short of players keeps the **Search** button and can search again for the missing places.
-- The dungeon window can be moved by its title strip.
+- The dungeon window can be moved by its title strip; it stays where you leave it (also when the game builds the window again).
 - The counter next to "Searching..." counts the whole group, and the other members of the group see that their leader is searching.
 - The crown of the group leader sits at the right edge of the character plate.
 - A declined or ignored group invitation is replaced by the next searcher; the search goes on until the group is full.

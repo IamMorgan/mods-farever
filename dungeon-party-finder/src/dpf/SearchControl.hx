@@ -140,7 +140,7 @@ class SearchControl {
         var here = session.activityId == DungeonScreens.activityOf(screen);
         var searching = mode == Searching && here;
         // A member of the group sees that its leader is searching for more players.
-        var watching = mode == Idle && party.groupSize() > 1 && !party.isLeader()
+        var watching = mode != Searching && party.groupSize() > 1 && !party.isLeader()
             && session.leaderSearching(DungeonScreens.activityOf(screen), haxe.Timer.stamp());
         var busy = searching || watching;
         stage = "update: shown";
