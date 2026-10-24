@@ -10,7 +10,7 @@ package buildcalc;
  *
  * Commands:
  *  - status: hero, window, calculator tab, running calculation, saved last results.
- *  - calculate {priorities:[4 ints 0..3], ranged, ideal, fresh, search, talents:{id:rank}, runes:{skill:[runes]},
+ *  - calculate {priorities:[4 ints 0..3], ranged, ideal, crit, fresh, search, talents:{id:rank}, runes:{skill:[runes]},
  *    skills:[ids], infusions:{slot:id}}: a calculation as the "Calculate" button does it. fresh: the last result is not a start; search:false:
  *    the start build only valued (no search); talents/runes/skills: the worn build as if the hero had them (a
  *    recommendation "followed" without changing the game); infusions: set on the start build (with search:false and
@@ -207,6 +207,7 @@ class TestMode {
         if (Std.isOfType(p, Array) && (p : Array<Dynamic>).length == 4) s.priorities = [for (v in (p : Array<Dynamic>)) Std.int(v)];
         if (Reflect.hasField(cmd, "ranged")) s.ranged = Reflect.field(cmd, "ranged") == true;
         if (Reflect.hasField(cmd, "ideal")) s.ideal = Reflect.field(cmd, "ideal") == true;
+        if (Reflect.hasField(cmd, "crit")) s.crit = Reflect.field(cmd, "crit") == true;
         return s;
     }
 

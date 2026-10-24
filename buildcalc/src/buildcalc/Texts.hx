@@ -54,6 +54,7 @@ class Texts {
         "tab" => ["Build", "Build-Rechner", "Calculateur", "Калькулятор", "配装计算", "Calculadora", "Kalkulator", "Hesaplayıcı", "Calculadora", "Calcolatore", "빌드 계산", "ビルド計算", "配裝計算", "Kalkulačka"],
         "priorities" => ["Priorities", "Prioritäten", "Priorités", "Приоритеты", "优先级", "Prioridades", "Priorytety", "Öncelikler", "Prioridades", "Priorità", "우선순위", "優先度", "優先級", "Priority"],
         "ax0" => ["Damage", "Schaden", "Dégâts", "Урон", "伤害", "Dano", "Obrażenia", "Hasar", "Daño", "Danni", "피해", "ダメージ", "傷害", "Poškození"],
+        "crit" => ["Criticality (crit chance)", "Kritikalität (Krit-Chance)", "Criticité (chance de critique)", "Критичность (шанс крита)", "暴击（暴击率）", "Criticidade (chance de crítico)", "Krytyczność (szansa na krytyk)", "Kritiklik (kritik şansı)", "Criticidad (prob. de crítico)", "Criticità (probabilità critico)", "치명 (치명타 확률)", "クリティカル（会心率）", "暴擊（暴擊率）", "Kritičnost (šance na kritický zásah)"],
         "ax1" => ["Defense", "Verteidigung", "Défense", "Защита", "防御", "Defesa", "Obrona", "Savunma", "Defensa", "Difesa", "방어", "防御", "防禦", "Obrana"],
         "ax2" => ["Health", "Gesundheit", "Santé", "Здоровье", "生命", "Vida", "Zdrowie", "Can", "Salud", "Salute", "생명력", "体力", "生命", "Zdraví"],
         "ax3" => ["Healing", "Heilung", "Soins", "Лечение", "治疗", "Cura", "Leczenie", "İyileştirme", "Curación", "Cure", "치유", "回復", "治療", "Léčení"],
@@ -120,6 +121,8 @@ class Texts {
     public static function tabName():String return f("tab");
     public static function priorities():String return f("priorities");
     public static function axes():Array<String> return [f("ax0"), f("ax1"), f("ax2"), f("ax3")];
+    /** The criticality checkbox under the damage priority. */
+    public static function crit():String return f("crit");
     /** Priority names by value: 3 high .. 0 none. */
     public static function levels():Array<String> return [f("lv0"), f("lv1"), f("lv2"), f("lv3")];
     public static function combat():String return f("combat");

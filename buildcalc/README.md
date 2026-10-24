@@ -13,6 +13,7 @@ For manual installation:
 ### Main features
 
 - **Priorities:** for damage, defense, health and healing choose High, Medium, Low or Not important. Only one stat can be High and at most two can be Medium.
+- **Criticality:** a checkbox under the damage priority. When it is on, the chance of a critical strike counts in the build as well (as much as the damage priority, at least Low). With High damage the build is made to reach the highest critical strike chance the items, augments, infusions and talents allow.
 - **Combat type:** melee or ranged. It decides which main weapons are considered.
 - **Build search:** main and arsenal weapon, shield, armor, jewelry, trinket, augment slots, infusions (sets of 4 items), talents, class skills and runes. The game's rules are respected: a shield works only with a one-handed weapon, only four class skills can be used (the class's signature skill, such as the priest's Divine Intervention, is always there), weapons with no weapon skills (the capture net) are never offered, the arsenal weapon gives 40% of its stats, and only items you can actually get (dropped, crafted or already owned) at your hero's level are used.
 - **Combat simulation:** every build is valued by a combat simulator that runs on the game's own data: skills, statuses, combos, summons, passive effects of weapons, talents and infusions. Damage and healing (to yourself and to allies) are shown per second.
@@ -43,6 +44,16 @@ For manual installation:
 - The simulator is not an exact copy of the game. Its damage values were checked against real fights on a training dummy; absolute numbers can differ from real ones, comparing builds with each other is more reliable.
 
 ### Changelog
+
+**2026-10-24**
+- New checkbox "Criticality" under the damage priority (see Main features).
+- A ranged build no longer gets a melee main weapon: swapping the main weapon with the arsenal one could put the arsenal's melee weapon in the main hand.
+- A weapon (or any item) that is the same as the one the hero wears is no longer shown as "improve": a change that gains less than a swap needs goes back to the worn item at the end of the search.
+- Runes: a rune is chosen for the axes you gave a priority (a healing rune is no longer advised for a damage-only build because of a "not important" gain); with nothing to gain on those axes your own runes stay, and a rune slot is never left empty.
+- Weapon skill slots are filled when the weapon has enough skills (a skill the simulation cannot value no longer leaves a slot empty).
+- Warrior: the bleed (Hemorrhage and the other damage-over-time statuses with no stack limit) now ticks for as long as it lasts, also when refreshed, and pays its damage out over its duration, so talents that react to bleed ticks (Red Tempo) are valued instead of ignored.
+- Mage: the Chaincast talent was never granted in the simulation (a script call without a count was read as "remove"), so every talent that works with it (Chainstrike, Kinetic Surge, Echoing Life, High Voltage, Reverberate) and its free weapon skill counted for nothing; now they are valued.
+- Multipliers that a skill's script puts on the cast itself (damage, physical / magic damage, healing, crit chance: e.g. the Great Axe's Demon King passive, Surging Tide, Phase Strike after Blink) are now applied to its hits; the cast's own hooks run before its steps hit, as in the game, and `onStart` gets the cast.
 
 **2026-10-19**
 - Class skills: at most 4 class skills are chosen; the class's signature skill is fixed and not counted (before, 5 class skills could be offered, which inflated the damage estimate).

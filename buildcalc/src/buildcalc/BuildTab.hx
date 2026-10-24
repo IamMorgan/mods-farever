@@ -247,6 +247,19 @@ class BuildTab {
                 State.save();
                 draw();
             }, width, disabled);
+            // criticality: under the damage priority; with it the chance of a critical strike counts, and with High damage the build
+            // gets the most of it the items give
+            if (axis == 0) {
+                var on = s.crit;
+                var label = (on ? "[x] " : "[ ] ") + Texts.crit();
+                if (job != null) { if (on) Ui.lockedButton(left, bodyFont, label, 13, width); else Ui.disabledButton(left, bodyFont, label, 13, width); }
+                else Ui.button(left, bodyFont, label, 13, on, () -> {
+                    State.settings.crit = !State.settings.crit;
+                    DebugLog.line("click: criticality = " + State.settings.crit);
+                    State.save();
+                    draw();
+                }, width);
+            }
         }
         Ui.text(left, headFont, Texts.combat(), COLOR_HEAD, 16, width);
         options(left, bodyFont, [Texts.melee(), Texts.ranged()], s.ranged ? 1 : 0, i -> {

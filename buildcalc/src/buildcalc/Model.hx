@@ -612,6 +612,9 @@ class Model {
         return 1 / Math.max(0.01, taken);
     }
 
+    /** The chance of a critical strike the build has (the attribute as the stats panel shows it), at most 100%. */
+    function critValue(v:Array<Float>):Float return Math.min(1, Math.max(0, get(v, "CritChance")));
+
     public function reduction(armor:Float):Float {
         var k = armorF0 + armorF1 * engine.level;
         return armor > 0 && armor + k > 0 ? armor / (armor + k) : 0;
@@ -709,7 +712,7 @@ class Model {
     public function evaluate(b:Build):Eval {
         if (useSim) {
             var vals = engine.evaluate(sums(b));
-            var e:Eval = {axes: [0, defense(vals), get(vals, "MaxHealth"), 0], vals: vals, buffed: vals, dps: 0, selfHeal: 0, allyHeal: 0,
+            var e:Eval = {axes: [0, defense(vals), get(vals, "MaxHealth"), 0, critValue(vals)], vals: vals, buffed: vals, dps: 0, selfHeal: 0, allyHeal: 0,
                 weaponSkills: new Map(), perSkill: new Map(), modelDps: 0, modelSelfHeal: 0, modelAllyHeal: 0, calibrated: false};
             if (b.arsenal != null) e.weaponSkills.set(1, b.arsenal.copy());
             simulateInto(b, e);
@@ -956,7 +959,10 @@ class Model {
                 var fight = weaveAndFight(env, specs);
                 var r = fight.result;
                 var score = fightScore(r);
-                if (score > bestScore) { bestScore = score; best = r; bestPick = [for (s in c) s.def.id]; bestSim = fight.sim; }
+                // equal scores: the choice with more weapon skills (a slot left empty gives nothing; a skill the fight cannot value is no reason to leave it)
+                if (score > bestScore + 1e-9 || (score >= bestScore - 1e-9 && bestPick != null && c.length > bestPick.length)) {
+                    bestScore = Math.max(score, bestScore); best = r; bestPick = [for (s in c) s.def.id]; bestSim = fight.sim;
+                }
             }
             if (bestPick != null && choices.length > 1) picks.set(pickKey, bestPick);
             if (bestSim != null) {
@@ -1422,7 +1428,7 @@ class Model {
             for (src in srcs) if (src.def.unknown.length > 0) report.push("not valued: " + src.def.id + " (" + src.def.unknown.join(",") + ")");
         }
         if (b.arsenal != null) chosenWeapon.set(1, [for (id in b.arsenal) id]);
-        var eval:Eval = {axes: [damage, 1 / Math.max(0.01, taken), get(vals, "MaxHealth"), selfHeal + allyHeal], vals: vals, buffed: buffed,
+        var eval:Eval = {axes: [damage, 1 / Math.max(0.01, taken), get(vals, "MaxHealth"), selfHeal + allyHeal, critValue(vals)], vals: vals, buffed: buffed,
             dps: damage, selfHeal: selfHeal, allyHeal: allyHeal, weaponSkills: chosenWeapon, perSkill: perSkill,
             modelDps: damage, modelSelfHeal: selfHeal, modelAllyHeal: allyHeal, calibrated: false};
         return {eval: eval, cdr: cdrOut, needsSecond: needsSecond};

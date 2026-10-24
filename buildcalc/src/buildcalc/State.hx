@@ -1,10 +1,14 @@
 package buildcalc;
 
-/** The questionnaire: priority of each axis (0 none .. 3 high), melee or ranged, ideal or own items. */
+/**
+ * The questionnaire: priority of each axis (0 none .. 3 high), melee or ranged, ideal or own items, and "criticality": the
+ * chance of a critical strike counts too (under a High damage priority the build gets the most of it that can be had).
+ */
 typedef Settings = {
     var priorities:Array<Int>; // damage, defense, health, healing
     var ranged:Bool;
     var ideal:Bool;
+    var crit:Bool;
 }
 
 /** A saved template: the questionnaire (the computed build is added once the calculation exists). */
@@ -74,7 +78,7 @@ class State {
      */
     public static var lasts:Array<LastResult> = [];
 
-    static function settingsKey(s:Settings):String return s.priorities.join(",") + "|" + s.ranged + "|" + s.ideal;
+    static function settingsKey(s:Settings):String return s.priorities.join(",") + "|" + s.ranged + "|" + s.ideal + "|" + s.crit;
 
     /** The last result for this questionnaire (null: none). */
     public static function lastFor(s:Settings):Null<LastResult> {
@@ -84,9 +88,9 @@ class State {
     static var loaded = false;
     static var idRe = ~/^[A-Za-z0-9_]+$/;
 
-    public static function defaults():Settings return {priorities: [3, 1, 1, 0], ranged: false, ideal: true};
+    public static function defaults():Settings return {priorities: [3, 1, 1, 0], ranged: false, ideal: true, crit: false};
 
-    public static function copy(s:Settings):Settings return {priorities: s.priorities.copy(), ranged: s.ranged, ideal: s.ideal};
+    public static function copy(s:Settings):Settings return {priorities: s.priorities.copy(), ranged: s.ranged, ideal: s.ideal, crit: s.crit == true};
 
     static function valid(s:Dynamic):Settings {
         var d = defaults();
@@ -102,6 +106,7 @@ class State {
         }
         d.ranged = Reflect.field(s, "ranged") == true;
         d.ideal = Reflect.field(s, "ideal") == true;
+        d.crit = Reflect.field(s, "crit") == true;
         return d;
     }
 
@@ -159,7 +164,7 @@ class State {
 
     static function str(v:Dynamic):String return v == null ? null : Std.string(v);
     static function floats(v:Dynamic):Array<Float> {
-        if (!Std.isOfType(v, Array) || (v : Array<Dynamic>).length != 4) return null;
+        if (!Std.isOfType(v, Array) || (v : Array<Dynamic>).length != Optimizer.AXES) return null;
         return [for (x in (v : Array<Dynamic>)) Std.parseFloat(Std.string(x))];
     }
 
