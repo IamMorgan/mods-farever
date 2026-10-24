@@ -181,7 +181,7 @@ class Optimizer {
      * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2; chances without luck = 3). A last result
      * valued by another version is not a start for the search (it would keep a build the model of now does not choose).
      */
-    public static inline var MODEL_VERSION = 10;
+    public static inline var MODEL_VERSION = 11;
     /**
      * The search goes round until a whole round takes nothing (at most this many rounds): a search that stopped after
      * 3 rounds or a round under 0.2% was not done, and the next calculation (from its result) went on and moved.
