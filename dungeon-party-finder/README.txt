@@ -12,7 +12,11 @@ How to use:
 - The player who started earliest is the leader. The others get the game's group invitation: accept
   it. If someone declines, the leader invites another searcher in their place. Then the window is
   the group's dungeon lobby: "Start" for the leader, "Ready" for the others.
-- The group leader wears a small crown in the party list on the left of the screen.
+- The group leader wears a small crown at the right edge of the character plate in the party list.
+- As soon as a second player is found the invitation goes out; others are invited as they arrive, up to four.
+  The leader can press "Cancel" to stop with fewer and "Search" again to look for the missing places.
+  Group members see "Searching... N/4" in their dungeon window while the leader searches.
+- The dungeon window can be moved by its title strip; it stays where you leave it. Closing it does not end the search.
 
 Settings (Esc -> Mod Settings -> Dungeon Party Finder): show the button, "Unpin" (hold the left mouse
 button on the DPF button and drag it), button size.
