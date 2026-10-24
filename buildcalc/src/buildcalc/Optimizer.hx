@@ -29,6 +29,10 @@ typedef BuildResult = {
     var now:Eval;               // the same for what the hero has now
     var infusions:Map<String, Int>;
     var fight:Float;            // seconds of the real fight the values are calibrated by (0: none)
+    var builds:Int;             // builds valued in the calculation (each one once: a build met again is not counted)
+    var fights:Int;             // fights simulated (Model.FIGHT seconds each)
+    var replayed:Int;           // builds valued again from a fight already simulated (only the attributes changed)
+    var checked:String;         // the self-check of the chosen build (Optimizer.checkBuild): "OK" or the rules it breaks
     var reasons:Array<{slot:Int, item:Dynamic, dps:Float, heal:Float, infDps:Float, infHeal:Float, infusion:String, onlyInfusion:Bool}>;
     /** Items to show instead of the worn ones whose infusion the build changes: copies with the new infusion (the tooltip shows it). */
     var display:Map<Int, Dynamic>;
@@ -177,7 +181,7 @@ class Optimizer {
      * Version of the way builds are valued: raised with every change of the model (shields 2026-10-18 = 2; chances without luck = 3). A last result
      * valued by another version is not a start for the search (it would keep a build the model of now does not choose).
      */
-    public static inline var MODEL_VERSION = 8;
+    public static inline var MODEL_VERSION = 9;
     /**
      * The search goes round until a whole round takes nothing (at most this many rounds): a search that stopped after
      * 3 rounds or a round under 0.2% was not done, and the next calculation (from its result) went on and moved.
@@ -405,10 +409,16 @@ class Optimizer {
 
     /**
      * The search runs in a thread of its own, so the game's frames never wait for it: WORK_MS of work, then
-     * SLEEP_MS of rest (it takes at most about half of one processor core).
+     * SLEEP_MS of rest while the game's frames are long (see frameMs); with smooth frames it works without rest.
      */
     public static var WORK_MS = 15.0;
     public static var SLEEP_MS = 5.0;
+    /**
+     * The game's frame time now (ms, smoothed; BuildTab.tick sets it): while the game runs smoothly the search takes its rest only
+     * when the frames get longer than FRAME_BUSY_MS — it uses a whole core while nothing is felt, and gives way as soon as it is.
+     */
+    public static var frameMs = 0.0;
+    public static inline var FRAME_BUSY_MS = 40.0;
     var threaded = false;
     var workerDone = false;
     var workerError:Dynamic = null;
@@ -421,7 +431,7 @@ class Optimizer {
                     while (tasks.length > 0) {
                         if (tasks[0].step()) tasks.shift();
                         if (haxe.Timer.stamp() - slice > WORK_MS / 1000) {
-                            Sys.sleep(SLEEP_MS / 1000);
+                            if (frameMs > FRAME_BUSY_MS) Sys.sleep(SLEEP_MS / 1000);
                             slice = haxe.Timer.stamp();
                         }
                     }
@@ -894,13 +904,54 @@ class Optimizer {
     /** Items refused by `place` because the slot does not take them (should stay 0). */
     public var badPlace = 0;
 
-    /** The build as the game allows it: each item fits its slot; an off-hand item that does not work with the main weapon. */
-    function checkBuild(b:Build):String {
+    /**
+     * The build as the game allows it (a self-check of everything the search chooses, the answer is "OK" or what breaks a rule): each item fits
+     * its slot, the main weapon is of the kind asked, an off-hand item works with the main weapon, the same worn item is not in two slots;
+     * the arsenal skills are the weapon's, valid for the arsenal and no more than the slots; the talents obey the tree; the class skills are
+     * learnt, once each and no more than the slots; each skill's runes are its own and no more than it may have; an infusion is on an item
+     * that can have one.
+     */
+    public function checkBuild(b:Build):String {
         var bad = [];
         for (s => c in b.items) if (c != null && !slotFits(c, s)) bad.push("slot " + s + " " + c.id + " cannot be worn there");
+        var main = b.items.get(0);
+        if (main != null && main.weapon && main.ranged != settings.ranged) bad.push("main weapon " + main.id + " is " + (main.ranged ? "ranged" : "melee") + ", the other kind was asked");
         var off = b.items.get(Items.OFFHAND);
-        if (off != null && !Items.offhandWorks(b.items.get(0), off))
-            bad.push("off-hand " + off.id + " does not work with " + (b.items.get(0) == null ? "-" : b.items.get(0).id) + " (two-handed): not counted");
+        if (off != null && !Items.offhandWorks(main, off))
+            bad.push("off-hand " + off.id + " does not work with " + (main == null ? "-" : main.id) + " (two-handed): not counted");
+        var worn = new Map<String, Int>();
+        for (s => c in b.items) if (c != null && c.real) {
+            if (worn.exists(c.key)) bad.push(c.id + " is in slots " + worn.get(c.key) + " and " + s + ": one item");
+            worn.set(c.key, s);
+        }
+        var arsenal = b.items.get(1);
+        var chosen = b.arsenal == null ? [] : b.arsenal;
+        if (arsenal == null && chosen.length > 0) bad.push("arsenal skills without an arsenal weapon");
+        if (arsenal != null) {
+            var valid = arsenalChoices(arsenal);
+            for (id in chosen) if (valid.indexOf(id) < 0) bad.push("arsenal skill " + id + " is not valid for " + arsenal.id);
+            if (chosen.length > arsenalSlots) bad.push(chosen.length + " arsenal skills, " + arsenalSlots + " slots");
+            for (i in 0...chosen.length) if (chosen.indexOf(chosen[i]) != i) bad.push("arsenal skill " + chosen[i] + " twice");
+        }
+        if (!validTalents(b.talents)) bad.push("talents break the tree's rules (" + talentSpent(b.talents) + " of " + points + " points)");
+        if (!skillsAllowed(b.skills)) bad.push("class skills " + b.skills.join(",") + ": a skill twice or more than " + CLASS_SLOTS);
+        for (id in b.skills) if (classSkills.indexOf(id) < 0) bad.push("class skill " + id + " is not learnt");
+        for (id => rs in b.runes) {
+            var d = SkillData.get(id);
+            if (b.skills.indexOf(id) < 0 && rs.length > 0) bad.push("runes of " + id + ", a skill the build does not have");
+            if (rs.length > runesPerSkill) bad.push(id + ": " + rs.length + " runes, " + runesPerSkill + " allowed");
+            for (i in 0...rs.length) {
+                if (rs.indexOf(rs[i]) != i) bad.push(id + ": rune " + rs[i] + " twice");
+                var own = false;
+                if (d != null) for (m in d.masteries) if (m.id == rs[i]) own = true;
+                if (!own) bad.push(id + ": rune " + rs[i] + " is not its own");
+            }
+        }
+        for (s => inf in b.infusion) if (inf != null && inf != "") {
+            var c = b.items.get(s);
+            if (c == null || !c.infusable) bad.push("infusion " + inf + " on slot " + s + ", an item that cannot have one");
+            if (infusions.indexOf(inf) < 0) bad.push("infusion " + inf + " is not one the hero may use");
+        }
         return bad.length == 0 ? "OK" : bad.join("; ");
     }
 
@@ -1195,7 +1246,8 @@ class Optimizer {
         refillOffhand(b);
         var offNow = b.items.get(Items.OFFHAND);
         if (offNow != null && !Items.offhandWorks(b.items.get(0), offNow)) { DebugLog.line("check: " + offNow.id + " removed from the off-hand slot"); b.items.remove(Items.OFFHAND); b.augs.remove(Items.OFFHAND); b.infusion.remove(Items.OFFHAND); b.bonus.remove(Items.OFFHAND); }
-        DebugLog.line("check: slots of the chosen build " + checkBuild(b) + "; refused placements " + badPlace);
+        var checked = checkBuild(b);
+        DebugLog.line("check: the chosen build " + checked + "; the worn build " + checkBuild(worn) + "; refused placements " + badPlace);
         var ev = model.evaluate(b);
         model.report = null;
         for (a in 0...AXES) if (ev.axes[a] > best[a]) best[a] = ev.axes[a];
@@ -1325,7 +1377,7 @@ class Optimizer {
         for (i in 0...model.engine.count) stats.set(model.engine.names[i], ev.vals[i] * model.engine.percent(i));
         result = {build: b, worn: worn, axes: ev.axes, current: now, best: best, changed: changed, stats: stats, pool: poolSize, talentPoints: points,
             eval: ev, now: nowEval, infusions: model.infusionCounts(b), fight: combat != null && combat.ok ? combat.duration : 0, reasons: reasons,
-            display: new Map()};
+            builds: evals, fights: model.fightsRun, replayed: model.fightsReplayed, checked: checked, display: new Map()};
     }
 
     /** Puts the chosen augments, infusion and bonus on the created items, so the game's tooltip shows them. */

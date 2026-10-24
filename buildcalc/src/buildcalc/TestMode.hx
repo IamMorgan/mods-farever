@@ -173,7 +173,7 @@ class TestMode {
         var w = waiting;
         waiting = null;
         if (result == null) { answer({id: w.id, cmd: w.cmd, ok: false, error: "no result (see the log)"}); return; }
-        answer({id: w.id, cmd: w.cmd, ok: true, ms: took, settings: State.settings, chosen: describe(result.build, result.eval),
+        answer({id: w.id, cmd: w.cmd, ok: true, ms: took, builds: result.builds, fights: result.fights, replayed: result.replayed, checked: result.checked, settings: State.settings, chosen: describe(result.build, result.eval),
             worn: describe(result.worn, result.now), changedSlots: result.changed});
     }
 

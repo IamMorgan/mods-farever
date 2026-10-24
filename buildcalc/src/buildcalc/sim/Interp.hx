@@ -29,14 +29,38 @@ interface Host {
     function missing(what:String):Void;
 }
 
+/**
+ * Variables of one block or call: a few names in two arrays (looking one up does not hash its name), made when the first
+ * one is declared. The script's own top scope holds its functions and variables: a map.
+ */
+class Scope {
+    public var parent:Scope;
+    public var names:Array<String> = null;
+    public var vals:Array<Dynamic> = null;
+    public var map:Map<String, Dynamic> = null;
+
+    public function new(parent:Scope, ?map:Map<String, Dynamic>) {
+        this.parent = parent;
+        this.map = map;
+    }
+
+    public function declare(name:String, v:Dynamic):Void {
+        if (map != null) { map.set(name, v); return; }
+        if (names == null) { names = [name]; vals = [v]; return; }
+        for (i in 0...names.length) if (names[i] == name) { vals[i] = v; return; }
+        names.push(name);
+        vals.push(v);
+    }
+}
+
 /** A script function with the scope it was made in. */
 class Closure {
     var interp:Interp;
     var args:Array<String>;
     var body:Expr;
-    var scope:Array<Map<String, Dynamic>>;
+    var scope:Scope;
 
-    public function new(interp:Interp, args:Array<String>, body:Expr, scope:Array<Map<String, Dynamic>>) {
+    public function new(interp:Interp, args:Array<String>, body:Expr, scope:Scope) {
         this.interp = interp;
         this.args = args;
         this.body = body;
@@ -59,24 +83,45 @@ private enum Flow {
 class Interp {
     public var script:Script;
     public var host:Host;
-    var top = new Map<String, Dynamic>();
+    var topMap = new Map<String, Dynamic>();
+    var top:Scope;
     public var steps = 0;
 
     public function new(script:Script, host:Host) {
         this.script = script;
         this.host = host;
+        top = new Scope(null, topMap);
         for (name => f in script.functions) switch (f) {
-            case EFunction(a, b, _): top.set(name, new Closure(this, a, b, [top]));
+            case EFunction(a, b, _): topMap.set(name, new Closure(this, a, b, top));
             default:
         }
-        for (e in script.top) try exec(e, [top]) catch (_:Dynamic) {}
+        for (e in script.top) try exec(e, top) catch (_:Dynamic) {}
     }
 
     public function has(fn:String):Bool return script.functions.exists(fn);
 
+    // a handler's name as a number (made once per name): a dispatch asks every skill of the fight whether it has the
+    // handler, without hashing the name for each of them
+    static var fnNames:Array<String> = [];
+    static var fnIds = new Map<String, Int>();
+    var known:Array<Int> = [];
+
+    public static function fnId(fn:String):Int {
+        var i = fnIds.get(fn);
+        if (i == null) { i = fnNames.length; fnNames.push(fn); fnIds.set(fn, i); }
+        return i;
+    }
+
+    public function hasId(id:Int):Bool {
+        while (known.length <= id) known.push(0);
+        var c = known[id];
+        if (c == 0) { c = script.functions.exists(fnNames[id]) ? 1 : 2; known[id] = c; }
+        return c == 1;
+    }
+
     /** Calls a function of the script (a handler: onInflictDamage, onStep…); null when it has none. */
     public function callFn(fn:String, args:Array<Dynamic>):Dynamic {
-        var f = top.get(fn);
+        var f = topMap.get(fn);
         if (f == null || !Std.isOfType(f, Closure)) return null;
         // each handler call has its own budget of steps
         var saved = steps;
@@ -91,11 +136,9 @@ class Interp {
         }
     }
 
-    public function invoke(names:Array<String>, body:Expr, scope:Array<Map<String, Dynamic>>, values:Array<Dynamic>):Dynamic {
-        var local = new Map<String, Dynamic>();
-        for (i in 0...names.length) local.set(names[i], i < values.length ? values[i] : null);
-        var s = scope.copy();
-        s.push(local);
+    public function invoke(names:Array<String>, body:Expr, scope:Scope, values:Array<Dynamic>):Dynamic {
+        var s = new Scope(scope);
+        for (i in 0...names.length) s.declare(names[i], i < values.length ? values[i] : null);
         try {
             exec(body, s);
         } catch (f:Flow) {
@@ -107,22 +150,61 @@ class Interp {
         return null;
     }
 
-    function lookup(name:String, scope:Array<Map<String, Dynamic>>):Dynamic {
-        var i = scope.length - 1;
-        while (i >= 0) {
-            if (scope[i].exists(name)) return scope[i].get(name);
-            i--;
+    function lookup(name:String, scope:Scope):Dynamic {
+        var s = scope;
+        while (s != null) {
+            var m = s.map;
+            if (m != null) {
+                var v = m.get(name);
+                if (v != null || m.exists(name)) return v;
+            } else {
+                var ns = s.names;
+                if (ns != null) {
+                    var i = 0, n = ns.length;
+                    while (i < n) { if (ns[i] == name) return s.vals[i]; i++; }
+                }
+            }
+            s = s.parent;
         }
         return host.global(name);
     }
 
-    function assignVar(name:String, v:Dynamic, scope:Array<Map<String, Dynamic>>):Void {
-        var i = scope.length - 1;
-        while (i >= 0) {
-            if (scope[i].exists(name)) { scope[i].set(name, v); return; }
-            i--;
+    /** A name the script declared (not a game function): its value, null when there is none. */
+    function lookupLocal(name:String, scope:Scope):Dynamic {
+        var s = scope;
+        while (s != null) {
+            var m = s.map;
+            if (m != null) {
+                var v = m.get(name);
+                if (v != null) return v;
+            } else {
+                var ns = s.names;
+                if (ns != null) {
+                    var i = 0, n = ns.length;
+                    while (i < n) { if (ns[i] == name) return s.vals[i]; i++; }
+                }
+            }
+            s = s.parent;
         }
-        scope[0].set(name, v);
+        return null;
+    }
+
+    function assignVar(name:String, v:Dynamic, scope:Scope):Void {
+        var s = scope;
+        while (s != null) {
+            var m = s.map;
+            if (m != null) {
+                if (m.exists(name)) { m.set(name, v); return; }
+            } else {
+                var ns = s.names;
+                if (ns != null) {
+                    var i = 0, n = ns.length;
+                    while (i < n) { if (ns[i] == name) { s.vals[i] = v; return; } i++; }
+                }
+            }
+            s = s.parent;
+        }
+        top.declare(name, v);
     }
 
     static function truthy(v:Dynamic):Bool {
@@ -139,19 +221,17 @@ class Interp {
         return 0;
     }
 
-    function exec(e:Expr, scope:Array<Map<String, Dynamic>>):Dynamic {
+    function exec(e:Expr, scope:Scope):Dynamic {
         steps++;
         if (steps > 200000) throw "script ran too long";
         switch (e) {
             case EBlock(list):
-                var s = scope.copy();
-                s.push(new Map());
+                var s = new Scope(scope);
                 var v:Dynamic = null;
                 for (x in list) v = exec(x, s);
                 return v;
             case EVar(names, inits):
-                var cur = scope[scope.length - 1];
-                for (i in 0...names.length) cur.set(names[i], inits[i] == null ? null : exec(inits[i], scope));
+                for (i in 0...names.length) scope.declare(names[i], inits[i] == null ? null : exec(inits[i], scope));
                 return null;
             case EIf(c, a, b):
                 if (truthy(exec(c, scope))) return exec(a, scope);
@@ -170,11 +250,9 @@ class Interp {
                 return null;
             case EFor(v, it, body):
                 var list:Array<Dynamic> = iterate(it, scope);
-                var s = scope.copy();
-                var local = new Map<String, Dynamic>();
-                s.push(local);
+                var s = new Scope(scope);
                 for (x in list) {
-                    local.set(v, x);
+                    s.declare(v, x);
                     try exec(body, s) catch (f:Flow) {
                         switch (f) {
                             case FBreak: break;
@@ -189,15 +267,13 @@ class Interp {
             case EBreak: throw FBreak;
             case EContinue: throw FContinue;
             case EFunction(args, body, name):
-                var c = new Closure(this, args, body, scope.copy());
-                if (name != "") scope[scope.length - 1].set(name, c);
+                var c = new Closure(this, args, body, scope);
+                if (name != "") scope.declare(name, c);
                 return c;
             case ETry(x, v, c):
                 try return exec(x, scope) catch (f:Flow) throw f catch (err:Dynamic) {
-                    var s = scope.copy();
-                    var m = new Map<String, Dynamic>();
-                    m.set(v, err);
-                    s.push(m);
+                    var s = new Scope(scope);
+                    s.declare(v, err);
                     return exec(c, s);
                 }
             default:
@@ -205,7 +281,7 @@ class Interp {
         }
     }
 
-    function iterate(it:Expr, scope:Array<Map<String, Dynamic>>):Array<Dynamic> {
+    function iterate(it:Expr, scope:Scope):Array<Dynamic> {
         switch (it) {
             case EBinop("...", a, b):
                 var from = Std.int(num(eval(a, scope))), to = Std.int(num(eval(b, scope)));
@@ -222,7 +298,7 @@ class Interp {
         return [];
     }
 
-    public function eval(e:Expr, scope:Array<Map<String, Dynamic>>):Dynamic {
+    public function eval(e:Expr, scope:Scope):Dynamic {
         switch (e) {
             case EConst(v): return v;
             case EIdent(name): return lookup(name, scope);
@@ -264,10 +340,8 @@ class Interp {
                 for (x in list) switch (x) {
                     case EFor(v, it, body):
                         for (y in iterate(it, scope)) {
-                            var s = scope.copy();
-                            var m = new Map<String, Dynamic>();
-                            m.set(v, y);
-                            s.push(m);
+                            var s = new Scope(scope);
+                            s.declare(v, y);
                             out.push(exec(body, s));
                         }
                     default: out.push(eval(x, scope));
@@ -337,7 +411,7 @@ class Interp {
         return null;
     }
 
-    function assign(target:Expr, v:Dynamic, scope:Array<Map<String, Dynamic>>):Void {
+    function assign(target:Expr, v:Dynamic, scope:Scope):Void {
         switch (target) {
             case EIdent(name): assignVar(name, v, scope);
             case EField(x, name, _):
@@ -352,7 +426,7 @@ class Interp {
         }
     }
 
-    function call(f:Expr, args:Array<Dynamic>, scope:Array<Map<String, Dynamic>>):Dynamic {
+    function call(f:Expr, args:Array<Dynamic>, scope:Scope):Dynamic {
         switch (f) {
             case EField(x, name, safe):
                 var o:Dynamic = eval(x, scope);
@@ -363,12 +437,7 @@ class Interp {
                 host.missing("method " + name + " of " + Std.string(o).substr(0, 20));
                 return null;
             case EIdent(name):
-                var local:Dynamic = null;
-                var i = scope.length - 1;
-                while (i >= 0) {
-                    if (scope[i].exists(name)) { local = scope[i].get(name); break; }
-                    i--;
-                }
+                var local:Dynamic = lookupLocal(name, scope);
                 if (local != null && Std.isOfType(local, Closure)) return (local : Closure).run(args);
                 return host.callGlobal(name, args);
             default:
