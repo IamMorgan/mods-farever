@@ -4,10 +4,11 @@ import dpf.GameAccess as G;
 import dpf.NativeUi as N;
 
 /**
- * Lets the player move the game's dungeon window by its title strip (the game's own window is fixed in the middle of the
+ * Lets the player move the game's dungeon window by its title strip (the game's own window is fixed in its place on the
  * screen). A transparent hit area over the strip, short of the close button, picks the window up; while the mouse button is
- * held the window follows the mouse. The window is taken out of its parent's layout on the first move so the parent does not
- * put it back.
+ * held the window follows the mouse. The window is moved the way its parent's layout does it, by the offset of the window in
+ * the parent's flow (also kept in the window's style, which the game applies again whenever a control is hovered): setting the
+ * window's position directly is undone by the layout and breaks the clipping of the dungeon's picture.
  */
 class WindowDrag {
     static inline var STRIP = 46.0;
@@ -15,18 +16,16 @@ class WindowDrag {
 
     var bound:Dynamic;
     var hit:Dynamic;
+    var hitWidth = 0.0;
     var dragging = false;
     var startMouseX = 0.0;
     var startMouseY = 0.0;
-    var startX = 0.0;
-    var startY = 0.0;
-    /**
-     * Where the player left the window: put back after every frame of the game's own update, which may move it, and used for
-     * the next window too (the game builds a new window object when the lobby changes, e.g. when a search starts).
-     */
-    var placed = false;
-    var placedX = 0.0;
-    var placedY = 0.0;
+    var startOffsetX = 0.0;
+    var startOffsetY = 0.0;
+    /** Where the player left the window (an offset from its usual place); the next window gets it too. */
+    var moved = false;
+    var offsetX = 0.0;
+    var offsetY = 0.0;
 
     public function new() {}
 
@@ -36,30 +35,40 @@ class WindowDrag {
         if (G.field(screen, "parent") == null) return;
         if (bound != screen || (hit != null && G.field(hit, "parent") == null)) bind(screen);
         if (dragging) poll(screen);
-        else if (placed) G.call("h2d.Object", "setPosition", screen, [placedX, placedY]);
+        else if (moved) apply(screen, offsetX, offsetY);
         // The strip never reaches the close button, whatever the window's width is by now.
-        var width = G.number(G.call("h2d.Flow", "get_outerWidth", screen));
-        G.set(hit, "width", Math.max(40, width - CLOSE_WIDTH));
-    }
-
-    /** Called for every element the game draws; only the dungeon window is moved. */
-    public function place(element:Dynamic):Void {
-        if (!placed || dragging || element != bound) return;
-        try G.call("h2d.Object", "setPosition", element, [placedX, placedY]) catch (_:Dynamic) {}
+        var width = Math.max(40, G.number(G.field(screen, "calculatedWidth")) - CLOSE_WIDTH);
+        if (width != hitWidth) { hitWidth = width; G.set(hit, "width", width); }
     }
 
     function bind(screen:Dynamic):Void {
         bound = screen;
-        hit = null;
         dragging = false;
-        var width = G.number(G.call("h2d.Flow", "get_outerWidth", screen));
-        hit = G.create("h2d.Interactive", [Math.max(40, width - CLOSE_WIDTH), STRIP, screen, null]);
+        hitWidth = Math.max(40, G.number(G.field(screen, "calculatedWidth")) - CLOSE_WIDTH);
+        hit = G.create("h2d.Interactive", [hitWidth, STRIP, screen, null]);
         N.absolute(screen, hit);
         G.call("h2d.Object", "setPosition", hit, [0, 0]);
         G.set(hit, "onPush", (_:Dynamic) -> begin(screen));
         // The mouse button is read from the release events: the key state of the button is not reliable here.
         G.set(hit, "onRelease", (_:Dynamic) -> dragging = false);
         G.set(hit, "onReleaseOutside", (_:Dynamic) -> dragging = false);
+    }
+
+    function properties(screen:Dynamic):Dynamic {
+        var parent = G.field(screen, "parent");
+        return parent != null && G.isA(parent, "h2d.Flow") ? G.call("h2d.Flow", "getProperties", parent, [screen]) : null;
+    }
+
+    /** Puts the window's offset in its parent's layout (and in its style) at (x, y), when it is not there yet. */
+    function apply(screen:Dynamic, x:Float, y:Float):Void {
+        var p = properties(screen);
+        if (p == null) return;
+        if (G.number(G.field(p, "offsetX")) == x && G.number(G.field(p, "offsetY")) == y) return;
+        G.set(p, "offsetX", x);
+        G.set(p, "offsetY", y);
+        N.style(screen, "offset-x", x);
+        N.style(screen, "offset-y", y);
+        G.set(G.field(screen, "parent"), "needReflow", true);
     }
 
     function mouse(screen:Dynamic):Null<{x:Float, y:Float}> {
@@ -76,17 +85,12 @@ class WindowDrag {
     function begin(screen:Dynamic):Void {
         try {
             var m = mouse(screen);
-            if (m == null) return;
+            var p = properties(screen);
+            if (m == null || p == null) return;
             startMouseX = m.x;
             startMouseY = m.y;
-            startX = G.number(G.field(screen, "x"));
-            startY = G.number(G.field(screen, "y"));
-            var parent = G.field(screen, "parent");
-            if (G.isA(parent, "h2d.Flow")) {
-                var p = G.call("h2d.Flow", "getProperties", parent, [screen]);
-                G.call("h2d.FlowProperties", "set_isAbsolute", p, [true]);
-            }
-            G.call("h2d.Object", "setPosition", screen, [startX, startY]);
+            startOffsetX = G.number(G.field(p, "offsetX"));
+            startOffsetY = G.number(G.field(p, "offsetY"));
             dragging = true;
         } catch (error:Dynamic) trace("[DPF] window drag failed: " + Std.string(error));
     }
@@ -95,10 +99,12 @@ class WindowDrag {
         try {
             var m = mouse(screen);
             if (m == null) return;
-            placedX = startX + m.x - startMouseX;
-            placedY = startY + m.y - startMouseY;
-            placed = true;
-            G.call("h2d.Object", "setPosition", screen, [placedX, placedY]);
+            // A plain click on the strip does not move anything.
+            if (!moved && Math.abs(m.x - startMouseX) + Math.abs(m.y - startMouseY) < 4) return;
+            moved = true;
+            offsetX = startOffsetX + m.x - startMouseX;
+            offsetY = startOffsetY + m.y - startMouseY;
+            apply(screen, offsetX, offsetY);
         } catch (error:Dynamic) { dragging = false; trace("[DPF] window drag failed: " + Std.string(error)); }
     }
 }
