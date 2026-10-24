@@ -10,7 +10,8 @@ interface Rec {
 }
 
 typedef SScaling = {atb:String, ratio:Float, minRank:Int, maxRank:Int, equalRank:Int};
-typedef SEffect = {uid:Int, kind:String, affinity:String, physical:Bool, base:Float, scaling:Array<SScaling>, dynVal:Int, status:String, duration:Dynamic, raw:Dynamic};
+/** stackScale: the effect's flag ScaleWithStacks (a status's tick, hit or consumption counts once per stack). */
+typedef SEffect = {uid:Int, kind:String, affinity:String, physical:Bool, base:Float, scaling:Array<SScaling>, dynVal:Int, status:String, duration:Dynamic, raw:Dynamic, stackScale:Bool};
 typedef SStep = {index:Int, id:String, on:String, type:String, mastery:String, masteryExclude:String, minRank:Int, maxRank:Int, equalRank:Int,
     delay:Dynamic, duration:Dynamic, tick:Dynamic, targetCd:Float, spread:Bool, hitFilter:Int, ignoreMain:Bool, presence:Bool, status:String, statusSelf:Bool,
     statusStacks:Int, condStep:String, travel:Float, alignment:Int, globalId:String, summon:String, summonCount:Int, effects:Array<SEffect>};
@@ -31,6 +32,8 @@ class SkillInfo {
     public var affixes:Array<SAffix> = [];
     public var masteries:Array<SMastery> = [];
     public var rankOverride:Array<{minRank:Int, vars:Dynamic}> = [];
+    /** The skills the description refers to (texts.refs: ref, ref2…): the variables of a passive and of the status it applies are read in the description together. */
+    public var refIds:Array<String> = [];
     public var vars:Dynamic;
     public var maxPoints = 0;
     public var subskills:Array<String> = [];
@@ -117,6 +120,11 @@ class SkillInfo {
             masteries.push({id: str(rec.get(m, "id")), cooldown: cd == null ? null : num(cd), duration: du == null ? null : num(du),
                 charges: ch == null ? null : Std.int(num(ch)), vars: rec.get(m, "vars")});
         }
+        var refs = rec.get(rec.get(inf, "texts"), "refs");
+        for (k in ["ref", "ref1", "ref2", "ref3", "ref4", "ref5", "ref6"]) {
+            var r = ref(rec.get(refs, k));
+            if (r != "" && refIds.indexOf(r) < 0) refIds.push(r);
+        }
         var afx = rec.get(inf, "affixes");
         for (i in 0...rec.len(afx)) {
             var a = rec.at(afx, i);
@@ -147,7 +155,7 @@ class SkillInfo {
                 var affinity = ref(rec.get(e, "affinity"));
                 effects.push({uid: uid++, kind: rec.enumName("effect", rec.get(e, "effect")), affinity: affinity, physical: Affinity.isPhysical(affinity),
                     base: num(rec.get(e, "baseVal")), scaling: sc, dynVal: Std.int(num(rec.get(e, "dynVal"))), status: ref(rec.get(e, "status")),
-                    duration: rec.get(e, "duration"), raw: e});
+                    duration: rec.get(e, "duration"), raw: e, stackScale: (Std.int(num(rec.get(e, "flags"))) & 1) != 0});
             }
             var area = rec.get(p, "area");
             var stype = rec.enumName("stepType", rec.get(s, "type"));

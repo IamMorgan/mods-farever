@@ -175,8 +175,7 @@ class Unit implements IObj {
             case "getStatusCount": var s = sim.findStatus(this, Sim.str(a[0]), null); return s == null ? 0 : s.stacks;
             case "tryConsumeStatus":
                 var s = sim.findStatus(this, Sim.str(a[0]), Std.isOfType(a[1], Unit) ? a[1] : null);
-                if (s != null) sim.removeStatus(s);
-                return s != null;
+                return s == null ? 0 : sim.consumeStacks(s, -1);
             case "distanceBetween", "distance": return sim.distance(this, Std.isOfType(a[0], Unit) ? a[0] : null);
             case "isType", "isStatusType": return false;
             case "hasStatusType": var t = Sim.str(a[0]); return Lambda.exists(statuses, st -> !st.removed && GameRules.isType(st.info.statusTypes, t));
@@ -206,11 +205,7 @@ class Unit implements IObj {
             case "consumeStatus":
                 var st = sim.findStatus(this, Sim.str(a[0]), null);
                 if (st == null) return 0;
-                var n = a.length > 1 && a[1] != null ? Std.int(Sim.num(a[1])) : st.stacks;
-                var used = Std.int(Math.min(n, st.stacks));
-                st.stacks -= used;
-                if (st.stacks <= 0) sim.removeStatus(st);
-                return used;
+                return sim.consumeStacks(st, a.length > 1 && a[1] != null ? Std.int(Sim.num(a[1])) : -1);
             default:
                 sim.missing("unit." + name + "()");
                 return null;
@@ -257,8 +252,15 @@ class Inst implements IObj implements Host {
         this.item = item;
         this.owner = owner;
         vars = new VarsObj(this);
+        kindAttack = Sim.ATTACKS.indexOf(info.type) >= 0;
+        kindWeapon = info.type == "WeaponSkill" || info.type == "WeaponSubSkill";
+        kindClass = info.type == "ClassSkill";
+        kindSignature = ["SignatureSkill", "RoguePoison", "PriestPrayer", "MageConduit"].indexOf(info.type) >= 0
+            || info.id == "Mage_SparkMaster" || info.id == "Rogue_MasterPoisoner";
         maxCharges = info.chargesWith(runes);
         if (info.script != null) interp = new Interp(info.script, this);
+        hasOverride = has("getOverrideSkill");
+        hasCheck = has("checkEnabled");
     }
 
     public function isStatus():Bool return false;
@@ -267,12 +269,26 @@ class Inst implements IObj implements Host {
 
     public function fire(fn:String, args:Array<Dynamic>):Dynamic {
         if (interp == null || !interp.has(fn)) return null;
+        return run(fn, args);
+    }
+
+    /** A handler `fn` (its number `id`, Interp.fnId) of the skill: called when it has one. */
+    public function fireId(id:Int, fn:String, args:Array<Dynamic>):Dynamic {
+        if (interp == null || !interp.hasId(id)) return null;
+        return run(fn, args);
+    }
+
+    public function hasId(id:Int):Bool return interp != null && interp.hasId(id);
+
+    function run(fn:String, args:Array<Dynamic>):Dynamic {
         if (sim.depth > 8) { sim.missing("recursion " + info.id + "." + fn); return null; }
         var prev = sim.current;
         sim.current = this;
         sim.depth++;
-        var key = info.id + "." + fn;
-        sim.calls.set(key, (sim.calls.exists(key) ? sim.calls.get(key) : 0) + 1);
+        if (Sim.countCalls) {
+            var key = info.id + "." + fn;
+            sim.calls.set(key, (sim.calls.exists(key) ? sim.calls.get(key) : 0) + 1);
+        }
         var r:Dynamic = null;
         try r = interp.callFn(fn, args) catch (e:Dynamic) {
             sim.missing("error " + info.id + "." + fn + ": " + Std.string(e).substr(0, 80));
@@ -283,18 +299,58 @@ class Inst implements IObj implements Host {
     }
 
     /** BaseSkill.isBaseAttack: an attack of the chain, the combo attack too (types Attack..AttackCombo). */
-    public function isAttack():Bool return Sim.ATTACKS.indexOf(info.type) >= 0;
+    public function isAttack():Bool return kindAttack;
     /** BaseSkill.isBasicAttack: Attack..Attack4, not the combo attack. */
     public function isBasicAttack():Bool return isAttack() && info.type != "AttackCombo";
 
     // the game's own tests of a skill's kind (st.skill.BaseSkill, HSkill.isSignature, st.skill.BaseSkillAccess.get_isSkill)
-    public function isWeaponSkill():Bool return info.type == "WeaponSkill" || info.type == "WeaponSubSkill";
-    public function isClassSkill():Bool return info.type == "ClassSkill";
-    public function isSignature():Bool
-        return ["SignatureSkill", "RoguePoison", "PriestPrayer", "MageConduit"].indexOf(info.type) >= 0
-            || info.id == "Mage_SparkMaster" || info.id == "Rogue_MasterPoisoner";
+    public function isWeaponSkill():Bool return kindWeapon;
+    public function isClassSkill():Bool return kindClass;
+    public function isSignature():Bool return kindSignature;
     /** hit.isSkill / ctx.isSkill: a weapon, class or signature skill. */
-    public function isSkillHit():Bool return isWeaponSkill() || isClassSkill() || isSignature();
+    public function isSkillHit():Bool return kindWeapon || kindClass || kindSignature;
+
+    // the kind of the skill does not change: asked for with every hit, so decided once
+    var kindAttack = false;
+    var kindWeapon = false;
+    var kindClass = false;
+    var kindSignature = false;
+    /** The skill has a getOverrideSkill / checkEnabled handler (asked for at every action of the hero). */
+    public var hasOverride = false;
+    /** Raised each time the cooldown is watched anew (Sim.watchCooldown). */
+    public var watchGen = 0;
+    public var hasCheck = false;
+    var hitFor:Unit = null;
+    var hitFields:Map<String, Dynamic> = null;
+
+    /** What every hit of this skill has the same (its kind, its attacker): the hits read it through HitObj.base instead of each setting it. */
+    public function hitBase(attacker:Unit):Map<String, Dynamic> {
+        if (hitFields != null && hitFor == attacker) return hitFields;
+        var m = new Map<String, Dynamic>();
+        m.set("skill", this);
+        m.set("skillId", info.id);
+        m.set("kind", info.id);
+        m.set("source", attacker);
+        m.set("sourceUnit", attacker);
+        m.set("instigator", attacker);
+        m.set("sourceObject", attacker);
+        m.set("status", isStatus() ? this : null);
+        m.set("isSkill", isSkillHit());
+        m.set("isWeaponSkill", kindWeapon);
+        m.set("isClassSkill", kindClass);
+        m.set("isSignature", kindSignature);
+        m.set("isBaseAttack", kindAttack);
+        // BaseSkillAccess.get_isAttack: a base attack or the final combo attack
+        m.set("isAttack", kindAttack);
+        m.set("isFinalCombo", info.type == "AttackCombo");
+        m.set("isFinalAttack", info.type == "AttackCombo");
+        m.set("isStatus", isStatus());
+        // an attack of a ranged weapon (its item says; without one: a reach beyond a melee strike)
+        m.set("isRanged", !isStatus() && (item != null && Reflect.hasField(item, "ranged") ? Reflect.field(item, "ranged") == true : info.reach > 8));
+        hitFields = m;
+        hitFor = attacker;
+        return m;
+    }
     /** BaseSkill.isActiveSkill: WeaponSkill, ClassSkill, SignatureSkill. */
     public function isActiveSkill():Bool return info.type == "WeaponSkill" || info.type == "ClassSkill" || info.type == "SignatureSkill";
 
@@ -461,9 +517,21 @@ class Status extends Inst {
 class VarsObj implements IObj {
     var inst:Inst;
     public function new(inst:Inst) this.inst = inst;
+    var cache = new Map<String, Float>();
+
     public function get(name:String):Dynamic {
+        var c = cache.get(name);
+        if (c != null) return c;
         var v = inst.info.v(name, inst.rank, inst.runes);
-        return v == null ? 0.0 : v;
+        // a variable the skill does not have: the one of a skill its description refers to (Sword_Craft_Passive reads the range of its status)
+        if (v == null) for (id in inst.info.refIds) {
+            var r = inst.sim.env.skill(id);
+            var x = r == null ? null : r.v(name, inst.rank, inst.runes);
+            if (x != null) { v = x; break; }
+        }
+        var out:Float = v == null ? 0.0 : v;
+        cache.set(name, out);
+        return out;
     }
     public function set(name:String, v:Dynamic):Void {}
     public function call(name:String, a:Array<Dynamic>):Dynamic return null;
@@ -494,10 +562,23 @@ class SkillObj implements IObj {
 }
 
 class HitObj extends DynObj {
+    /** What the hit has from its skill (Inst.hitBase): read when the hit itself has no value of the name. */
+    public var base:Map<String, Dynamic> = null;
     public function new() super();
+
+    function find(name:String):Dynamic {
+        var v = fields.get(name);
+        if (v == null && base != null && !fields.exists(name)) v = base.get(name);
+        return v;
+    }
+
     override public function get(name:String):Dynamic {
         var v = fields.get(name);
         if (v == null && !fields.exists(name)) {
+            if (base != null) {
+                v = base.get(name);
+                if (v != null || base.exists(name)) return v;
+            }
             switch (name) {
                 case "dmgMult", "healMult", "physicalDmgMult", "magicDmgMult": return 1.0;
                 case "dmgAdd", "critChance", "magicArmorIgnore", "armorIgnore", "threatMultiplier", "amount", "totalHits", "block": return 0.0;
@@ -509,10 +590,10 @@ class HitObj extends DynObj {
     override public function call(name:String, args:Array<Dynamic>):Dynamic {
         if (name == "isStatusType" || name == "isType") {
             // the hit of a status (a poison's tick): its types
-            var st:Dynamic = fields.get("status");
+            var st:Dynamic = find("status");
             return Std.isOfType(st, Inst) && GameRules.isType((st : Inst).info.statusTypes, Sim.str(args[0]));
         }
-        var f = fields.get(name);
+        var f = find(name);
         if (f != null && !Std.isOfType(f, Closure)) return f; // isSkill() written as a call
         return super.call(name, args);
     }
@@ -552,6 +633,8 @@ class Sim {
     public var damage = new Map<String, Float>();
     public var depth = 0;
     /** How many times each script handler ran (diagnostics). */
+    /** Count each script handler's calls in `calls` (tests only: building the key for every call costs time). */
+    public static var countCalls = false;
     public var calls = new Map<String, Int>();
     public var heal = new Map<String, Float>();
     var allyHealed = 0.0;
@@ -760,18 +843,43 @@ class Sim {
     public function fireProjectile(inst:Inst, s:SStep, target:Unit):Void runStepNow(inst, s, target, ctx, true);
 
     public function at(t:Float, f:Void->Void):Void {
-        queue.push({t: t, f: f, seq: seq++});
+        var e = {t: t, f: f, seq: seq++};
+        queue.push(e);
+        var i = queue.length - 1;
+        while (i > 0) {
+            var p = (i - 1) >> 1;
+            if (!before(e, queue[p])) break;
+            queue[i] = queue[p];
+            i = p;
+        }
+        queue[i] = e;
     }
 
+    /** The next event: the earliest (ties: the one made first). The queue is a binary heap on (time, seq). */
     function popNext():{t:Float, f:Void->Void, seq:Int} {
-        var best = -1;
-        for (i in 0...queue.length) if (best < 0 || queue[i].t < queue[best].t || (queue[i].t == queue[best].t && queue[i].seq < queue[best].seq)) best = i;
-        if (best < 0) return null;
-        var e = queue[best];
-        queue[best] = queue[queue.length - 1];
-        queue.pop();
-        return e;
+        var n = queue.length;
+        if (n == 0) return null;
+        var top = queue[0];
+        var last = queue.pop();
+        n--;
+        if (n > 0) {
+            var i = 0;
+            while (true) {
+                var l = 2 * i + 1;
+                if (l >= n) break;
+                var r = l + 1;
+                var c = r < n && before(queue[r], queue[l]) ? r : l;
+                if (!before(queue[c], last)) break;
+                queue[i] = queue[c];
+                i = c;
+            }
+            queue[i] = last;
+        }
+        return top;
     }
+
+    static inline function before(a:{t:Float, f:Void->Void, seq:Int}, b:{t:Float, f:Void->Void, seq:Int}):Bool
+        return a.t < b.t || (a.t == b.t && a.seq < b.seq);
 
     // ---------------------------------------------------------------- stats
 
@@ -1095,6 +1203,7 @@ class Sim {
         length = seconds;
         // passives start: their status steps (permanent buffs) and regular updates
         for (s in hero.skills) s.fire("onStart", []);
+        listensGain = Lambda.exists(hero.skills, s -> s.has("onSkillGainCharge"));
         var tick:Void->Void = null;
         tick = function() {
             if (time > seconds) return;
@@ -1138,6 +1247,20 @@ class Sim {
             resources: res};
     }
 
+    /** Some skill of the hero has an onSkillGainCharge handler (Mage_MysticEmpowerment): the ends of cooldowns are watched. */
+    var listensGain = false;
+
+    /** A skill recovers its cooldown (ent.Hero: onSkillGainCharge to the hero's scripts), the cooldown may have been put off or shortened since. */
+    function watchCooldown(a:Inst):Void {
+        var gen = ++a.watchGen;
+        function check():Void {
+            if (a.watchGen != gen) return;
+            if (time + 1e-9 < a.cdEnd) { at(a.cdEnd, check); return; }
+            dispatchUnit(hero, "onSkillGainCharge", [a], null);
+        }
+        at(a.cdEnd, check);
+    }
+
     /** The hero's next action: a ready skill (prayers when charged), else the next hit of the attack chain. */
     function act():Void {
         if (time < busyUntil) { at(busyUntil, act); return; }
@@ -1146,7 +1269,7 @@ class Sim {
         var pick:Inst = null;
         // a skill that is replaced by another while it can be used again (getOverrideSkill: the recast of a dash, of a throw of fangs
         // or of spheres): the player recasts at once, whatever the first skill's cooldown
-        for (a in actives) if (a.has("getOverrideSkill")) {
+        for (a in actives) if (a.hasOverride) {
             var r = a.fire("getOverrideSkill", []);
             var o = r == null ? null : instById(hero, str(r));
             if (o != null && o != a && time >= o.cdEnd) { pick = o; break; }
@@ -1164,7 +1287,7 @@ class Sim {
         }
         if (pick == null) for (a in actives) {
             var ready = usesCharges(a) ? a.charges > 0 && time >= a.cdEnd : time >= a.cdEnd;
-            if (ready && a.has("checkEnabled")) {
+            if (ready && a.hasCheck) {
                 var r = a.fire("checkEnabled", []);
                 if (r != null && str(r) != "Ok") ready = false;
             }
@@ -1181,9 +1304,11 @@ class Sim {
             // a skill its script plays at once (shouldPlayInstantly: the mace's skill after a critical combo)
             if (pick.has("shouldPlayInstantly") && pick.fire("shouldPlayInstantly", []) == true) dur = 0.02;
             var cd = pick.info.cooldownWith(pick.runes) * cdMod;
+            if (TRACE != null && pick.info.id.indexOf(TRACE) >= 0) Sys.println("TRACE cd " + pick.info.id + " base " + pick.info.cooldownWith(pick.runes) + " mod " + cdMod);
             // a script that sets its own cooldown (the finisher during Urge to Kill: 1 s)
             if (pick.has("onCooldownEval")) { var r = pick.fire("onCooldownEval", [ctx, cd]); if (r != null) cd = num(r); }
             pick.cdEnd = time + cd;
+            if (listensGain) watchCooldown(pick);
             if (usesCharges(pick)) pick.charges--;
             pay(pick);
             castSkill(pick, dur);
@@ -1227,6 +1352,7 @@ class Sim {
     /** A cast: script hooks, steps on Start now (with their delays), on CastEnd / Finish at the end. */
     public function castSkill(inst:Inst, dur:Float):Void {
         casts.set(inst.info.id, (casts.exists(inst.info.id) ? casts.get(inst.info.id) : 0) + 1);
+        if (TRACE != null && inst.info.id.indexOf(TRACE) >= 0) Sys.println("TRACE cast " + inst.info.id + " t=" + Math.round(time * 10) / 10);
         inst.runningUntil = time + dur;
         var c = newCtx(inst);
         ctx = c;
@@ -1459,29 +1585,13 @@ class Sim {
     /** The hit object scripts see (hit.skill, hit.target, hit.isSkill…) for one target of a step. */
     function newHit(inst:Inst, s:SStep, target:Unit, c:Dynamic, attacker:Unit):HitObj {
         var hit = new HitObj();
-        hit.set("skill", inst);
-        hit.set("skillId", inst.info.id);
-        hit.set("kind", inst.info.id);
+        hit.base = inst.hitBase(attacker);
         hit.set("stepId", s.id);
         if (s.type == "Area" && Std.isOfType(c, HitObj) && (c : HitObj).get("areaObj") != null) hit.set("area", (c : HitObj).get("areaObj"));
         hit.set("step", s.id);
         hit.set("target", target);
         hit.set("targetUnit", target);
-        hit.set("source", attacker);
-        hit.set("sourceUnit", attacker);
-        hit.set("instigator", attacker);
-        hit.set("sourceObject", attacker);
         hit.set("ctx", c);
-        hit.set("status", inst.isStatus() ? inst : null);
-        hit.set("isSkill", inst.isSkillHit());
-        hit.set("isWeaponSkill", inst.isWeaponSkill());
-        hit.set("isClassSkill", inst.isClassSkill());
-        hit.set("isSignature", inst.isSignature());
-        hit.set("isBaseAttack", inst.isAttack());
-        // BaseSkillAccess.get_isAttack: a base attack or the final combo attack
-        hit.set("isAttack", inst.isAttack());
-        hit.set("isFinalCombo", inst.info.type == "AttackCombo");
-        hit.set("isFinalAttack", inst.info.type == "AttackCombo");
         // ScriptHitData.get_isFirstHit / get_hitCount: the cast's hits so far (BaseSkill.onHit counts them)
         var hc = Std.isOfType(c, HitObj) ? num((c : HitObj).get("hitCount")) : 1.0;
         hit.set("hitCount", hc);
@@ -1508,6 +1618,8 @@ class Sim {
             if (ps.payFrac >= 0) { base *= ps.pool * ps.payFrac; pooled = true; }
             else base *= ps.stacks;
         }
+        // ScaleWithStacks: a status with a limit of stacks counts its effect once per stack (the ones with no limit hold a pool, above)
+        if (e.stackScale && inst.isStatus() && inst.info.maxStacks < 1000000) base *= Math.max(1, (cast inst : Status).stacks);
         base /= split;
         var hit = newHit(inst, s, target, c, attacker);
         if (inst.proxy != null) hit.set("instigatorUnit", inst.proxy);
@@ -1581,6 +1693,8 @@ class Sim {
             if (rec != null && rec.inst == inst && rec.e == e) rec.amount = 0 else rec = null;
             var link:Inst = e.status != "" ? findStatus(target, e.status, null) : (inst.isStatus() ? inst : null);
             addShieldPool(id, amount, rec, link, s.type != "SelfEffect" && (s.hitFilter == 0 || (s.hitFilter & 2) != 0));
+            // the hero's scripts hear the shield (Book_WaterOrbs_Passive heals for it; a shield status keeps its size)
+            dispatchUnit(hero, "onShield", [link != null ? link : inst, amount], null);
         } else if (target == hero) {
             this.heal.set(id, (this.heal.exists(id) ? this.heal.get(id) : 0) + amount);
             // a heal that is not only for the hero reaches an ally next to the hero as well (area filter bit 2, or no filter)
@@ -1606,10 +1720,13 @@ class Sim {
         return null;
     }
 
+    /** Tests: the status ids to print (env TRACE), read once. */
+    static var TRACE:String = Sys.getEnv("TRACE");
+
     public function applyStatus(target:Unit, id:String, source:Inst, stacks:Int, ?duration:Float):Status {
         if (target == null || id == "") return null;
         var info = env.skill(id);
-        if (Sys.getEnv("TRACE") != null && id.indexOf(Sys.getEnv("TRACE")) >= 0) Sys.println("TRACE status " + id + " t=" + Math.round(time * 10) / 10);
+        if (TRACE != null && id.indexOf(TRACE) >= 0) Sys.println("TRACE status " + id + " t=" + Math.round(time * 10) / 10);
         if (info == null) { missing("status data " + id); return null; }
         var instigator = source != null ? (source.isStatus() ? (cast source : Status).instigator : source.owner) : hero;
         // the instigator's scripts see the status about to be added (the rogue's poison: added again, it blasts)
@@ -1647,7 +1764,7 @@ class Sim {
         }
         dispatchUnit(instigator, "onInflictStatus", [s], null);
         dispatchUnit(instigator, "onInflictStatusEval", [statusEval(s, target)], null);
-        if (target != instigator) dispatchUnit(target, "onReceiveStatus", [s], null);
+        dispatchUnit(target, "onReceiveStatus", [s], null);
         return s;
     }
 
@@ -1666,12 +1783,30 @@ class Sim {
         return o;
     }
 
+    /**
+     * `n` stacks of a status are taken (n < 0: all): the status's Consume steps play for them (a heal scaled with the stacks taken),
+     * the status goes when none is left, and its instigator hears onStatusConsumed. Returns the stacks taken.
+     */
+    public function consumeStacks(s:Status, n:Int):Int {
+        var used = n < 0 ? s.stacks : Std.int(Math.min(n, s.stacks));
+        if (used <= 0) return 0;
+        var before = s.stacks;
+        s.stacks = used;
+        for (step in s.info.steps) if (step.on == "Consume" && s.info.stepActive(step, s.rank, s.runes)) runStep(s, step, null, ctx, true);
+        s.stacks = before - used;
+        if (s.stacks <= 0) removeStatus(s);
+        dispatchUnit(s.instigator, "onStatusConsumed", [s, used], null);
+        return used;
+    }
+
     public function removeStatus(s:Status):Void {
         if (s.removed) return;
         s.removed = true;
         s.unit.statuses.remove(s);
         if (s.unit == hero && shields.length > 0) shields = [for (x in shields) if (x.link != s) x];
         if (s.unit == hero) statsDirty = true;
+        // the steps a status plays when it ends (Infusion_Manfish_Tank_Shield: its shield bursts)
+        for (step in s.info.steps) if (step.on == "Finish" && s.info.stepActive(step, s.rank, s.runes)) runStep(s, step, null, ctx, true);
         s.fire("onStop", []);
         dispatchUnit(s.instigator, "onStatusEnd", [s, time - s.start], null);
         if (s.unit != s.instigator) dispatchUnit(s.unit, "onStatusEnd", [s, time - s.start], null);
@@ -1714,8 +1849,9 @@ class Sim {
 
     public function dispatchUnit(u:Unit, fn:String, args:Array<Dynamic>, skip:Inst):Void {
         if (u == null) return;
-        for (s in u.skills) if (s != skip && s.has(fn)) s.fire(fn, args);
-        for (s in u.statuses.copy()) if (s != skip && !s.removed && s.has(fn)) s.fire(fn, args);
+        var id = Interp.fnId(fn);
+        for (s in u.skills) if (s != skip && s.hasId(id)) s.fireId(id, fn, args);
+        for (s in u.statuses.copy()) if (s != skip && !s.removed && s.hasId(id)) s.fireId(id, fn, args);
     }
 
     function dispatchAll(fn:String, args:Array<Dynamic>):Void {
@@ -1757,12 +1893,7 @@ class Sim {
                 var u = unitArg(0);
                 var s = u == null ? null : findStatus(u, str(a[1]), null);
                 if (s == null) return 0;
-                var n = a.length > 2 && a[2] != null ? Std.int(num(a[2])) : s.stacks;
-                var used = Std.int(Math.min(n, s.stacks));
-                s.stacks -= used;
-                if (s.stacks <= 0) removeStatus(s);
-                dispatchUnit(s.instigator, "onStatusConsumed", [s, used], null);
-                return used;
+                return consumeStacks(s, a.length > 2 && a[2] != null ? Std.int(num(a[2])) : -1);
             case "addStatusDuration", "extendStatusDuration":
                 var u = unitArg(0);
                 var s = u == null ? null : findStatus(u, str(a[1]), null);
@@ -1930,6 +2061,7 @@ class Sim {
                 if (f != null) f.run([hero]);
                 return null;
             case "isSkillFromPrayer": return Std.isOfType(a[0], Inst) && (a[0] : Inst).info.type == "PriestPrayer";
+            case "toUnit": return Std.isOfType(a[0], Unit) ? a[0] : null;
             case "isCrowdControl":
                 // a status about to be added (onTryAddStatus) or a status: one of its types is a crowd control (Data.statusType flags)
                 var ci:SkillInfo = Std.isOfType(a[0], HitObj) ? env.skill(str((a[0] : HitObj).get("id"))) : (Std.isOfType(a[0], Inst) ? (a[0] : Inst).info : null);

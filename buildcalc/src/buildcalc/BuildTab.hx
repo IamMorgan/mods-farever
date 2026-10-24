@@ -419,12 +419,13 @@ class BuildTab {
 
     /** Each frame: a little of the calculation; the window is drawn again when it is done. */
     public static function tick():Void {
-        if (job == null) { lastFrame = -1; return; }
+        if (job == null) { lastFrame = -1; Optimizer.frameMs = 0; return; }
         // pauses of the game between frames while the calculation runs (it must not stall the game: a stall can cost
         // the connection to the server)
         var nowT = haxe.Timer.stamp();
         if (lastFrame > 0) {
             var gap = (nowT - lastFrame) * 1000;
+            Optimizer.frameMs = Optimizer.frameMs * 0.8 + gap * 0.2;
             if (gap > longestGap) longestGap = gap;
             if (gap > 250) DebugLog.line("calculate: the game paused " + Math.round(gap) + " ms between two frames (calculation stage: " + job.stage + ")");
         }
@@ -464,7 +465,7 @@ class BuildTab {
         lastProgress = -1;
         DebugLog.guard("test: finished", () -> TestMode.finished(done, took));
         var r = Views.result;
-        status = r == null || r.pool == 0 ? Texts.noItems() : Texts.considered(r.pool) + " "
+        status = r == null || r.pool == 0 ? Texts.noItems() : Texts.considered(r.pool) + " " + Texts.searched(r.builds, r.fights, r.replayed) + " "
             + (r.changed == 0 ? Texts.alreadyBest() : Texts.changedSlots(r.changed)) + " " + Texts.calcTime(took, 0);
         DebugLog.flush();
         // drawn when the calculator tab is open (else when it is opened again: build)
