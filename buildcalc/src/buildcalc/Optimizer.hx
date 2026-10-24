@@ -925,6 +925,7 @@ class Optimizer {
             worn.set(c.key, s);
         }
         var arsenal = b.items.get(1);
+        if (arsenal != null && main != null && arsenal.id == main.id) bad.push(main.id + " is both the main and the arsenal weapon");
         var chosen = b.arsenal == null ? [] : b.arsenal;
         if (arsenal == null && chosen.length > 0) bad.push("arsenal skills without an arsenal weapon");
         if (arsenal != null) {
@@ -1055,6 +1056,8 @@ class Optimizer {
         // only where the game lets the item be worn (st.Equipment.isEquippableOnSlot): a two-handed weapon, fists or
         // halos never go to the off-hand
         if (c != null && !canPlace(c, s)) { badPlace++; return; }
+        // the same weapon is never both the main weapon and the arsenal one (the arsenal would only repeat the main weapon's skills)
+        if (c != null && (s == 0 || s == 1)) { var other = b.items.get(1 - s); if (other != null && other != c && other.id == c.id) return; }
         // the infusion the slot has now (a worn item carries its own): the new item takes it over, so a swap does not
         // break an infusion set (6 worn Manfish items: any new item without it dropped the set to 5, rank 3 -> 2, and
         // looked worse than it is)
@@ -1534,6 +1537,7 @@ class Prefilter implements Task {
             }
             if (ci < list.length) {
                 var c = list[ci++];
+                if ((s == 0 || s == 1) && base.items.get(1 - s) != null && base.items.get(1 - s).id == c.id) return false;
                 var trial = Optimizer.copy(s == 0 ? o.canon : (s == Items.OFFHAND ? baseOH : base));
                 // a created item takes over the infusion of the worn item it replaces (the set is not broken: see place)
                 var was = trial.items.get(s);
