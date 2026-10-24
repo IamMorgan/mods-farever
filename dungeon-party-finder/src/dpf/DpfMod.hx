@@ -137,12 +137,6 @@ class DpfMod {
         try control.update(instance, dt) catch (error:Dynamic) trace("[DPF] dungeon window (" + control.stage + "): " + Std.string(error));
     }
 
-    /** Just before the game draws the dungeon window: its own layout may have moved it back (hovering a control does), so it is put where the player left it. */
-    @:hlx.postfix(ui.BaseElement.sync)
-    static function afterElementSync(instance:Dynamic, ctx:Dynamic, result:Void):Void {
-        drag.place(instance);
-    }
-
     @:hlx.prefix(ui.win.element.InstanceSelectScreen.startAction)
     static function beforeDungeonStart(instance:Dynamic):HlxPrefixResult<Void> {
         // Not while a search runs, whichever way the action comes (mouse, keyboard, controller).

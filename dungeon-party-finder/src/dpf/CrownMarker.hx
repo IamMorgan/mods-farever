@@ -83,7 +83,7 @@ class CrownMarker {
     /** The crown sits on the banner's top right corner. */
     function place(banner:Dynamic, crown:Dynamic):Void {
         var width = 0.0;
-        try width = G.number(G.call("h2d.Flow", "get_outerWidth", banner)) catch (_:Dynamic) {}
+        try width = G.number(G.field(banner, "calculatedWidth")) catch (_:Dynamic) {}
         G.call("h2d.Object", "setPosition", crown, [width > SIZE ? width - SIZE + 6 : -6, -9]);
     }
 }
