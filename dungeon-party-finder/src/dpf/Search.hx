@@ -1,0 +1,301 @@
+package dpf;
+
+/** A searcher as the others see them. `id` is the platform user id, `uid` the account id the game invites by. */
+typedef Peer = {id:String, uid:String, name:String, level:Int};
+
+/** A lobby found in the platform's list. `handle` is whatever the adapter needs to join it. */
+typedef LobbyRef = {id:String, created:Float, members:Int, max:Int, handle:Dynamic};
+
+/** The platform's lobbies (Steam through the game's own mpman.Lobby). Callbacks may fire at once or later. */
+interface LobbyApi {
+    function list(key:String, done:(lobbies:Array<LobbyRef>) -> Void, fail:(why:String) -> Void):Void;
+    function create(key:String, created:Float, me:Peer, max:Int, done:(ok:Bool) -> Void):Void;
+    function join(lobby:LobbyRef, me:Peer, done:(ok:Bool) -> Void):Void;
+    /** Leaves the lobby the adapter is in, if any. */
+    function leave():Void;
+    function inLobby():Bool;
+    function lobbyId():String;
+    /** When the current lobby was created (the creator's stamp). */
+    function created():Float;
+    /** The members of the current lobby; `uid` is empty while a member's data has not arrived yet. */
+    function members():Array<Peer>;
+    function ownerId():String;
+    function selfId():String;
+}
+
+/** The game's own parties. */
+interface PartyApi {
+    /** Sends the game's group invitation to the account. */
+    function inviteUid(uid:String):Void;
+    /** Account ids of everyone in my current group (me included; a lone player is a group of one). */
+    function groupUids():Array<String>;
+}
+
+enum SearchState {
+    Idle;
+    Listing;
+    Creating;
+    Joining;
+    InLobby;
+    Inviting;
+    /** A party has formed (the platform lobby is already left); the dungeon lobby takes over. */
+    Grouped;
+    /** "list": the platform lobbies keep failing, "party": already in a party. */
+    Failed(reason:String);
+}
+
+/**
+ * The matchmaking itself, free of the game: everyone with the same key meets in one platform lobby. The lobby's owner is the
+ * leader, and the oldest lobby wins: whoever finds nothing creates a lobby, a younger lobby's owner moves into an older one,
+ * so the earliest searcher ends up leading. When the lobby is full (or has enough players and has not changed for a while)
+ * the leader invites everyone else into a game party and leaves the lobby; the others see the party form and leave too.
+ */
+class Search {
+    public static inline var POLL = 1.0;          // seconds between looks at the lobby
+    public static inline var SETTLE = 8.0;        // a lobby below full is started this long after its last change
+    public static inline var INVITE_TIMEOUT = 40.0;
+    public static inline var RETRY = 3.0;
+    public static inline var MERGE_EVERY = 4.0;
+    public static inline var MAX_FAILURES = 5;
+    public static inline var ABSENT_POLLS = 4;     // looks without me in my own lobby before it is given up
+
+    public var state(default, null):SearchState = Idle;
+    /** True while I own the platform lobby I am in. */
+    public var leader(default, null) = false;
+    /** Players in the lobby (with data) as of the last look. */
+    public var count(default, null) = 0;
+    /** The last problem reported by the platform. */
+    public var lastError(default, null) = "";
+
+    var lobbies:LobbyApi;
+    var party:PartyApi;
+    var clock:() -> Float;
+    var maxPlayers:Int;
+    public var minPlayers:Int;
+
+    var key = "";
+    var me:Peer = null;
+    var now = 0.0;
+    var token = 0;            // bumped by every restart/cancel: answers of older requests are ignored
+    var pending = false;
+    var nextList = 0.0;
+    var nextPoll = 0.0;
+    var nextMerge = 0.0;
+    var mergePending = false;
+    var failures = 0;
+    var absent = 0;
+    var lastChange = 0.0;
+    var invited:Array<String> = [];
+    var inviteAt = 0.0;
+    var seen:Map<String, Bool> = new Map();
+
+    /** `clock` is the cross-player time stamp of lobbies (server or wall time), `maxPlayers` the party size. */
+    public function new(lobbies:LobbyApi, party:PartyApi, clock:() -> Float, maxPlayers = 4, minPlayers = 4) {
+        this.lobbies = lobbies;
+        this.party = party;
+        this.clock = clock;
+        this.maxPlayers = maxPlayers;
+        this.minPlayers = minPlayers;
+    }
+
+    public function isActive():Bool return switch state { case Listing | Creating | Joining | InLobby | Inviting: true; default: false; };
+
+    public function start(key:String, me:Peer, now:Float):Void {
+        if (isActive() || state == Grouped) return;
+        this.now = now;
+        this.key = key;
+        this.me = me;
+        seen = new Map();
+        if (me == null || me.uid == "" || party.groupUids().length > 1) { state = Failed("party"); return; }
+        begin();
+    }
+
+    public function cancel():Void {
+        token++;
+        pending = false;
+        mergePending = false;
+        if (lobbies.inLobby()) lobbies.leave();
+        leader = false;
+        count = 0;
+        state = Idle;
+    }
+
+    /** Back to nothing at all (the party is over). */
+    public function reset():Void cancel();
+
+    function begin():Void {
+        token++;
+        pending = false;
+        mergePending = false;
+        leader = false;
+        count = 0;
+        failures = 0;
+        state = Listing;
+        nextList = now;
+    }
+
+    function restart(delay:Float):Void {
+        token++;
+        if (lobbies.inLobby()) lobbies.leave();
+        begin();
+        nextList = now + delay;
+    }
+
+    public function update(now:Float):Void {
+        this.now = now;
+        switch state {
+            case Listing:
+                if (!pending && now >= nextList) requestList();
+            case InLobby:
+                if (now >= nextPoll) { nextPoll = now + POLL; poll(); }
+            case Inviting:
+                if (now >= nextPoll) { nextPoll = now + POLL; pollInviting(); }
+            default:
+        }
+    }
+
+    // ---- finding or making a lobby ----
+
+    function requestList():Void {
+        pending = true;
+        var t = token;
+        lobbies.list(key, found -> {
+            if (t != token) return;
+            pending = false;
+            if (state == Listing) choose(found);
+        }, why -> {
+            if (t != token) return;
+            pending = false;
+            lastError = why;
+            failures++;
+            nextList = now + RETRY;
+            if (failures >= MAX_FAILURES) { token++; state = Failed("list"); }
+        });
+    }
+
+    static function before(aCreated:Float, aId:String, bCreated:Float, bId:String):Bool
+        return aCreated < bCreated || (aCreated == bCreated && aId < bId);
+
+    function older(found:Array<LobbyRef>, excludeId:String, thanCreated:Null<Float>, thanId:String):Array<LobbyRef> {
+        var out = found.filter(l -> l.id != excludeId && l.members < l.max
+            && (thanCreated == null || before(l.created, l.id, thanCreated, thanId)));
+        out.sort((a, b) -> before(a.created, a.id, b.created, b.id) ? -1 : (before(b.created, b.id, a.created, a.id) ? 1 : 0));
+        return out;
+    }
+
+    function choose(found:Array<LobbyRef>):Void {
+        var candidates = older(found, lobbies.lobbyId(), null, "");
+        if (candidates.length > 0) joinLobby(candidates[0]);
+        else createLobby();
+    }
+
+    function joinLobby(target:LobbyRef):Void {
+        state = Joining;
+        var t = token;
+        lobbies.join(target, me, ok -> {
+            if (t != token) { if (ok) lobbies.leave(); return; }
+            if (ok) enterLobby();
+            else { state = Listing; nextList = now + 1; }
+        });
+    }
+
+    function createLobby():Void {
+        state = Creating;
+        var t = token;
+        lobbies.create(key, clock(), me, maxPlayers, ok -> {
+            if (t != token) { if (ok) lobbies.leave(); return; }
+            if (ok) enterLobby();
+            else { state = Listing; nextList = now + RETRY; }
+        });
+    }
+
+    function enterLobby():Void {
+        state = InLobby;
+        lastChange = now;
+        absent = 0;
+        count = 0;
+        nextPoll = now;
+        nextMerge = now + MERGE_EVERY;
+        mergePending = false;
+    }
+
+    // ---- in the lobby ----
+
+    function poll():Void {
+        if (!lobbies.inLobby()) { restart(1); return; }
+        var self = lobbies.selfId();
+        var all = lobbies.members();
+        var present = false;
+        for (p in all) if (p.id == self) present = true;
+        // The platform dropped me from the lobby (it was closed, or I was removed): look for another one.
+        if (self != "" && !present) {
+            if (++absent >= ABSENT_POLLS) { restart(1); return; }
+        } else absent = 0;
+        var peers = all.filter(p -> p.uid != "");
+        for (p in peers) if (p.id != self) seen.set(p.uid, true);
+
+        // The game's party has formed around someone from this lobby: the search is over.
+        var group = party.groupUids();
+        if (group.length > 1) {
+            for (u in group) if (u != me.uid && seen.exists(u)) { finishToParty(); return; }
+        }
+
+        if (peers.length != count) { count = peers.length; lastChange = now; }
+        leader = self != "" && lobbies.ownerId() == self;
+        if (!leader) return;
+
+        var n = peers.length;
+        if (n >= 2 && (n >= maxPlayers || (n >= minPlayers && now - lastChange >= SETTLE))) { invite(peers, self); return; }
+
+        if (!mergePending && now >= nextMerge) {
+            nextMerge = now + MERGE_EVERY;
+            mergePending = true;
+            var t = token;
+            lobbies.list(key, found -> {
+                if (t != token) return;
+                mergePending = false;
+                if (state == InLobby) maybeMerge(found);
+            }, why -> {
+                if (t == token) mergePending = false;
+            });
+        }
+    }
+
+    /** An older lobby with room exists: its leader came first, so this lobby's owner moves in. */
+    function maybeMerge(found:Array<LobbyRef>):Void {
+        var candidates = older(found, lobbies.lobbyId(), lobbies.created(), lobbies.lobbyId());
+        if (candidates.length == 0) return;
+        token++;
+        lobbies.leave();
+        leader = false;
+        count = 0;
+        joinLobby(candidates[0]);
+    }
+
+    function invite(peers:Array<Peer>, self:String):Void {
+        invited = [];
+        for (p in peers) if (p.id != self && p.uid != me.uid) invited.push(p.uid);
+        if (invited.length == 0) return;
+        for (u in invited) party.inviteUid(u);
+        inviteAt = now;
+        nextPoll = now + POLL;
+        state = Inviting;
+    }
+
+    function pollInviting():Void {
+        var group = party.groupUids();
+        var accepted = 0;
+        for (u in invited) if (group.indexOf(u) >= 0) accepted++;
+        if (accepted == invited.length || now - inviteAt >= INVITE_TIMEOUT) {
+            if (group.length > 1) finishToParty();
+            else restart(1);
+        }
+    }
+
+    function finishToParty():Void {
+        token++;
+        if (lobbies.inLobby()) lobbies.leave();
+        leader = false;
+        state = Grouped;
+    }
+}

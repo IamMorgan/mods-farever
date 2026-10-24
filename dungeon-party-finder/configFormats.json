@@ -1,0 +1,37 @@
+{
+  "configs": [
+    {
+      "type": "checkbox",
+      "label": "Show the DPF button",
+      "key": "showButton"
+    },
+    {
+      "type": "checkbox",
+      "label": "Unpin (drag the DPF button with the left mouse button)",
+      "key": "unpinned"
+    },
+    {
+      "min": 50,
+      "max": 200,
+      "step": 10,
+      "type": "slider",
+      "label": "Button size %",
+      "key": "buttonScalePercent"
+    },
+    {
+      "min": 2,
+      "max": 4,
+      "step": 1,
+      "type": "slider",
+      "label": "Players needed to start (4 = a full group; fewer starts after a short wait)",
+      "key": "minPlayers"
+    },
+    {
+      "type": "checkbox",
+      "label": "Write a log to hlx/dpf-debug.txt (for bug reports)",
+      "key": "debugLog"
+    }
+  ],
+  "schemaVersion": 1,
+  "displayName": "Dungeon Party Finder"
+}
