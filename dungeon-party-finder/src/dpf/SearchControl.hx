@@ -14,7 +14,6 @@ class SearchControl {
     static inline var SPOKES = 12;
     static inline var SPIN_SPEED = 7.0;
 
-    public var russian = false;
 
     var ui:UiKit;
     var session:Session;
@@ -56,8 +55,8 @@ class SearchControl {
         var index = N.children(actions).indexOf(start);
         if (index < 0) { forget(); return; }
         status = N.label(dom, "", "dpfSearchStatus");
-        button = N.button(dom, Locale.search(russian), "dpfSearchButton", () -> press(screen));
-        buttonText = Locale.search(russian);
+        button = N.button(dom, Locale.search(), "dpfSearchButton", () -> press(screen));
+        buttonText = Locale.search();
         G.call("h2d.Object", "addChildAt", actions, [status, index]);
         G.call("h2d.Object", "addChildAt", actions, [button, index + 2]);
         var width = G.integer(G.field(start, "minWidth"), 0);
@@ -94,11 +93,11 @@ class SearchControl {
         var searching = mode == Searching && here;
         var shown = searching || (mode == Idle && party.groupSize() == 1);
         N.show(button, shown);
-        var text = searching ? Locale.cancel(russian) : Locale.search(russian);
+        var text = searching ? Locale.cancel() : Locale.search();
         if (text != buttonText) { buttonText = text; N.setButtonText(button, text); }
 
         var line = searching
-            ? Locale.searching(russian) + (session.found() > 0 ? "  " + session.found() + "/" + Session.GROUP : "")
+            ? Locale.searching() + (session.found() > 0 ? "  " + session.found() + "/" + Session.GROUP : "")
             : (shown ? session.message : "");
         if (line != statusText) { statusText = line; N.setText(status, line); }
         N.show(status, line != "");

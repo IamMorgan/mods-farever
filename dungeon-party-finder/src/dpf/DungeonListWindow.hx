@@ -16,9 +16,9 @@ class DungeonListWindow {
     static inline var ROW = 34;
     static inline var GAP = 4;
     static inline var VISIBLE = 10;
-    static inline var BAR = 10;
+    /** Room kept at the right of the rows for the flow's own scroll bar (it shows itself when the rows do not fit). */
+    static inline var BAR = 22;
 
-    public var russian = false;
 
     var window:Dynamic;
     var onPick:DungeonInfo -> Void;
@@ -94,7 +94,7 @@ class DungeonListWindow {
         N.padding(header, 0);
         N.size(header, WIDTH - 2, HEADER);
         N.position(header, 0, 0);
-        G.call("ui.win.TitleWindow", "setHeader", win, [null, Locale.listTitle(russian)]);
+        G.call("ui.win.TitleWindow", "setHeader", win, [null, Locale.listTitle()]);
         var title = G.field(header, "headerTitle");
         var left = G.current("h2d.Align", "Left");
         G.call("h2d.Text", "set_textAlign", title, [left]);
@@ -132,31 +132,16 @@ class DungeonListWindow {
         N.style(list, "overflow", scroll);
         var listDom = G.field(list, "dom");
 
-        var scrollBar = G.field(list, "scrollBar");
-        var cursor = G.field(list, "scrollBarCursor");
-        if (scrollBar != null && cursor != null) {
-            var right = G.current("h2d.FlowAlign", "Right");
-            N.absolute(list, scrollBar);
-            N.padding(scrollBar, 0);
-            N.size(scrollBar, BAR);
-            N.size(cursor, BAR);
-            var layout = G.call("h2d.Flow", "getProperties", list, [scrollBar]);
-            G.set(layout, "horizontalAlign", right);
-            G.set(layout, "verticalAlign", top);
-            N.style(scrollBar, "halign", right);
-            N.style(scrollBar, "valign", top);
-        }
-
-        var rowWidth = inner - (entries.length > VISIBLE ? BAR + 6 : 0);
+        var rowWidth = inner - (entries.length > VISIBLE ? BAR : 0);
         for (i in 0...entries.length) {
             var entry = entries[i];
-            var text = Locale.level(russian, entry.level) + "  |  " + entry.name;
+            var text = Locale.level(entry.level) + "  |  " + entry.name;
             var row = N.button(listDom, text, "dpfDungeon" + i, () -> pick(entry));
             N.inFlow(list, row);
             N.size(row, rowWidth, ROW);
         }
         if (entries.length == 0) {
-            var empty = N.label(listDom, Locale.listEmpty(russian), "dpfDungeonEmpty");
+            var empty = N.label(listDom, Locale.listEmpty(), "dpfDungeonEmpty");
             N.inFlow(list, empty);
         }
 
@@ -168,8 +153,7 @@ class DungeonListWindow {
     }
 
     function pick(entry:DungeonInfo):Void {
-        var handler = onPick;
-        hide();
-        if (handler != null) handler(entry);
+        // The window stays until the dungeon window is ready (DpfMod.pick closes it then).
+        if (onPick != null) onPick(entry);
     }
 }

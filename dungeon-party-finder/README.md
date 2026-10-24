@@ -23,7 +23,7 @@ Other players need the mod too: it finds only players who use it.
 - **Leader:** the player who started searching earliest leads. When enough players are found the leader sends the game's own group invitation (in-game, not a Steam invite) to the others. Accept it in the game's invitation window. Whoever declines or does not answer within 30 seconds is set aside and the leader invites the next searcher who arrives, until the group is full of four. The leader can press **Cancel** to go on with fewer.
 - **Dungeon lobby:** after you are grouped everyone gets the group's dungeon window of the game, with its usual **Start** (leader) and **Ready** (the others).
 - **Crown:** the group leader is marked with a small crown in the list of party members on the left of the screen.
-- **Language:** the windows and the settings page follow the client's language (English or Russian).
+- **Language:** the windows and the settings page follow the client's language (all 14 languages of the game; English for any other).
 
 ### Settings (Esc > Mod Settings > Dungeon Party Finder)
 
@@ -45,6 +45,7 @@ Other players need the mod too: it finds only players who use it.
 - The dungeon list is a window of the game itself (like the Dungeon Button mod's), with all dungeons and a scroll bar for the rows beyond the first ten.
 - The dungeon window is the game's own; the mod adds a **Search** button under **Start**, which is off while a search runs. The turning circle of the search now turns.
 - A declined or ignored group invitation is replaced by the next searcher; the search goes on until the group is full.
+- The mod's texts and settings page follow the client's language, whichever of the game's 14 it is. A click on a dungeon opens its window (the group is read from the hero's player, as the game's own dungeon buttons do), the list's scroll bar is the flow's own and shows itself.
 - The settings "players needed to start" and "write a log" are gone.
 - First version: the DPF button, the dungeon list, matching by dungeon, difficulty and level bracket, group invitations and the crown of the group leader.
 

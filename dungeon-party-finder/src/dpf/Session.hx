@@ -20,7 +20,6 @@ class Session {
 
     public var activityId(default, null) = "";
     public var difficulty(default, null) = 0;
-    public var russian = false;
     /** What went wrong last (shown in the dungeon window), empty when nothing did. */
     public var message(default, null) = "";
 
@@ -48,8 +47,8 @@ class Session {
     public function start(activityId:String, difficulty:Int, now:Float):Void {
         if (mode() != Idle) return;
         message = "";
-        if (party.hero() == null || party.me() == null) { message = Locale.noHero(russian); return; }
-        if (party.groupSize() > 1) { message = Locale.inParty(russian); return; }
+        if (party.hero() == null || party.me() == null) { message = Locale.noHero(); return; }
+        if (party.groupSize() > 1) { message = Locale.inParty(); return; }
         this.activityId = activityId;
         this.difficulty = difficulty;
         var key = SearchKey.make(activityId, difficulty, LevelBrackets.index(party.level(), party.maxLevel()));
@@ -80,13 +79,13 @@ class Session {
                     lostAt = -1;
                     flow.begin(activityId, difficulty);
                 case Failed(reason) if (message == ""):
-                    message = reason == "party" ? Locale.inParty(russian) : Locale.platformDown(russian);
+                    message = reason == "party" ? Locale.inParty() : Locale.platformDown();
                 default:
             }
             if (inParty) {
                 if (party.groupSize() < 2) {
                     if (lostAt < 0) lostAt = now;
-                    else if (now - lostAt > 2) { endParty(); message = Locale.partyLost(russian); }
+                    else if (now - lostAt > 2) { endParty(); message = Locale.partyLost(); }
                 } else {
                     lostAt = -1;
                     flow.update(now);

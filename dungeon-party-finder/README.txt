@@ -17,6 +17,6 @@ How to use:
 Settings (Esc -> Mod Settings -> Dungeon Party Finder): show the button, "Unpin" (hold the left mouse
 button on the DPF button and drag it), button size.
 
-The windows and the settings follow the client's language (English or Russian).
+The windows and the settings follow the client's language (all 14 languages of the game; English for any other).
 Matching uses the platform's lobbies through the game's own multiplayer code (Steam lobbies on
 Steam); the mod has no server of its own.

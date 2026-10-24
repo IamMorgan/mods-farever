@@ -42,7 +42,6 @@ class DpfMod {
     static var control = new SearchControl(ui, session, party);
     static var dungeons:Array<DungeonInfo> = null;
     static var dungeonsAt = -100.0;
-    static var russian = false;
 
     static function main():Void {
         config.save();
@@ -118,7 +117,6 @@ class DpfMod {
             dungeons = GameDungeons.read();
             dungeonsAt = now;
         }
-        list.russian = russian;
         list.show(dungeons, pick);
     }
 
@@ -126,11 +124,11 @@ class DpfMod {
     static function pick(dungeon:DungeonInfo):Void {
         var open = DungeonScreens.find();
         if (open != null) {
-            if (DungeonScreens.activityOf(open) == dungeon.id) return;
+            if (DungeonScreens.activityOf(open) == dungeon.id) { list.hide(); return; }
             if (session.mode() == Searching) session.cancel();
             DungeonScreens.close(open);
         }
-        DungeonScreens.open(party, dungeon.id, () -> {});
+        DungeonScreens.open(party, dungeon.id, () -> list.hide(), () -> list.hide());
     }
 
     @:hlx.postfix(ui.win.element.InstanceSelectScreen.update)
@@ -157,16 +155,13 @@ class DpfMod {
     static function localizeSettings(now:Float):Void {
         if (now < nextLanguageCheck) return;
         nextLanguageCheck = now + 1;
-        var language = G.text(G.current("Options", "language"));
-        if (language == "") language = G.text(G.staticCall("hxd.System", "get_lang", []));
-        if (language == "" || language == localizedLanguage) return;
+        var language = G.str(G.current("Options", "language"));
+        if (language == null || language == "") language = G.str(G.staticCall("hxd.System", "get_lang", []));
+        if (language == null || language == "" || language == localizedLanguage) return;
         localizedLanguage = language;
-        russian = Locale.isRussian(language);
-        list.russian = russian;
-        control.russian = russian;
-        session.russian = russian;
+        Locale.setLanguage(language);
         var path = "hlx/mods/" + HlxRuntime.moduleName() + "/configFormats.json";
-        var text = SettingsText.json(russian);
+        var text = SettingsText.json();
         var current = try sys.io.File.getContent(path) catch (_:Dynamic) "";
         if (current != text) {
             // Vortex deploys a link to its own copy: replace the link, never write into that copy.
