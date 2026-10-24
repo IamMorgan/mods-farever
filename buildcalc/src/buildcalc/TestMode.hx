@@ -208,6 +208,7 @@ class TestMode {
         if (Reflect.hasField(cmd, "ranged")) s.ranged = Reflect.field(cmd, "ranged") == true;
         if (Reflect.hasField(cmd, "ideal")) s.ideal = Reflect.field(cmd, "ideal") == true;
         if (Reflect.hasField(cmd, "crit")) s.crit = Reflect.field(cmd, "crit") == true;
+        if (Reflect.hasField(cmd, "critBoost")) Optimizer.CRIT_BOOST = Reflect.field(cmd, "critBoost");
         return s;
     }
 

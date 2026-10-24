@@ -101,7 +101,7 @@ class Optimizer {
     /** Axes of the score: damage, defense, health, healing, and the chance of a critical strike (counted when the questionnaire asks). */
     public static inline var AXES = 5;
     /** How much more a High damage priority with criticality weighs the crit chance than damage itself: it must get the most the items allow. */
-    public static inline var CRIT_BOOST = 3.0;
+    public static var CRIT_BOOST = 0.25;
     var best:Array<Float> = [0, 0, 0, 0, 0];
     var finalBuild:Build;
     /** The weights of the score: the player's priorities (3 high … 1 low), "not important" = 0.02 (only breaks ties). */
