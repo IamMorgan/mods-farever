@@ -59,7 +59,11 @@ class Nodes {
                 if (gid == "") continue;
                 var x = G.number(G.field(e, "posx")), y = G.number(G.field(e, "posy"));
                 var k = Math.round(x) + "," + Math.round(y);
-                if (seen.exists(k)) continue;
+                if (scanFinished && scanned.length > 0 && checkHits + checkMisses < 40 && !seen.exists(k)) {
+                    if (nearScanned(x, y)) checkHits++; else checkMisses++;
+                    if (checkHits + checkMisses == 40) Log.t("hunt", "node scan check: " + checkHits + " of 40 nodes loaded around the hero were in the scanned list (" + checkMisses + " not)");
+                }
+                if (seen.exists(k) || nearScanned(x, y)) continue;
                 seen.set(k, {key: nextKey++, id: G.s(G.field(G.field(e, "inf"), "id")), gatherable: gid, x: x, y: y, z: G.number(G.field(e, "posz"), Math.NaN)});
                 seenDirty = true;
             }
@@ -89,10 +93,133 @@ class Nodes {
         } catch (e:Dynamic) Log.t("err", "node memory not saved: " + Std.string(e));
     }
 
-    /** The nodes known now: the world's element table and the ones seen. */
+    // ---- the whole map's nodes, from the game's own chunk files ----
+
+    /**
+     * The game reads the prefabs of EVERY chunk of the world when a level loads (prefab.World.loadDataFromFiles: gameplayData.chunkPrefabs),
+     * the unloaded ones too. Their element prefabs are the nodes of the whole map: ore and plants anywhere, known before the hero ever went
+     * there. The chunks are read a few per call (see scanStep) and the nodes put in `scanned`.
+     */
+    static var scanned:Array<NodeSpot> = [];
+    static var scanGrid:Map<Int, Bool> = new Map();
+    static var scanChunks:Array<Dynamic> = null;
+    static var scanMap:Dynamic = null;
+    static var scanPos = 0;
+    static var scanFinished = false;
+    static var scanElements = 0;
+    static var scanRefs = 0;
+    static var scanRefSamples:Array<String> = [];
+    static var scanRefSeen:Map<String, Bool> = new Map();
+    static var gidOfId:Map<String, String> = new Map();
+    static var checkHits = 0;
+    static var checkMisses = 0;
+
+    /** True while the chunk files of the world are still being read. */
+    public static function scanning():Bool return !scanFinished;
+
+    static inline function cellKey(x:Float, y:Float):Int return Math.floor(x / 4) * 100003 + Math.floor(y / 4);
+
+    static function nearScanned(x:Float, y:Float):Bool {
+        for (dx in -1...2) for (dy in -1...2) if (scanGrid.exists(cellKey(x + dx * 4, y + dy * 4))) return true;
+        return false;
+    }
+
+    /** The gatherable (data id) an element gives, "" when the element is none. */
+    static function gatherableOf(elementId:String):String {
+        var g = gidOfId.get(elementId);
+        if (g != null) return g;
+        g = "";
+        try {
+            var def = G.call("haxe.ds.StringMap", "get", G.current("HElement", "allElements"), [elementId]);
+            if (def != null) g = G.s(G.field(G.field(G.field(def, "inf"), "props"), "gatherable"));
+        } catch (_:Dynamic) {}
+        gidOfId.set(elementId, g);
+        return g;
+    }
+
+    /** Developer: what the element table says about an id. */
+    public static function elementInfo(id:String):String {
+        try {
+            var def = G.call("haxe.ds.StringMap", "get", G.current("HElement", "allElements"), [id]);
+            if (def == null) return id + ": no element";
+            var props = G.field(G.field(def, "inf"), "props");
+            return id + ": element, gatherable '" + G.s(G.field(props, "gatherable")) + "', status " + G.field(props, "releaseStatus") + ", inherit '" + G.s(G.field(G.field(def, "inf"), "inherit")) + "'";
+        } catch (e:Dynamic) { return id + ": error " + Std.string(e); }
+    }
+
+    /** Reads up to `budget` chunks of the world's chunk table. */
+    public static function scanStep(budget:Int = 40):Void {
+        if (scanFinished) return;
+        try {
+            if (scanChunks == null) {
+                var world = G.current("world.World", "inst");
+                var gp = G.field(world, "gameplayData");
+                scanChunks = G.fastArray(G.field(gp, "chunkData"));
+                scanMap = G.field(gp, "chunkPrefabs");
+                if (scanMap == null || scanChunks.length == 0) throw "no chunk table (" + scanChunks.length + " chunks)";
+                Log.t("hunt", "node scan: " + scanChunks.length + " chunks in the world's table");
+            }
+            var end = Std.int(Math.min(scanChunks.length, scanPos + budget));
+            while (scanPos < end) {
+                var d = scanChunks[scanPos++];
+                var wcd = G.call("haxe.ds.StringMap", "get", scanMap, [G.s(G.field(d, "id"))]);
+                if (wcd == null) continue;
+                for (p in G.fastArray(G.call("prefab.WorldChunkData", "getPrefabs", wcd))) visit(p, 0, 0, 0, 0);
+            }
+            if (scanPos >= scanChunks.length) {
+                scanFinished = true;
+                var wanted = 0;
+                for (s in scanned) if (s.gatherable != "") wanted++;
+                Log.t("hunt", "node scan done: " + scanElements + " element prefabs, " + scanned.length + " ore/plant nodes in the whole world");
+            }
+        } catch (e:Dynamic) {
+            scanFinished = true;
+            Log.t("err", "node scan failed (the search of zones is used instead): " + Std.string(e));
+        }
+    }
+
+    static function visit(p:Dynamic, ox:Float, oy:Float, oz:Float, depth:Int):Void {
+        if (p == null || depth > 6) return;
+        var cdb = "";
+        try cdb = G.s(G.call("hrt.prefab.Prefab", "getCdbType", p)) catch (_:Dynamic) {}
+        var x = G.number(G.field(p, "x")) + ox, y = G.number(G.field(p, "y")) + oy, z = G.number(G.field(p, "z")) + oz;
+        if (cdb == "element") {
+            scanElements++;
+            var id = G.s(G.field(G.field(p, "props"), "id"));
+            var gid = id == "" ? "" : gatherableOf(id);
+            if (gid != "" && !nearScanned(x, y)) {
+                scanGrid.set(cellKey(x, y), true);
+                scanned.push({key: 200000 + scanned.length, id: id, gatherable: gid, x: x, y: y, z: z});
+            }
+            return;
+        }
+        if (cdb == "" && G.isA(p, "hrt.prefab.Reference")) {
+            // a placed copy of a prefab file (the generic ore and plant nodes: ".../CopperOre_Small_Generic.prefab"): the file's name is the element's id
+            var src = G.s(G.field(p, "source"));
+            var cut = src.lastIndexOf("/");
+            var base = src.substr(cut + 1);
+            if (StringTools.endsWith(base, ".prefab")) base = base.substr(0, base.length - 7);
+            scanRefs++;
+            if (base != "") {
+                if (scanRefSamples.length < 400 && !scanRefSeen.exists(base)) { scanRefSeen.set(base, true); scanRefSamples.push(base); }
+                var rg = gatherableOf(base);
+                if (rg == "") { rg = gatherableOf(base + "_Generic"); if (rg != "") base += "_Generic"; } // (the element of "CopperOre_Small" is "CopperOre_Small_Generic")
+                if (rg != "" && !nearScanned(x, y)) {
+                    scanGrid.set(cellKey(x, y), true);
+                    scanned.push({key: 200000 + scanned.length, id: base, gatherable: rg, x: x, y: y, z: z});
+                }
+            }
+            return;
+        }
+        var children = G.field(p, "_children");
+        if (children != null) for (c in G.fastArray(children)) visit(c, x, y, z, depth + 1);
+    }
+
+    /** The nodes known now: the whole map's (read from the chunks), the world's element table and the ones seen (the last two only where the scan has none). */
     static function all():Array<NodeSpot> {
-        var out = spots.copy();
-        for (s in seen) out.push(s);
+        var out = scanned.copy();
+        for (s in spots) if (!nearScanned(s.x, s.y)) out.push(s);
+        for (s in seen) if (!nearScanned(s.x, s.y)) out.push(s);
         return out;
     }
 
@@ -134,6 +261,19 @@ class Nodes {
             if (cost < bestCost) { bestCost = cost; best = s; bestDirect = direct; }
         }
         return best == null ? null : {spot: best, away: bestDirect, count: usable};
+    }
+
+    /** Developer: reads every chunk at once and reports what was found (count by resource, how many loaded nodes the list holds). */
+    public static function debugScan(hx:Float, hy:Float, loaded:Array<{x:Float, y:Float}>):Dynamic {
+        var t0 = haxe.Timer.stamp();
+        while (!scanFinished && haxe.Timer.stamp() - t0 < 20) scanStep(200);
+        var byGid:Map<String, Int> = new Map();
+        for (n in scanned) byGid.set(n.gatherable, (byGid.exists(n.gatherable) ? byGid.get(n.gatherable) : 0) + 1);
+        var hits = 0;
+        for (l in loaded) if (nearScanned(l.x, l.y)) hits++;
+        return {finished: scanFinished, chunks: scanChunks == null ? -1 : scanChunks.length, chunksRead: scanPos, elementPrefabs: scanElements, references: scanRefs, referenceNames: scanRefSamples.slice(0, 150), nodes: scanned.length,
+            seconds: Math.round((haxe.Timer.stamp() - t0) * 100) / 100, loadedNodes: loaded.length, loadedFoundInScan: hits,
+            byGatherable: [for (k => v in byGid) k + "=" + v]};
     }
 
     /** The places of every known node of the wanted resources. */

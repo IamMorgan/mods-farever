@@ -273,6 +273,7 @@ class Bot {
 
         updateCounts();
         Nodes.remember(hero, now);
+        if (Nodes.scanning() && wantsGather() && Hunt.onWorld(hero)) Nodes.scanStep(15); // (the whole map's nodes are read from the chunk files in the background)
         // once, at the start: a jump on the spot, to learn how high the hero jumps (the planner's jump height)
         if (target == null && gotoX == null && nav.calibrateJump(hero, now)) return;
 
@@ -969,6 +970,7 @@ class Bot {
             }
         }
         if (nodeKey < 0) {
+            if (Nodes.scanning()) { nav.stop(); message = Locale.f("stTravel"); Nodes.scanStep(); return true; } // (the map's chunk files are read first: every node of the world is known before the first step)
             var g = Nodes.find(hero, plan, nodeVisited, now, Nav.obelisks(hero), (x, y, z) -> footOrFlight(x, y, z));
             if (g == null) {
                 if (nodeVisited.keys().hasNext()) {
@@ -1629,6 +1631,15 @@ class Bot {
                     rowsZ.push(G.s(G.field(G.field(def, "inf"), "id")) + " map " + G.s(G.field(def, "mapId")) + " at " + Math.round(G.number(G.field(pre, "x"))) + "," + Math.round(G.number(G.field(pre, "y"))) + "," + Math.round(G.number(G.field(pre, "z"))) + " zone " + zid);
                 }
                 return rowsZ;
+            case "scan":
+                // developer: reads every chunk of the world for nodes now and says what was found
+                var ld = [];
+                for (e in G.fastArray(G.field(G.field(hero, "layer"), "interactibles"))) {
+                    if (e == null || G.field(e, "removed") == true || !G.isA(e, "ent.interactible.Gatherable")) continue;
+                    ld.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
+                }
+                if (Reflect.hasField(cmd, "ids")) return [for (i in (Reflect.field(cmd, "ids"):Array<String>)) Nodes.elementInfo(i)];
+                return Nodes.debugScan(G.number(G.field(hero, "posx")), G.number(G.field(hero, "posy")), ld);
             case "elements":
                 // developer: the world's element definitions that are gatherables (ore, plants): count and a few samples
                 var all = G.staticCall("HElement", "all", []);
