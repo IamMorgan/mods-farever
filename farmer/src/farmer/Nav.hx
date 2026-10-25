@@ -183,7 +183,7 @@ class Nav {
             while (trail.length > 0 && now - trail[0].t > 9) trail.shift();
             circling(hero, hx, hy, now);
         }
-        if (route == null || isHeld(hero) || flying(hero)) { blockedSince = -1; return; }
+        if (route == null || isHeld(hero) || flying(hero) || recentlyHit(hero)) { blockedSince = -1; return; }
         if (moved >= expected * STUCK_SHARE) { blockedSince = -1; return; }
         if (blockedSince < 0) blockedSince = now;
         var blocked = now - blockedSince;
@@ -325,6 +325,15 @@ class Nav {
         }
     }
 
+    /** A hit just landed (the hero staggers a moment): standing still then is no sign of a wall. */
+    function recentlyHit(hero:Dynamic):Bool {
+        try {
+            var t = G.number(G.field(G.call("client.UnitController", "get_time", G.current("client.PlayerController", "inst")), "serverNow"), -1);
+            var last = G.number(G.field(hero, "lastDamageTime"), -1000);
+            return t >= 0 && t - last < 1.2;
+        } catch (_:Dynamic) return false;
+    }
+
     function isHeld(hero:Dynamic):Bool {
         try {
             if (G.call("ent.GameObject", "isUnderAnyCC", hero) == true) return true;
@@ -453,10 +462,21 @@ class Nav {
                 var far = Std.int(Math.min(routeIndex + 4, last));
                 for (j in pick...far + 1) if (route[j].jump) { far = j; break; }
                 var chosen = pick;
+                // never cut across a bend the path was routed round: a far waypoint counts only when the way to it is nearly straight
+                var lens:Array<Float> = [];
+                var acc = Math.sqrt((route[pick].x - hx) * (route[pick].x - hx) + (route[pick].y - hy) * (route[pick].y - hy));
+                for (j in pick...far + 1) {
+                    if (j > pick) acc += Math.sqrt((route[j].x - route[j - 1].x) * (route[j].x - route[j - 1].x) + (route[j].y - route[j - 1].y) * (route[j].y - route[j - 1].y));
+                    lens.push(acc);
+                }
                 var k = far;
                 while (k > pick) {
                     // a waypoint right at the hero (the path curls back on itself) is no aim: the heading would be noise
-                    if (Math.abs(route[k].x - hx) + Math.abs(route[k].y - hy) > 1.6 && corridorClear(hx, hy, hz, route[k].x, route[k].y, noCliff)) { chosen = k; break; }
+                    var straight = Math.sqrt((route[k].x - hx) * (route[k].x - hx) + (route[k].y - hy) * (route[k].y - hy));
+                    // ... and never turns the heading by more than 60 degrees away from the next waypoint's (no aim back across the hero)
+                    var toPick = Math.sqrt((route[pick].x - hx) * (route[pick].x - hx) + (route[pick].y - hy) * (route[pick].y - hy));
+                    var cosTurn = toPick < 0.05 ? 1.0 : ((route[pick].x - hx) * (route[k].x - hx) + (route[pick].y - hy) * (route[k].y - hy)) / (toPick * Math.max(0.01, straight));
+                    if (straight > 1.6 && cosTurn > 0.5 && lens[k - pick] <= straight * 1.3 + 1.0 && corridorClear(hx, hy, hz, route[k].x, route[k].y, noCliff)) { chosen = k; break; }
                     k--;
                 }
                 aimIdx = chosen;
@@ -480,7 +500,15 @@ class Nav {
         } else if (distance(hero, tx, ty) > 6) { why = "planning"; return null; }
         var dx = aimX - hx, dy = aimY - hy;
         var d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 0.01) { why = "at aim"; return null; }
+        if (d < 0.6) {
+            // right at the aim (the end of the path, or a jump over it): a heading from so near is noise that flips with every step
+            if (distance(hero, tx, ty) <= arrive) { why = "at aim"; return null; }
+            dx = tx - hx;
+            dy = ty - hy;
+            d = Math.sqrt(dx * dx + dy * dy);
+            if (d < 0.6) { why = "at aim"; return null; }
+            if (route != null && !needPlan && now - plannedAt > 0.6) needPlan = true;
+        }
         dx /= d;
         dy /= d;
         if (airborne(hero)) { var h = airHeading(hx, hy, hz, dx, dy); dx = h.x; dy = h.y; }

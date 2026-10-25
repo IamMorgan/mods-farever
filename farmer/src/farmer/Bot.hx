@@ -611,8 +611,10 @@ class Bot {
                 // the hero hunts monsters of its OWN level (a little above is fine, below gives next to nothing): lower ones are
                 // not touched, the bot looks for its own level, as far away as that is (the obelisk or the road takes it there)
                 var diff = foeLevel - level;
-                if (drops ? Math.abs(diff) > 6 : (diff < 0 || diff > 2)) continue;
-                score += (diff < 0 ? -diff * 100 : diff * 250);
+                // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
+                // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
+                if (drops ? Math.abs(diff) > 6 : (diff < -3 || diff > 2)) continue;
+                score += (diff < 0 ? -diff * 600 : diff * 250);
             } else {
                 if (!drops) continue;
                 score += Math.max(0, foeLevel - level) * 250;
@@ -627,7 +629,7 @@ class Bot {
             lastSeenLog = haxe.Timer.stamp();
             var levels = [for (l => n in seen) l + "x" + n];
             levels.sort(Reflect.compare);
-            Log.w("no mob to fight for hero L" + level + (leveling ? " (own level to +2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
+            Log.w("no mob to fight for hero L" + level + (leveling ? " (own level -3..+2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
         }
     }
 
