@@ -152,6 +152,7 @@ class Nav {
      */
     public var descentOk = false;
     var cliffRetried = false;
+    var noGain = 0;
     var cliffOverride = false;
     // circling / dithering detector: the hero's place once a second
     var trail:Array<{t:Float, x:Float, y:Float}> = [];
@@ -178,6 +179,7 @@ class Nav {
         }
         cliffRetried = false;
         cliffOverride = false;
+        noGain = 0;
         Log.t("nav", "go to " + Math.round(x) + "," + Math.round(y) + " (z " + (Math.isFinite(goalZ) ? Std.string(Math.round(goalZ)) : "?") + ", arrive " + arrive + ", noCliff " + noCliff + ")");
         trail = [];
         circleStrikes = 0;
@@ -425,6 +427,20 @@ class Nav {
                 gaveUp = true;
                 return;
             }
+            // a path that ends short of the spot and brings the hero no nearer to it (a dead end against a wall, a way that first leads away): a few of
+            // them in a row mean the spot cannot be reached from here by planning window after window - given up, not paced out
+            if (grid.shortBy > 3) {
+                var gain = distance(hero, tx, ty) - grid.shortBy;
+                noGain = gain < 10 ? noGain + 1 : 0;
+                if (noGain >= 4 && distance(hero, tx, ty) > 40) {
+                    Log.t("nav", "the last " + noGain + " paths to " + Math.round(tx) + "," + Math.round(ty) + " end short without bringing the hero nearer: given up");
+                    noGain = 0;
+                    grid.state = 0;
+                    stop();
+                    gaveUp = true;
+                    return;
+                }
+            } else noGain = 0;
             route = grid.path;
             routeShort = grid.shortBy;
             routeIndex = 0;

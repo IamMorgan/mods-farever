@@ -159,6 +159,7 @@ class NavGrid {
     /** The node on the border of the window nearest the spot: with the spot beyond the window the path leads there (a cliff's edge nearer the spot is a dead end), not to the nearest interior node. */
     var edgeBest:Node;
     var edgeH = Math.POSITIVE_INFINITY;
+    var startH = 0.0;
     var bestH = Math.POSITIVE_INFINITY;
     var count = 0;
 
@@ -362,6 +363,7 @@ class NavGrid {
         var first = new Node(sx, sy, hz);
         first.g = 0;
         first.f = h(sx, sy);
+        startH = raw(sx, sy);
         nodes.set(nodeKey(sx, sy), first);
         push(first);
         best = first;
@@ -370,10 +372,15 @@ class NavGrid {
 
     inline function nodeKey(ix:Int, iy:Int):Int return (ix - sx + 128) * 512 + (iy - sy + 128);
 
+    /** The plain distance to the spot (octile, in cells). */
+    function raw(ix:Int, iy:Int):Float {
+        var dx = Math.abs(ix - tx), dy = Math.abs(iy - ty);
+        return (dx + dy) + (1.4142 - 2) * Math.min(dx, dy);
+    }
+
     function h(ix:Int, iy:Int):Float {
         if (flood) return 0;
-        var dx = Math.abs(ix - tx), dy = Math.abs(iy - ty);
-        var v = (dx + dy) + (1.4142 - 2) * Math.min(dx, dy);
+        var v = raw(ix, iy);
         for (d in deadEnds) if (Math.abs(ix * CELL - d.x) < DEAD_RADIUS && Math.abs(iy * CELL - d.y) < DEAD_RADIUS) { v += 80; break; }
         return v;
     }
@@ -444,7 +451,8 @@ class NavGrid {
                 var nx = n.ix + dx, ny = n.iy + dy;
                 if (Math.abs(nx - sx) > RADIUS || Math.abs(ny - sy) > RADIUS) {
                     touchedWindow = true;
-                    if (hh < edgeH) { edgeH = hh; edgeBest = n; } // the ground goes on from this node: a way out of the window
+                    var rr = raw(n.ix, n.iy);
+                    if (rr < edgeH) { edgeH = rr; edgeBest = n; } // the ground goes on from this node: a way out of the window
                     continue;
                 }
                 if (isBlocked(nx, ny, now)) continue;
@@ -501,7 +509,8 @@ class NavGrid {
 
     /** Where a path that does not reach the spot ends: at the window's border when the spot lies beyond the window and the ground goes on there. */
     function partialEnd():Node {
-        if (!flood && edgeBest != null && (Math.abs(tx - sx) > RADIUS || Math.abs(ty - sy) > RADIUS)) return edgeBest;
+        // (only when it is nearer the spot than the start was: from one border node the nearest border node of the next window may lead back, and the hero would pace between the two)
+        if (!flood && edgeBest != null && edgeH < startH - 5 && (Math.abs(tx - sx) > RADIUS || Math.abs(ty - sy) > RADIUS)) return edgeBest;
         return best;
     }
 
