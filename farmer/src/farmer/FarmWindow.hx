@@ -38,6 +38,7 @@ class FarmWindow {
     var gearBox:Dynamic;
     var qualityBoxes:Array<Dynamic> = [];
     var levelInput:Dynamic;
+    var levelLast = "";
     var running = false;
     var font:Dynamic;
 
@@ -71,27 +72,46 @@ class FarmWindow {
             if (picked != c.shown) { c.shown = picked; N.show(c.frame, picked); N.show(c.box, picked); changed = true; }
             if (!picked) continue;
             var text = G.s(G.field(c.input, "text"));
-            if (G.field(c.input, "hasFocus") == true || focusedOn(c.input)) {
-                var typed = Std.parseInt(StringTools.trim(text));
-                var now = typed == null ? 0 : typed;
-                if (text != c.lastText) { c.lastText = text; plan.setCount(c.hunting, c.res.id, now); changed = true; }
-            } else {
+            if (text != c.lastText) {
+                // the player typed: only digits stay, the amount follows the text
+                var clean = digits(text);
+                if (clean != text) G.call("h2d.TextInput", "set_text", c.input, [clean]);
+                c.lastText = clean;
+                var typed = Std.parseInt(clean);
+                plan.setCount(c.hunting, c.res.id, typed == null ? 0 : typed);
+                changed = true;
+            } else if (!focusedOn(c.input)) {
+                // the bot's counter went down (or the field lost its focus): show the real amount
                 var shown = Std.string(plan.count(c.hunting, c.res.id));
                 if (text != shown) { G.call("h2d.TextInput", "set_text", c.input, [shown]); c.lastText = shown; }
             }
         }
-        var levelText = G.s(G.field(G.field(levelInput, "input"), "text"));
-        var level = Std.parseInt(StringTools.trim(levelText));
-        var wanted = level == null || level < 0 ? 0 : level;
-        if (wanted != plan.targetLevel && focusedOn(G.field(levelInput, "input"))) { plan.targetLevel = wanted; changed = true; }
+        var levelField = G.field(levelInput, "input");
+        var levelText = G.s(G.field(levelField, "text"));
+        if (levelText != levelLast) {
+            var clean = digits(levelText);
+            if (clean != levelText) G.call("h2d.TextInput", "set_text", levelField, [clean]);
+            levelLast = clean;
+            var level = Std.parseInt(clean);
+            plan.targetLevel = level == null ? 0 : level;
+            changed = true;
+        }
         if (changed && onChanged != null) onChanged();
     }
 
+    /** Only the digits of the text (the fields take numbers only). */
+    static function digits(text:String):String {
+        var out = new StringBuf();
+        for (i in 0...text.length) {
+            var code = text.charCodeAt(i);
+            if (code >= 48 && code <= 57) out.addChar(code);
+        }
+        var s = out.toString();
+        return s.length > 5 ? s.substr(0, 5) : s;
+    }
+
     function focusedOn(input:Dynamic):Bool {
-        try {
-            var scene = G.field(input, "parent") == null ? null : G.call("h2d.Object", "getScene", input);
-            return scene != null && G.field(scene, "events") != null && G.field(G.field(scene, "events"), "focus") == G.field(input, "interactive");
-        } catch (_:Dynamic) return false;
+        try return G.call("h2d.TextInput", "hasFocus", input) == true catch (_:Dynamic) return false;
     }
 
     function flagBit(name:String):Int return 1 << Type.enumIndex(G.current("ui.win.WindowFlags", name));
@@ -207,7 +227,8 @@ class FarmWindow {
         levelInput = G.field(levelInput, "obj");
         place(levelInput, content, 330, oy + 66, 90, 34);
         var fieldInput = G.field(levelInput, "input");
-        G.call("h2d.TextInput", "set_text", fieldInput, [plan.targetLevel > 0 ? Std.string(plan.targetLevel) : ""]);
+        levelLast = plan.targetLevel > 0 ? Std.string(plan.targetLevel) : "";
+        G.call("h2d.TextInput", "set_text", fieldInput, [levelLast]);
 
         actionButton = N.button(windowDom, Locale.f(running ? "stop" : "start"), "farmerAction", () -> { if (running) { if (onStop != null) onStop(); } else if (onStart != null) onStart(); });
         place(actionButton, content, width - 2 * SIDE - 170, oy + 60, 170, 44);

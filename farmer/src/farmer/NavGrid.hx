@@ -37,7 +37,11 @@ class NavGrid {
     static inline var STEP_UP = 0.5;
     /** A drop deeper than this is a cliff (the user's rule: 1.7 m). */
     public static inline var CLIFF = 1.7;
-    static inline var SAFE_DROP = CLIFF;
+    /**
+     * A drop up to this is a step down, not a cliff: whatever ledge the hero can jump up it can step down again (a climb that
+     * could not be undone leaves the hero in a pocket), so the drop is never below the jump height.
+     */
+    public static function safeDrop():Float return Math.max(CLIFF, JUMP_UP + 0.8);
     /** A drop deeper than this is glided down. */
     public static inline var GLIDE_DROP = 7.0;
     /** Around a start standing in water the cells of water stay open this far (to swim out). */
@@ -90,6 +94,8 @@ class NavGrid {
     /** True in a fight: no cliff is jumped or glided down at all (a drop deeper than CLIFF closes the way). */
     public var noCliff = false;
     var exhausted = false;
+    /** True when the search reached the border of its window: the ground goes on, so "ran out of ground" proves nothing about spots outside. */
+    var touchedWindow = false;
     var strict = true;
     var softTried = false;
     var startX = 0.0;
@@ -219,7 +225,7 @@ class NavGrid {
                 var z = height(ix, iy, refZ, now);
                 if (Math.isFinite(z)) {
                     var d = z - refZ;
-                    ch = wet.exists(heightKey(ix, iy, refZ)) ? "~" : d > JUMP_UP ? "#" : d > STEP_UP ? "^" : d < -GLIDE_DROP ? "V" : d < -SAFE_DROP ? "v" : ".";
+                    ch = wet.exists(heightKey(ix, iy, refZ)) ? "~" : d > JUMP_UP ? "#" : d > STEP_UP ? "^" : d < -GLIDE_DROP ? "V" : d < -safeDrop() ? "v" : ".";
                 }
                 if (isBlocked(ix, iy, now)) ch = "X";
                 if (onRoute.exists(key(ix, iy))) ch = "*";
@@ -249,6 +255,7 @@ class NavGrid {
         var hx = startX, hy = startY, hz = startZ;
         this.strict = strict;
         exhausted = false;
+        touchedWindow = false;
         unreachable = false;
         roughMemo = new Map();
         escape = startLiquid || Hazard.deadly(hx, hy, hz);
@@ -296,7 +303,7 @@ class NavGrid {
         for (d in 0...4) {
             var nx = ix + DX[d], ny = iy + DY[d];
             var nz = height(nx, ny, z, now);
-            if (!Math.isFinite(nz) || nz - z > JUMP_UP || (noCliff && z - nz > SAFE_DROP) || wet.exists(heightKey(nx, ny, z)) || isBlocked(nx, ny, now) || solid(nx, ny, nz, heightKey(nx, ny, z))) { r = true; break; }
+            if (!Math.isFinite(nz) || nz - z > JUMP_UP || (noCliff && z - nz > safeDrop()) || wet.exists(heightKey(nx, ny, z)) || isBlocked(nx, ny, now) || solid(nx, ny, nz, heightKey(nx, ny, z))) { r = true; break; }
         }
         roughMemo.set(k, r);
         return r;
@@ -347,7 +354,7 @@ class NavGrid {
             for (dir in 0...8) {
                 var dx = DX[dir], dy = DY[dir];
                 var nx = n.ix + dx, ny = n.iy + dy;
-                if (Math.abs(nx - sx) > RADIUS || Math.abs(ny - sy) > RADIUS) continue;
+                if (Math.abs(nx - sx) > RADIUS || Math.abs(ny - sy) > RADIUS) { touchedWindow = true; continue; }
                 if (isBlocked(nx, ny, now)) continue;
                 var existing = nodes.get(nodeKey(nx, ny));
                 if (existing != null && existing.closed) continue;
@@ -358,7 +365,7 @@ class NavGrid {
                 var jump = false;
                 if (dz > JUMP_UP) continue;
                 if (dz > STEP_UP) { jump = true; extra = 5; } // a jump costs: a way round a bench is better
-                if (dz < -SAFE_DROP) {
+                if (dz < -safeDrop()) {
                     if (noCliff) continue; // in a fight a cliff is never gone down
                     if (!hasGlider && -dz > NO_GLIDER_DROP) continue; // no glider: too high to fall
                     // never down below the level of the spot (a gorge or a pit cannot be climbed out of): only as far as it needs
@@ -402,14 +409,15 @@ class NavGrid {
 
     function finish(end:Node, now:Float):Void {
         var ex0 = end.ix * CELL - goalX, ey0 = end.iy * CELL - goalY;
-        if (strict && !softTried && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && ((Math.abs(goalX - startX) < RADIUS - 20 && Math.abs(goalY - startY) < RADIUS - 20) || count < 150)) {
+        if (strict && !softTried && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && ((Math.abs(goalX - startX) < RADIUS - 20 && Math.abs(goalY - startY) < RADIUS - 20) || count < 150 || (exhausted && !touchedWindow))) {
             // no clean way: the same search again, now allowed to pass close to walls
             Log.t("nav", "strict path failed (short by " + Math.round(Math.sqrt(ex0 * ex0 + ey0 * ey0)) + " m): soft search");
             softTried = true;
             begin(false, goalX, goalY);
             return;
         }
-        unreachable = exhausted && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && Math.abs(goalX - startX) < RADIUS - 8 && Math.abs(goalY - startY) < RADIUS - 8;
+        // the reachable ground was all searched: a spot inside the window is not on it, and a spot outside is not either when the ground never reached the window's border (a closed pocket)
+        unreachable = exhausted && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && ((Math.abs(goalX - startX) < RADIUS - 8 && Math.abs(goalY - startY) < RADIUS - 8) || !touchedWindow);
         var list:Array<Waypoint> = [];
         var n = end;
         while (n != null) {

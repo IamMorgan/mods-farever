@@ -39,6 +39,8 @@ class Bot {
     var targetSince = 0.0;
     var lockedFoe:Dynamic = null;
     var blacklist:Map<String, Float> = new Map();
+    /** Places no way led to (a plateau): the monsters standing there are not chosen for a while, one after another would each cost a try. */
+    var deadAreas:Array<{x:Float, y:Float, until:Float}> = [];
     var lastInteract = 0.0;
     var lastAttack = 0.0;
     /** The Attack key is held down while a monster is in reach: the game chains the combo hits itself from a held key. */
@@ -101,7 +103,7 @@ class Bot {
         finishStage = 0;
         countsReady = false;
         job = null;
-        blacklist = new Map();
+        blacklist = new Map(); deadAreas = [];
         target = null;
         targetKind = "";
         AutoDodge.enabled = true;
@@ -443,7 +445,7 @@ class Bot {
             if (b == null) {
                 Log.w("trapped: no bumper near, the home stone");
                 failTimes = [];
-                if (useHomeStone()) { message = Locale.f("stHome"); nextThink = now + 12; blacklist = new Map(); }
+                if (useHomeStone()) { message = Locale.f("stHome"); nextThink = now + 12; blacklist = new Map(); deadAreas = []; }
                 return;
             }
             Log.w("trapped: walking onto the bumper " + G.s(G.field(G.field(b, "inf"), "id")));
@@ -461,7 +463,7 @@ class Bot {
             Log.w("bumper step done (" + Math.round(now - escapeAt) + " s)");
             escapeBumper = null;
             failTimes = [];
-            blacklist = new Map();
+            blacklist = new Map(); deadAreas = [];
             nav.stop();
             return;
         }
@@ -489,7 +491,7 @@ class Bot {
             target = null;
             targetKind = "";
             roamKey = -1;
-            blacklist = new Map();
+            blacklist = new Map(); deadAreas = [];
             nextThink = now + 14;
         }
         return used;
@@ -589,7 +591,12 @@ class Bot {
 
     function blacklisted(e:Dynamic, now:Float):Bool {
         var until = blacklist.get(key(e));
-        return until != null && now < until;
+        if (until != null && now < until) return true;
+        if (deadAreas.length > 0 && G.isA(e, "ent.Foe")) {
+            var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
+            for (a in deadAreas) if (now < a.until && (a.x - ex) * (a.x - ex) + (a.y - ey) * (a.y - ey) < 30 * 30) return true;
+        }
+        return false;
     }
 
     function targetValid(now:Float, leveling:Bool):Bool {
@@ -618,6 +625,10 @@ class Bot {
             var rise = G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"));
             Log.w("target " + targetKind + " given up by the way-finder (rise " + Math.round(rise) + " m, " + Math.round(dNow) + " m away): blacklisted for 2 min");
             blacklist.set(key(target), now + 120);
+            if (targetKind == "mob") {
+                deadAreas = [for (a in deadAreas) if (now < a.until) a];
+                deadAreas.push({x: G.number(G.field(target, "posx")), y: G.number(G.field(target, "posy")), until: now + 120});
+            }
             nav.gaveUp = false;
             if (rise > 4 && escapeBumper == null && now - bumperHopAt > 60) {
                 // the target lies on a height no way leads to: a trampoline of the world throws the hero up (the glider and the way on do the rest)

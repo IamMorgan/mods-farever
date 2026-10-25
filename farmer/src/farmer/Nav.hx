@@ -161,7 +161,7 @@ class Nav {
      */
     public function wantsMove(hero:Dynamic):Bool {
         if (!active || flying(hero)) return false;
-        return (route != null && route.length > 0) || distance(hero, tx, ty) <= 6;
+        return (route != null && route.length > 0) || distance(hero, tx, ty) <= 6 || airborne(hero);
     }
 
     public function debugRoute():Array<Waypoint> return route;
@@ -314,6 +314,9 @@ class Nav {
     }
 
     function planning(hero:Dynamic, hx:Float, hy:Float, hz:Float, now:Float):Void {
+        // in the air (a jump, a fall, a glide, a trampoline's throw) the height under the hero is no place to plan from: a search from there
+        // finds no ground to walk, counts as a dead end and the hero is left bouncing; the way is planned after the landing
+        if (airborne(hero) && grid.state != 1) return;
         if (route != null && now - plannedAt > 14) needPlan = true;
         if (needPlan && grid.state != 1 && now >= planBlock) {
             needPlan = false;
@@ -379,7 +382,7 @@ class Nav {
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
         for (a in [1.0, 2.0, 3.0, 4.0, 5.0]) {
             var z = NavGrid.fineZ(hx + ux * a, hy + uy * a, gz);
-            if (!Math.isFinite(z) || gz - z > NavGrid.CLIFF || Hazard.wetCell(hx + ux * a, hy + uy * a, z, 0.5)) {
+            if (!Math.isFinite(z) || gz - z > NavGrid.safeDrop() || Hazard.wetCell(hx + ux * a, hy + uy * a, z, 0.5)) {
                 Log.t("nav", "jump refused: no safe landing " + a + " m ahead (" + (Math.isFinite(z) ? "a drop of " + Math.round((gz - z) * 10) / 10 + " m or water" : "no ground") + ")");
                 return false;
             }
@@ -447,7 +450,7 @@ class Nav {
             var z = NavGrid.fineZ(px, py, prev);
             if (!Math.isFinite(z)) { corridorWhy = "no ground at " + Math.round(px) + "," + Math.round(py); return false; }
             if (z - prev > FINE_RISE) { corridorWhy = "rise " + Math.round((z - prev) * 100) / 100 + " m at " + Math.round(px * 10) / 10 + "," + Math.round(py * 10) / 10; return false; }
-            if (cliff && prev - z > NavGrid.CLIFF) { corridorWhy = "drop " + Math.round((prev - z) * 100) / 100 + " m at " + Math.round(px) + "," + Math.round(py); return false; }
+            if (cliff && prev - z > NavGrid.safeDrop()) { corridorWhy = "drop " + Math.round((prev - z) * 100) / 100 + " m at " + Math.round(px) + "," + Math.round(py); return false; }
             if (Hazard.wetCell(px, py, z, 0.45) || Hazard.trapAt(px, py, z)) { corridorWhy = "water or trap at " + Math.round(px) + "," + Math.round(py); return false; }
             // a prop with a body (bench, post, flower bed) that the heights miss: rays along this half metre, over the rising ground, on the
             // middle line and on both sides of the body
@@ -465,7 +468,7 @@ class Nav {
                 var q = NavGrid.fineZ(qx, qy, z);
                 if (!Math.isFinite(q)) { corridorWhy = "no ground beside at " + Math.round(qx) + "," + Math.round(qy); return false; }
                 if (q - z > FINE_RISE) { corridorWhy = "wall beside (" + Math.round((q - z) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
-                if (cliff && z - q > NavGrid.CLIFF) { corridorWhy = "cliff edge beside (" + Math.round((z - q) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
+                if (cliff && z - q > NavGrid.safeDrop()) { corridorWhy = "cliff edge beside (" + Math.round((z - q) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
                 if (Hazard.wetCell(qx, qy, q, 0.3)) { corridorWhy = "water beside"; return false; }
             }
             prev = z;
@@ -495,7 +498,7 @@ class Nav {
         zRing.push({t: now, z: z});
         while (zRing.length > 0 && now - zRing[0].t > 1.2) zRing.shift();
         // (more than 40 m in a second is a teleport - the home stone, a zone change - not a fall)
-        if (zRing.length < 2 || zRing[0].z - z <= 2.5 || zRing[0].z - z > 40 || now - lastFellAt < 3 || flying(hero)) return;
+        if (zRing.length < 2 || zRing[0].z - z <= NavGrid.safeDrop() + 0.4 || zRing[0].z - z > 40 || now - lastFellAt < 3 || flying(hero)) return;
         lastFellAt = now;
         Log.t("nav", "FELL " + Math.round((zRing[0].z - z) * 10) / 10 + " m in " + Math.round((now - zRing[0].t) * 10) / 10 + " s at " + Math.round(G.number(G.field(hero, "posx"))) + "," + Math.round(G.number(G.field(hero, "posy")))
             + " | nav " + (active ? "on" : "off") + " noCliff " + noCliff + " route " + routeIndex + "/" + (route == null ? 0 : route.length) + " heading " + Math.round(lastDirX * 100) / 100 + "," + Math.round(lastDirY * 100) / 100
@@ -610,7 +613,8 @@ class Nav {
                 if (jd < 0.1 || jumpSafe(hero, (next.x - hx) / jd, (next.y - hy) / jd)) { jump(hero); noteJump(hero, hx, hy, next); }
                 else { NavGrid.blockLong(next.x, next.y, now); needPlan = true; } // the ledge cannot be taken safely: another way
             }
-        } else if (distance(hero, tx, ty) > 6) { why = "planning"; return null; }
+        } else if (distance(hero, tx, ty) > 6 && !airborne(hero)) { why = "planning"; return null; }
+        // (in the air without a way the hero glides straight towards the spot, see airHeading below)
         var dx = aimX - hx, dy = aimY - hy;
         var d = Math.sqrt(dx * dx + dy * dy);
         if (d < 0.6 || (atEnd && goalHeading)) {
@@ -701,7 +705,7 @@ class Nav {
                 climbT = profT;
                 climbZ = profZ;
                 // the planner sees rises up to 2.2 m (the height probe, see NavGrid.height): jumps are planned up to the lower of that and the peak less a margin
-                NavGrid.JUMP_UP = Math.max(0.8, Math.min(2.0, jumpMax - 0.3));
+                NavGrid.JUMP_UP = Math.max(0.8, Math.min(1.8, jumpMax - 0.3));
                 Log.t("nav", "jump height learnt: peak " + Math.round(jumpMax * 100) / 100 + " m, the planner jumps up to " + Math.round(NavGrid.JUMP_UP * 100) / 100 + " m");
             }
             if (Math.isFinite(jumpWantRise)) {
