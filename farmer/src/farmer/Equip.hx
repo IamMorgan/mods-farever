@@ -17,6 +17,14 @@ class Equip {
     static var nextCheck = 0.0;
     static var failed:Map<String, Float> = new Map();
     static var slots:Array<String> = null;
+    /** Items already explained in the log (one line each: why an item of the bag is not put on). */
+    static var explained:Map<String, Bool> = new Map();
+
+    static function explain(id:String, item:Dynamic, text:String):Void {
+        if (explained.exists(id + text)) return;
+        explained.set(id + text, true);
+        Log.t("gear", "kept in the bag: " + Services.itemId(item) + " (" + Services.itemRarity(item) + ", score " + Math.round(score(item)) + "): " + text);
+    }
 
     /** What an item is worth: its level (the game's own measure of power), then its rarity, then its affixes. */
     public static function score(item:Dynamic):Float {
@@ -71,18 +79,22 @@ class Equip {
                 var type = G.s(G.field(G.field(item, "inf"), "type"));
                 var openToHero = false;
                 try openToHero = Services.isOk(G.call("st.Item", "getNoEquipReason", item, [hero, null])) catch (_:Dynamic) {}
-                if (!openToHero) { failed.set(id, now + RETRY_AFTER); continue; }
+                if (!openToHero) { explain(id, item, "the hero may not wear it (level or class)"); failed.set(id, now + RETRY_AFTER); continue; }
+                var fits = false;
                 for (slot in names) {
                     if (G.staticCall("st.Equipment", "isEquippableOnSlot", [G.field(item, "inf"), slot]) != true) continue;
                     if (G.call("st.Equipment", "canHaveSlot", equipment, [slot]) != true) continue;
+                    fits = true;
                     var worn = G.call("st.Equipment", "getSlot", equipment, [slot]);
                     var gain = mine;
                     if (worn != null) {
-                        if (G.s(G.field(G.field(worn, "inf"), "type")) != type) continue; // never swaps a bow for a sword
+                        if (G.s(G.field(G.field(worn, "inf"), "type")) != type) { explain(id, item, slot + " holds another type (" + G.s(G.field(G.field(worn, "inf"), "type")) + ")"); continue; } // never swaps a bow for a sword
                         gain = mine - score(worn);
+                        if (gain <= bestGain) explain(id, item, slot + " is not beaten by it (worn " + Services.itemId(worn) + ", score " + Math.round(score(worn)) + ")");
                     }
                     if (gain > bestGain) { bestGain = gain; best = item; bestSlot = slot; }
                 }
+                if (!fits) explain(id, item, "no slot of the hero takes it");
             }
             if (best == null) return;
             var id = Std.string(G.field(best, "__uid"));

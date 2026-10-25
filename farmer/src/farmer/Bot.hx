@@ -303,7 +303,8 @@ class Bot {
 
     /** Out of combat (nothing fought, nothing hitting the hero, no bag job): the time to change gear. */
     public function calm(now:Float):Bool {
-        if (hero == null || job != null || engaged || (targetKind == "mob" && target != null)) return false;
+        if (hero == null || job != null || engaged || kiting || AutoDodge.dodging()) return false;
+        // (a far target to walk to is no reason to keep the bag's better gear off; a foe that fights the hero or stands near is)
         return nearbyThreat(now) == null;
     }
 
@@ -532,17 +533,23 @@ class Bot {
                 nav.stop();
             }
         }
-        if (targetKind == "mob" && target != null && !engaged && now - defendAt > 1.0) {
-            // a far target and an enemy hitting the hero on the way: that one first (walking on past it under fire is what made the dodge
-            // twitch in short runs and the monsters gather into a crowd behind the hero)
+        if (targetKind == "mob" && target != null && now - defendAt > (engaged ? 0.6 : 1.0)) {
+            // an enemy hitting the hero while it walks to (or fights) another one: that one first (walking on past it under fire is what made the dodge
+            // twitch in short runs and the monsters gather into a crowd behind the hero; fighting on at a foe that has not even noticed the hero
+            // while another one beats it was the "forgets to hit what attacks" of the 26.10 log)
             defendAt = now;
             var attacker = nearbyThreat(now);
-            if (attacker != null && attacker != target) {
+            if (attacker != null && attacker != target && (!engaged || now - targetSince > 1.5)) {
                 var toTarget = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
                 var toAttacker = Nav.distance(hero, G.number(G.field(attacker, "posx")), G.number(G.field(attacker, "posy")));
-                if (toAttacker + 3 < toTarget) {
-                    Log.t("bot", "defending against " + G.s(G.field(G.field(attacker, "inf"), "id")) + " at " + Math.round(toAttacker) + " m instead of the target at " + Math.round(toTarget) + " m");
+                var tHp = G.number(G.call("ent.Unit", "get_health", target), 1), tMax = G.number(G.call("ent.Unit", "get_maxHealth", target), 1);
+                var finishing = engaged && tMax > 0 && tHp / tMax < 0.25 && toTarget <= combatRange() + REACH_HOLD; // (a foe nearly dead in reach is finished first)
+                var margin = engaged ? 2.0 : 3.0;
+                var unnoticed = aggroOnHero(attacker) && !aggroOnHero(target) && toAttacker <= toTarget + 2;
+                if (!finishing && (toAttacker + margin < toTarget || unnoticed)) {
+                    Log.t("bot", "defending against " + G.s(G.field(G.field(attacker, "inf"), "id")) + " at " + Math.round(toAttacker) + " m instead of the target at " + Math.round(toTarget) + " m" + (unnoticed ? " (the target has not noticed the hero)" : ""));
                     target = attacker; targetKind = "mob"; lockedFoe = null; targetSince = now;
+                    engaged = false;
                     nav.stop();
                 }
             }
@@ -609,6 +616,10 @@ class Bot {
         return best;
     }
 
+    function aggroOnHero(e:Dynamic):Bool {
+        try return G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) return false;
+    }
+
     static function key(e:Dynamic):String return Std.string(G.field(e, "__uid"));
 
     function blacklisted(e:Dynamic, now:Float):Bool {
@@ -669,6 +680,8 @@ class Bot {
             return wantsNode(target);
         }
         if (G.call("ent.GameObject", "isDead", target) == true || G.field(target, "dying") == true) return false;
+        // (health 0 and still standing: the kill is done, the body just has not been removed yet - the log had the hero casting at one for 6 s while another foe hit it)
+        if (G.number(G.call("ent.Unit", "get_health", target), 1) <= 0) return false;
         return true;
     }
 
@@ -1078,6 +1091,34 @@ class Bot {
         G.call("ent.Unit", "requestInteractAction", hero, [target]);
     }
 
+    var rangeAt = -100.0;
+    var rangeValue = 2.6;
+    var rangeLogged = -1.0;
+
+    /**
+     * How far from the foe the hero stands to fight: the reach of its own basic attack (the game's BaseSkill.getMaxRange, the series the
+     * Attack key runs) less a margin, so a ranged hero shoots from where the weapon reaches instead of walking up to the monster. The old
+     * fixed 9 m (ranged) / 2.6 m (melee) is the fallback when the game gives no figure.
+     */
+    function combatRange():Float {
+        var now = haxe.Timer.stamp();
+        if (now - rangeAt < 2.0) return rangeValue;
+        rangeAt = now;
+        var basic = 0.0;
+        try {
+            for (skill in G.array(G.field(hero, "skills"))) {
+                if (skill == null || G.field(skill, "removed") == true || !isBasic(skill)) continue;
+                var r = G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), 0);
+                if (Math.isFinite(r) && r > 0 && r < 60) basic = Math.max(basic, r);
+            }
+        } catch (_:Dynamic) {}
+        var fallback = rangedWeapon() ? 9.0 : 2.6;
+        // (the margin keeps the hero inside the reach while the foe steps about; melee reach is the body's too, so it stays close)
+        rangeValue = basic > 0 ? Math.max(2.2, Math.min(16.0, basic * 0.8)) : fallback;
+        if (Math.abs(rangeValue - rangeLogged) > 0.3) { rangeLogged = rangeValue; Log.t("fight", "fight range " + Math.round(rangeValue * 10) / 10 + " m (basic attack reach " + Math.round(basic * 10) / 10 + " m, " + (basic > 0 ? "from the game" : "fallback for the weapon") + ")"); }
+        return rangeValue;
+    }
+
     function rangedWeapon():Bool {
         var weapon = G.field(hero, "weaponInHand");
         var type = G.s(G.field(G.field(weapon, "inf"), "type"));
@@ -1135,7 +1176,7 @@ class Bot {
         if (crowdStep(now)) return;
         var d = Nav.distance(hero, x, y);
         var dz = z - G.number(G.field(hero, "posz"));
-        var range = rangedWeapon() ? 9.0 : 2.6;
+        var range = combatRange();
         // a foe on another height (a ledge above, a pit below) is not hit from here, however near it is on the map: closer in on a way up
         // or down, or let go when none leads there
         var level = Math.abs(dz) <= HIT_HEIGHT;
@@ -1407,7 +1448,7 @@ class Bot {
                 var inf = G.field(skill, "inf");
                 var use = "?";
                 try { var r = G.call("st.skill.Skill", "checkUse", skill, [null]); use = Type.enumConstructor(r) + (Type.enumParameters(r).length > 0 ? Std.string(Type.enumParameters(r)) : ""); } catch (_:Dynamic) {}
-                rows.push(G.s(G.field(skill, "kind")) + "{type " + G.integer(G.field(inf, "type"), -1) + " nature " + G.integer(G.field(inf, "nature"), -1) + (usable(skill) ? " BOT-USES" : " skipped") + " " + use + "}");
+                rows.push(G.s(G.field(skill, "kind")) + "{type " + G.integer(G.field(inf, "type"), -1) + " nature " + G.integer(G.field(inf, "nature"), -1) + (usable(skill) ? " BOT-USES" : " skipped") + " " + use + " range " + Math.round(G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), -1) * 10) / 10 + "}");
             }
         } catch (error:Dynamic) Log.err("dumpSkills", error);
         Log.t("fight", "skills of the hero: " + rows.join(" "));

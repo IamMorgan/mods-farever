@@ -243,7 +243,8 @@ class FarmWindow {
     function checkBox(dom:Dynamic, content:Dynamic, text:String, id:String, x:Float, y:Float, value:Bool, onChange:Bool -> Void):Dynamic {
         var box = G.field(N.node("check-box", dom, [N.escape(text)], id), "obj");
         place(box, content, x, y);
-        G.set(box, "selected", value);
+        // (the game's setter, not the bare field: it toggles the "selected" class that draws the tick; the field alone left a saved box looking empty)
+        G.call("ui.UIElement", "set_selected", box, [value]);
         G.set(box, "onValueChange", onChange);
         return box;
     }
