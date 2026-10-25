@@ -47,6 +47,7 @@ class Bot {
     /** After a node broke: its drops are on their way, nothing else is started before this time. */
     var lootWait = 0.0;
     var bagWarnAt = -100.0;
+    var skipScrap = false; // the recycler found nothing to take while gathering: the bank is next
     var seekKey = "";
     var seekSince = 0.0;
     var defendAt = -100.0;
@@ -273,9 +274,12 @@ class Bot {
         if (!workLeft) { finish(now); return; }
         finishStage = 0;
 
+        if (Services.freeSlots(hero) > 1) skipScrap = false;
         if (Services.freeSlots(hero) <= 1 && now - jobFailedAt > 30) {
-            if (plan.recycle && anyQuality()) { startJob("scrap", now); return; }
-            if (plan.clearBag) { startJob("bank", now); return; }
+            // gathering: recycle the chosen gear first, then empty the bag into the bank; leveling: only recycle, otherwise fight on
+            var gathering = plan.resourcesLeft();
+            if (plan.recycle && anyQuality() && !skipScrap) { startJob("scrap", now); return; }
+            if (gathering) { skipScrap = false; startJob("bank", now); return; }
             warnBagFull(now); // a full bag does not stop the run: it keeps fighting (drops are left on the ground)
         }
         farm(now, leveling, level);
@@ -337,10 +341,17 @@ class Bot {
         job = null;
         countsReady = false; // what left the bag is not "lost" progress
         Log.t("svc", "job " + kind + ": " + r);
-        if (r == "done") { if (Services.freeSlots(hero) <= 1) jobFailedAt = now; return; }
+        var gathering = plan.resourcesLeft();
+        if (r == "done") {
+            if (Services.freeSlots(hero) <= 1) {
+                if (kind == "scrap" && gathering) skipScrap = true; // nothing (more) to recycle: the bank is next
+                else jobFailedAt = now;
+            }
+            return;
+        }
         jobFailedAt = now;
         message = r.substr(5);
-        if (kind == "scrap" && plan.clearBag) return; // the bank is next time round
+        if (kind == "scrap" && gathering) { skipScrap = true; jobFailedAt = -100; return; } // the bank is next
         if (Services.freeSlots(hero) <= 1) warnBagFull(now);
     }
 
