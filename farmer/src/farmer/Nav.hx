@@ -73,6 +73,7 @@ class Nav {
     function requestFlood(f:FloodMap, hero:Dynamic, now:Float):Void {
         NavGrid.hasGlider = hasGlider(hero);
         NavGrid.glideTrusted = glideWorks;
+        NavGrid.glideAssumed = glideMode == 1 && glideFails == 0;
         NavGrid.setPads([for (pad in Pads.list) if (pad.id.indexOf("Flying") < 0 && pad.id.indexOf("Wall") < 0) pad]);
         f.grid.goalZ = Math.NaN;
         f.grid.noCliff = !f.descents;
@@ -401,6 +402,7 @@ class Nav {
             lastPlanY = hy;
             NavGrid.hasGlider = hasGlider(hero);
             NavGrid.glideTrusted = glideWorks;
+        NavGrid.glideAssumed = glideMode == 1 && glideFails == 0;
             NavGrid.setPads([for (pad in Pads.list) if (pad.id.indexOf("Flying") < 0 && pad.id.indexOf("Wall") < 0) pad]);
             grid.goalZ = goalZ;
             grid.noCliff = noCliff && !cliffOverride;
@@ -1076,6 +1078,48 @@ class Nav {
         walkId = near.id;
         go(near.x, near.y, 1.5, now);
         return true;
+    }
+
+    var elsewhereTried:Map<String, Float> = new Map();
+
+    /**
+     * The hero stands at an obelisk whose surroundings lead to none of the wanted spots (a plateau, an island): flies to another opened
+     * obelisk, the one with most of the spots around it (an obelisk is not tried twice in 10 minutes). True when a flight was started.
+     */
+    public function flyElsewhere(hero:Dynamic, now:Float, spots:Array<{x:Float, y:Float}>):Bool {
+        var standing = null;
+        try standing = G.call("ent.Hero", "getStandingObelisk", hero) catch (_:Dynamic) {}
+        var standId = standing == null ? "" : G.s(G.field(G.field(standing, "inf"), "id"));
+        if (standId == "") return false; // (a flight starts only from an obelisk)
+        elsewhereTried.set(standId, now + 600);
+        var best = null;
+        var bestCount = -1;
+        var bestD = Math.POSITIVE_INFINITY;
+        for (o in obelisks(hero)) {
+            if (o.id == standId) continue;
+            var until = elsewhereTried.get(o.id);
+            if (until != null && now < until) continue;
+            var count = 0;
+            var nearest = Math.POSITIVE_INFINITY;
+            for (p in spots) {
+                var d = Math.sqrt((p.x - o.x) * (p.x - o.x) + (p.y - o.y) * (p.y - o.y));
+                if (d < 200) count++;
+                nearest = Math.min(nearest, d);
+            }
+            if (count > bestCount || (count == bestCount && nearest < bestD)) { best = o; bestCount = count; bestD = nearest; }
+        }
+        if (best == null) return false;
+        try {
+            if (G.call("ent.Hero", "canFlyToObelisk", hero, [best.id]) == true) {
+                Log.t("nav", "this obelisk's surroundings lead to no wanted spot: flying to " + best.id + " (" + bestCount + " spots within 200 m of it)");
+                elsewhereTried.set(best.id, now + 600);
+                G.call("ent.Hero", "flyToObelisk", hero, [best.id]);
+                flightWait = now + 1.5;
+                stop();
+                return true;
+            }
+        } catch (_:Dynamic) {}
+        return false;
     }
 
     var travelNoteAt = -100.0;

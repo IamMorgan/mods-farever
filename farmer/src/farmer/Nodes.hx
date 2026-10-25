@@ -136,6 +136,19 @@ class Nodes {
         return best == null ? null : {spot: best, away: bestDirect, count: usable};
     }
 
+    /** The places of every known node of the wanted resources. */
+    public static function wanted(plan:FarmPlan):Array<{x:Float, y:Float}> {
+        build();
+        var cache:Map<String, Bool> = new Map();
+        var out = [];
+        for (s in all()) {
+            var w = cache.get(s.gatherable);
+            if (w == null) { w = wants(s.gatherable, plan); cache.set(s.gatherable, w); }
+            if (w) out.push({x: s.x, y: s.y});
+        }
+        return out;
+    }
+
     /** The spots within `r` metres of (x, y) (the nodes of one outcrop are visited together). */
     public static function near(x:Float, y:Float, r:Float):Array<NodeSpot> {
         return [for (s in all()) if ((s.x - x) * (s.x - x) + (s.y - y) * (s.y - y) <= r * r) s];

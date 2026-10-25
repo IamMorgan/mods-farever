@@ -926,6 +926,26 @@ class Bot {
     var nodeSince = 0.0;
     var nodeWaitUntil = 0.0;
     var nodeVisited:Map<Int, Float> = new Map();
+    var nodeFailRun = 0;
+    var nodeFailAt = -100.0;
+
+    /** No known node can be reached from here: flies from this obelisk to another one, or uses the home stone. True when something was started. */
+    function escapeNodeTrap(now:Float):Bool {
+        nodeFailRun = 0;
+        if (nav.flyElsewhere(hero, now, Nodes.wanted(plan))) {
+            nodeVisited = new Map();
+            nodeKey = -1;
+            message = Locale.f("stTravel");
+            nodeWaitUntil = now + 3;
+            return true;
+        }
+        if (now - stoneAt < 300) return false;
+        stoneAt = now;
+        var used = useHomeStone();
+        Log.t("bot", "no node can be reached from here: home stone " + (used ? "used" : "not in the bag"));
+        if (used) { nav.stop(); nav.forgetObeliskTrouble(); nodeVisited = new Map(); nodeKey = -1; message = Locale.f("stHome"); nextThink = now + 14; }
+        return used;
+    }
 
     /** No wanted node is loaded: goes to the nearest one of the whole world's table (by obelisk when far). True while it does. */
     function nodeRoam(now:Float):Bool {
@@ -940,13 +960,24 @@ class Bot {
                 nodeKey = -1;
                 nav.gaveUp = false;
                 nav.stop();
-                if (arrived) { nodeWaitUntil = now + 3; return true; }
+                if (arrived) { nodeFailRun = 0; nodeWaitUntil = now + 3; return true; }
+                if (now - nodeFailAt > 20) nodeFailRun = 0;
+                nodeFailAt = now;
+                nodeFailRun++;
+                // three spots in a row that no way leads to: the hero sits in a pocket (an obelisk's plateau, an island): another obelisk, else the home stone
+                if (nodeFailRun >= 3 && escapeNodeTrap(now)) return true;
             }
         }
         if (nodeKey < 0) {
             var g = Nodes.find(hero, plan, nodeVisited, now, Nav.obelisks(hero), (x, y, z) -> footOrFlight(x, y, z));
             if (g == null) {
-                if (nodeVisited.keys().hasNext()) { Log.t("hunt", "every known node of the wanted resources was visited lately: the memory is wiped"); nodeVisited = new Map(); return false; }
+                if (nodeVisited.keys().hasNext()) {
+                    Log.t("hunt", "every known node of the wanted resources was visited lately: the memory is wiped");
+                    nodeVisited = new Map();
+                    if (escapeNodeTrap(now)) return true;
+                    nodeWaitUntil = now + 15; // (no round of the same spots again at once)
+                    return true;
+                }
                 // none seen yet anywhere: the world is searched zone by zone (the loaded world reaches a few hundred metres, so one stop covers a lot)
                 return explore(now);
             }

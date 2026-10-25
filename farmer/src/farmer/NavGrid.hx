@@ -111,6 +111,9 @@ class NavGrid {
     /** True once a glide was seen to hold in this session (Nav.glideWorks): only then are the drops above UNTRUSTED_DROP planned. */
     public static var glideTrusted = false;
     static inline var UNTRUSTED_DROP = 25.0;
+    /** The glider opens by toggleGlide (the game's own jump key, held in every live test) but has not been seen yet in this session: drops up to this are planned (obelisk platforms stand higher than UNTRUSTED_DROP). */
+    static inline var ASSUMED_DROP = 70.0;
+    public static var glideAssumed = false;
     public static var deadEnds:Array<{x:Float, y:Float}> = [];
     /** The bumpers of the loaded world as launches: a throw from the pad's cell lands on ground up to `rise` m higher within `reach` m. */
     public static var pads:Array<{ix:Int, iy:Int, z:Float, rise:Float, reach:Float}> = [];
@@ -468,7 +471,7 @@ class NavGrid {
                 if (dz < -safeDrop()) {
                     if (noCliff) continue; // in a fight a cliff is never gone down
                     if (!hasGlider && -dz > NO_GLIDER_DROP) continue; // no glider: too high to fall
-                    if (!glideTrusted && -dz > UNTRUSTED_DROP) continue; // the glider has not been seen to hold yet: a fall this high is no gamble to take
+                    if (!glideTrusted && -dz > (glideAssumed ? ASSUMED_DROP : UNTRUSTED_DROP)) continue; // the glider has not been seen to hold yet: a fall this high is no gamble to take
                     // never down below the level of the spot (a gorge or a pit cannot be climbed out of): only as far as it needs
                     if (Math.isFinite(goalZ) && z < goalZ - 4) continue;
                     extra = Math.min(70, 8 + -dz * 1.5); // a drop is a one-way road: dearer than a long walk round; above GLIDE_DROP the glider is opened in the air
