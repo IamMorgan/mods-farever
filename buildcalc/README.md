@@ -47,6 +47,7 @@ For manual installation:
 
 **2026-10-25**
 - Ranged combat no longer ends with a melee main weapon: when the worn main weapon was of the other kind and the same weapon already sat in the arsenal, the search kept the worn melee weapon (with its shield) as the start and never left it; the arsenal weapon now gives way and the old main weapon takes its place, and the result is checked once more at the end.
+- The search always runs its first round of item changes: when the talents and skills rebuilt from scratch scored below the worn build (Medium defense under High damage) it used to stop after 30 seconds and offer the worn build as "already the best".
 
 **2026-10-24**
 - A High priority now weighs three times a Medium one (it used to be outweighed: with High damage and Medium healing the infusions went to healing).
