@@ -53,8 +53,12 @@ class Bot {
     var lastNoTarget = 0.0;
     var lastNote = 0.0;
     var wasDead = false;
+    var gotoX:Null<Float> = null;
+    var gotoY:Null<Float> = null;
 
     static inline var LOOT_SEEK = 16.0;
+    /** A monster this close to the hero is fought before going on with a node. */
+    static inline var THREAT_RANGE = 9.0;
 
     public function new() {}
 
@@ -102,7 +106,7 @@ class Bot {
 
     public function holdingSkills():Bool return running && AutoDodge.holdingSkills();
 
-    public function moving():Bool return running && (AutoDodge.dodging() || nav.active);
+    public function moving():Bool return running && (AutoDodge.dodging() || (hero != null && nav.wantsMove(hero)));
 
     /** In place of the keyboard's direction: the dodge's run first, then the way to the target. */
     public function steer(controller:Dynamic, input:Dynamic):Dynamic {
@@ -112,7 +116,8 @@ class Bot {
         var h = G.field(controller, "unit");
         if (h == null || !nav.active) return null;
         try G.set(controller, "skillRequiresReinputToMove", false) catch (_:Dynamic) {}
-        var d = nav.direction(h, haxe.Timer.stamp());
+        var d = null;
+        try d = nav.direction(h, haxe.Timer.stamp()) catch (e:Dynamic) { Log.w("steer error: " + Std.string(e)); }
         return d == null ? null : G.create("h3d.VectorImpl", [d.x, d.y, 0.0]);
     }
 
@@ -150,6 +155,11 @@ class Bot {
 
         updateCounts();
 
+        if (gotoX != null) {
+            if (Nav.distance(hero, gotoX, gotoY) < 3) { gotoX = null; nav.stop(); message = "arrived"; return; }
+            moveTo(gotoX, gotoY, 2.0, now);
+            return;
+        }
         if (job != null) { runJob(now); return; }
         var level = G.integer(G.field(hero, "_level"));
         var leveling = plan.targetLevel > 0 && level < plan.targetLevel;
@@ -272,6 +282,15 @@ class Bot {
             nav.stop();
             releaseAttack();
         }
+        if (target == null || targetKind == "node") {
+            // a monster at the hero's feet is fought first: running from it (the dodge) and back to the node would go on for ever
+            var threat = nearbyThreat(now);
+            if (threat != null) {
+                Log.w("defending against " + G.s(G.field(G.field(threat, "inf"), "id")) + " at " + Math.round(Nav.distance(hero, G.number(G.field(threat, "posx")), G.number(G.field(threat, "posy")))) + " m");
+                target = threat; targetKind = "mob"; lockedFoe = null; targetSince = now;
+                nav.stop();
+            }
+        }
         if (target == null) {
             // what lies on the ground is taken first (the pick-up itself is Loot.update's)
             if (seekLoot(now)) return;
@@ -287,6 +306,27 @@ class Bot {
             targetSince = now;
         }
         if (targetKind == "node") workNode(now); else workMob(now, leveling);
+    }
+
+    /** The nearest living enemy within reach of the hero (not a boss, a dummy or a harmless animal), or null. */
+    function nearbyThreat(now:Float):Dynamic {
+        var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
+        var best:Dynamic = null;
+        var bestD = THREAT_RANGE;
+        for (e in G.fastArray(G.field(G.field(hero, "layer"), "units"))) {
+            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true || blacklisted(e, now)) continue;
+            if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true || G.field(e, "summonOwner") != null) continue;
+            try if (G.call("ent.GameObject", "isEnemyWith", hero, [e]) != true) continue catch (_:Dynamic) continue;
+            var inf = G.field(e, "inf");
+            var unitType = G.s(G.field(inf, "type"));
+            if (unitType == "Environment" || unitType == "Critter") continue;
+            var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
+            if (unit != null && Catalog.isBoss(unit)) continue;
+            if (Math.abs(G.number(G.field(e, "posz")) - hz) > 5) continue;
+            var d = Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")));
+            if (d < bestD) { bestD = d; best = e; }
+        }
+        return best;
     }
 
     static function key(e:Dynamic):String return Std.string(G.field(e, "__uid"));
@@ -567,7 +607,15 @@ class Bot {
                     rows.push(i + ": near " + Math.round(AutoDodge.worldZ(x, y, hz, 2.2) * 10) / 10 + " deep " + Math.round(AutoDodge.worldZ(x, y, hz - 30, 30) * 10) / 10);
                 }
                 return {hero: [hx, hy, hz], rows: rows};
+            case "goto":
+                // developer: walks (by obelisk when far) to x,y without a plan
+                running = true;
+                AutoDodge.enabled = true;
+                gotoX = Reflect.field(cmd, "x");
+                gotoY = Reflect.field(cmd, "y");
+                return "going";
             case "stop":
+                gotoX = null;
                 stop();
                 return "stopped";
             case "plan":

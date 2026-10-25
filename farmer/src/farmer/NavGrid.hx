@@ -38,9 +38,11 @@ class NavGrid {
     /** A drop deeper than this is glided down. */
     public static inline var GLIDE_DROP = 7.0;
     /** Around a start standing in water the cells of water stay open this far (to swim out). */
-    static inline var ESCAPE = 9;
+    static inline var ESCAPE = 14;
     /** Water this close to a cell's centre closes the cell (the cell's half width 0.5 and the hero's body). */
     static inline var WATER_MARGIN = 0.8;
+    /** Around the start the margin does not apply (the hero already stands there). */
+    static inline var START_BANK = 2;
     static inline var SLICE = 0.004;
     static inline var CACHE_MAX = 250000;
     static inline var CACHE_TIME = 90.0;
@@ -53,6 +55,8 @@ class NavGrid {
 
     static var heights:Map<Int, Float> = new Map();
     static var wet:Map<Int, Bool> = new Map();
+    /** Cells with water right on the ground (without the margin of `wet`). */
+    static var drowned:Map<Int, Bool> = new Map();
     static var heightsSince = 0.0;
     static var blocked:Map<Int, Float> = new Map();
 
@@ -82,6 +86,17 @@ class NavGrid {
         blocked.set(key(cell(x), cell(y)), now + 25);
     }
 
+    /** The cell of (x, y) and the cells within `radius` of it, except those next to the hero (hx, hy): closed for a while. */
+    public static function blockAround(x:Float, y:Float, radius:Int, hx:Float, hy:Float, now:Float):Void {
+        for (ox in -radius...radius + 1) for (oy in -radius...radius + 1) {
+            var cx = cell(x) + ox, cy = cell(y) + oy;
+            if (Math.abs(cx * CELL - hx) < 1.2 && Math.abs(cy * CELL - hy) < 1.2) continue;
+            blocked.set(key(cx, cy), now + 25);
+        }
+    }
+
+    public static function clearBlocked():Void blocked = new Map();
+
     static function isBlocked(ix:Int, iy:Int, now:Float):Bool {
         var until = blocked.get(key(ix, iy));
         if (until == null) return false;
@@ -91,7 +106,7 @@ class NavGrid {
 
     /** Ground height of a cell seen from `refZ` (NaN: no ground). */
     static function height(ix:Int, iy:Int, refZ:Float, now:Float):Float {
-        if (now - heightsSince > CACHE_TIME || cached > CACHE_MAX) { heights = new Map(); wet = new Map(); heightsSince = now; cached = 0; }
+        if (now - heightsSince > CACHE_TIME || cached > CACHE_MAX) { heights = new Map(); wet = new Map(); drowned = new Map(); heightsSince = now; cached = 0; }
         var k = heightKey(ix, iy, refZ);
         var known = heights.get(k);
         if (known != null) return known;
@@ -101,7 +116,10 @@ class NavGrid {
             if (!Math.isFinite(z) || z <= refZ - 100) z = Math.NaN;
         }
         // Water is death: such a cell is no ground at all (kept apart from the heights, to let a swimmer out of it).
-        if (Math.isFinite(z) && Hazard.deadly(ix * CELL, iy * CELL, z, WATER_MARGIN)) wet.set(k, true);
+        if (Math.isFinite(z) && Hazard.deadly(ix * CELL, iy * CELL, z, WATER_MARGIN)) {
+            wet.set(k, true);
+            if (Hazard.deadly(ix * CELL, iy * CELL, z)) drowned.set(k, true);
+        }
         heights.set(k, z);
         cached++;
         return z;
@@ -113,14 +131,22 @@ class NavGrid {
     function open(ix:Int, iy:Int, refZ:Float, now:Float):Float {
         var z = height(ix, iy, refZ, now);
         if (!Math.isFinite(z)) return z;
-        if (wet.exists(heightKey(ix, iy, refZ)) && !(escape && Math.abs(ix - sx) <= ESCAPE && Math.abs(iy - sy) <= ESCAPE)) return Math.NaN;
+        var k = heightKey(ix, iy, refZ);
+        if (wet.exists(k)) {
+            var near = Math.abs(ix - sx) <= ESCAPE && Math.abs(iy - sy) <= ESCAPE;
+            if (!(escape && near)) {
+                // right at the start only the water on the ground itself closes a cell (a dock or a shore path has water within the margin)
+                var bank = Math.abs(ix - sx) <= START_BANK && Math.abs(iy - sy) <= START_BANK;
+                if (!bank || drowned.exists(k)) return Math.NaN;
+            }
+        }
         return z;
     }
 
     // ---- the search ----
 
     public function start(hx:Float, hy:Float, hz:Float, goalX:Float, goalY:Float, inLiquid:Bool):Void {
-        escape = inLiquid;
+        escape = inLiquid || Hazard.deadly(hx, hy, hz);
         nodes = new Map();
         heap = [];
         count = 0;

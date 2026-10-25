@@ -24,6 +24,12 @@ class Nav {
     public var arrive = 2.0;
     /** True once the spot was given up (stuck for too long). */
     public var gaveUp = false;
+    /** True when the last direction() gave a way to run: only then does the bot fake a pressed movement key (see Bot.moving). */
+    public var hasDirection = false;
+    var lastDiag = 0.0;
+    var why = "";
+    var calls = 0;
+    var stuckLevel = 0;
 
     var lastX = 0.0;
     var lastY = 0.0;
@@ -59,6 +65,7 @@ class Nav {
         ty = y;
         this.arrive = arrive;
         blockedSince = -1;
+        stuckLevel = 0;
         sidestepUntil = 0;
         startedAt = now;
         lastCheck = 0;
@@ -71,6 +78,7 @@ class Nav {
 
     public function stop():Void {
         active = false;
+        hasDirection = false;
         gaveUp = false;
         route = null;
         grid.state = 0;
@@ -79,6 +87,15 @@ class Nav {
     public static function distance(hero:Dynamic, x:Float, y:Float):Float {
         var dx = x - G.number(G.field(hero, "posx")), dy = y - G.number(G.field(hero, "posy"));
         return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /**
+     * True when the bot has a way to run (a path, or the spot is near): only then does it fake a pressed movement key (Bot.moving).
+     * Not judged by direction(): the game asks for a direction only while a key is held, so that would never start.
+     */
+    public function wantsMove(hero:Dynamic):Bool {
+        if (!active || flying(hero)) return false;
+        return (route != null && route.length > 0) || distance(hero, tx, ty) <= 6;
     }
 
     public function arrived(hero:Dynamic):Bool return !active || distance(hero, tx, ty) <= arrive;
@@ -97,6 +114,11 @@ class Nav {
         lastCheck = now;
         lastX = hx;
         lastY = hy;
+        if (now - lastDiag > 1.0) {
+            lastDiag = now;
+            Log.w("nav pos " + Math.round(hx * 10) / 10 + "," + Math.round(hy * 10) / 10 + "," + Math.round(hz * 10) / 10 + " moved " + Math.round(moved * 100) / 100 + "/" + Math.round(expected * 100) / 100
+                + " route " + (route == null ? "none" : routeIndex + "/" + route.length) + " dir " + hasDirection + " why " + why + " calls " + calls + " dodge " + AutoDodge.dodging() + " held " + isHeld(hero) + " blocked " + (blockedSince < 0 ? "-" : Std.string(Math.round((now - blockedSince) * 10) / 10)));
+        }
         if (route == null || isHeld(hero) || flying(hero)) { blockedSince = -1; return; }
         if (moved >= expected * STUCK_SHARE) { blockedSince = -1; return; }
         if (blockedSince < 0) blockedSince = now;
@@ -104,10 +126,23 @@ class Nav {
         if (blocked > GIVE_UP) { stop(); gaveUp = true; return; }
         if (blocked > 0.35 && now - jumpedAt > 0.8) { jump(hero); jumpedAt = now; }
         if (blocked > 0.7 && now - plannedAt > 1.0) {
-            // ran into something the heights did not show: close the cells ahead and plan again
-            NavGrid.block(hx + lastDirX * 1.2, hy + lastDirY * 1.2, now);
-            NavGrid.block(hx + lastDirX * 2.0, hy + lastDirY * 2.0, now);
+            // ran into something the heights did not show: close the cells ahead (the path's own next cells and the line of
+            // the run) and plan again; stuck at the same place again, the closed area grows, so the new path must differ
+            stuckLevel = Math.abs(hx - lastPlanX) + Math.abs(hy - lastPlanY) < 3 ? stuckLevel + 1 : 1;
+            var radius = Std.int(Math.min(1, stuckLevel - 1));
+            var ahead:Array<{x:Float, y:Float}> = [{x: hx + lastDirX * 1.2, y: hy + lastDirY * 1.2}, {x: hx + lastDirX * 2.0, y: hy + lastDirY * 2.0}];
+            if (route != null) for (i in routeIndex + 1...Std.int(Math.min(routeIndex + 4, route.length))) ahead.push({x: route[i].x, y: route[i].y});
+            for (a in ahead) NavGrid.blockAround(a.x, a.y, radius, hx, hy, now);
+            if (stuckLevel >= 4) { // the closed cells did not help: this spot cannot be reached from here
+                Log.w("stuck at " + Math.round(hx) + "," + Math.round(hy) + " for good: spot given up");
+                NavGrid.clearBlocked();
+                stop();
+                gaveUp = true;
+                return;
+            }
+            Log.w("stuck at " + Math.round(hx) + "," + Math.round(hy) + " level " + stuckLevel + ": cells ahead closed");
             needPlan = true;
+            blockedSince = -1; // the new path gets its own time to prove itself
         }
     }
 
@@ -166,7 +201,10 @@ class Nav {
 
     /** The direction (unit vector x, y) to run in, or null when there is nowhere to go (or the path is still being worked out). */
     public function direction(hero:Dynamic, now:Float):Null<{x:Float, y:Float}> {
-        if (!active || flying(hero)) return null;
+        hasDirection = false;
+        calls++;
+        why = "";
+        if (!active || flying(hero)) { why = "inactive/flying"; return null; }
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
         var aimX = tx, aimY = ty;
         if (route != null && route.length > 0) {
@@ -174,7 +212,7 @@ class Nav {
             var last = route.length - 1;
             if (routeIndex >= last && routeShort > 3 && !needPlan) {
                 // the path only led part of the way: plan again from here, unless the last plan started here too
-                if (Math.abs(hx - lastPlanX) + Math.abs(hy - lastPlanY) < 4) { stop(); gaveUp = true; return null; }
+                if (Math.abs(hx - lastPlanX) + Math.abs(hy - lastPlanY) < 4) { why = "short route end"; stop(); gaveUp = true; return null; }
                 needPlan = true;
             }
             var wp = route[Std.int(Math.min(routeIndex + 2, last))];
@@ -185,12 +223,13 @@ class Nav {
             aimY = wp.y;
             var next = route[Std.int(Math.min(routeIndex + 1, last))];
             if (next.jump && jumpedFor != routeIndex && Math.abs(next.x - hx) + Math.abs(next.y - hy) < 2.2) { jumpedFor = routeIndex; jump(hero); }
-        } else if (distance(hero, tx, ty) > 6) return null; // planning
+        } else if (distance(hero, tx, ty) > 6) { why = "planning"; return null; }
         var dx = aimX - hx, dy = aimY - hy;
         var d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 0.01) return null;
+        if (d < 0.01) { why = "at aim"; return null; }
         lastDirX = dx / d;
         lastDirY = dy / d;
+        hasDirection = true;
         return {x: lastDirX, y: lastDirY};
     }
 
