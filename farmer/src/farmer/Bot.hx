@@ -54,6 +54,7 @@ class Bot {
     var seekSince = 0.0;
     var defendAt = -100.0;
     var unfinished:Dynamic = null;
+    var lenientTarget = false;
     var lastNoTarget = 0.0;
     var lastNote = 0.0;
     var wasDead = false;
@@ -582,6 +583,8 @@ class Bot {
             }
             needDescents = false;
             if (target == null && leveling && roam(now, level, 2)) return;
+            // no monster of the hero's own level anywhere to go to: the nearest lower ones (up to 3 below) are better than none
+            if (target == null && leveling) pickTarget(now, leveling, level, needDescents, true);
             if (target == null && !leveling && wantsGather() && nodeRoam(now)) return;
             if (target == null && !leveling && huntRoam(now, level)) return;
             if (target == null) {
@@ -701,6 +704,12 @@ class Bot {
             return wantsNode(target);
         }
         if (G.call("ent.GameObject", "isDead", target) == true || G.field(target, "dying") == true) return false;
+        // the hero has grown past the monster on the way to it (a level gained in the last fight): one of its own level is looked for, unless this one
+        // fights the hero or is hurt already
+        if (leveling && !lenientTarget && !hurt(target) && !aggroOnHero(target) && G.integer(G.field(target, "_level")) < G.integer(G.field(hero, "_level"))) {
+            Log.t("bot", "the target is below the hero's level now: another one");
+            return false;
+        }
         // (health 0 and still standing: the kill is done, the body just has not been removed yet - the log had the hero casting at one for 6 s while another foe hit it)
         if (G.number(G.call("ent.Unit", "get_health", target), 1) <= 0) return false;
         return true;
@@ -718,7 +727,8 @@ class Bot {
         return false;
     }
 
-    function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool):Void {
+    function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false):Void {
+        lenientTarget = lenient;
         targetDescent = false;
         lastCut = 0;
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
@@ -813,7 +823,7 @@ class Bot {
                 var diff = foeLevel - level;
                 // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
                 // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
-                if (drops ? Math.abs(diff) > 6 : (diff < -3 || diff > 2)) continue;
+                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : 0) || diff > 2)) continue;
                 score += (diff < 0 ? -diff * 600 : diff * 250);
             } else {
                 if (!drops) continue;
