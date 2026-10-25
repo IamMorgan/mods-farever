@@ -2,7 +2,8 @@ package farmer;
 
 import farmer.GameAccess as G;
 
-typedef Waypoint = {x:Float, y:Float, jump:Bool};
+/** `fly`: the way to this waypoint is a throw from a bumper (see Pads): the hero stands on the pad before it and is thrown here. */
+typedef Waypoint = {x:Float, y:Float, jump:Bool, fly:Bool};
 
 private class Node {
     public var ix:Int;
@@ -12,6 +13,7 @@ private class Node {
     public var f:Float;
     public var parent:Node;
     public var jump = false;
+    public var fly = false;
     public var closed = false;
 
     public function new(ix:Int, iy:Int, z:Float) {
@@ -59,6 +61,36 @@ class NavGrid {
     static inline var DEAD_RADIUS = 10.0;
     /** Near the start and the goal the clearance rules do not apply (a node can stand at a wall). */
     static inline var ENDS = 3;
+    /** A node of the search on the goal's cell is the goal only within this height of goalZ. */
+    static inline var GOAL_DZ = 7.0;
+
+    /**
+     * A flood search: no goal, the whole reachable ground of the window is explored (soft rules, bumpers included) and kept in `reach`
+     * (cell -> height), so the bot can tell at once whether a monster or node can be walked to at all.
+     */
+    public var flood = false;
+    public var reach:Map<Int, Float> = new Map();
+    public var reachCount = 0;
+    /** True when the flood never reached the border of its window: the reachable ground is a closed region (an island, a ledge, a pocket). */
+    public var reachClosed = false;
+    var reachX = 0;
+    var reachY = 0;
+
+    /** 1 the spot (within `slack` cells, within 6 m of height z when z is known) was reached by the flood, 0 it was not, -1 not known (out of the window). */
+    public function reached(x:Float, y:Float, z:Float, slack:Int):Int {
+        if (reachCount == 0) return -1;
+        if (Math.abs(cell(x) - reachX) > RADIUS - 6 || Math.abs(cell(y) - reachY) > RADIUS - 6) return reachClosed ? 0 : -1; // (beyond a closed region nothing is reachable)
+        for (ox in -slack...slack + 1) for (oy in -slack...slack + 1) {
+            var zz = reach.get(key(cell(x) + ox, cell(y) + oy));
+            if (zz != null && (!Math.isFinite(z) || Math.abs(zz - z) < 6)) return 1;
+        }
+        return 0;
+    }
+
+    public function floodCentre(hx:Float, hy:Float):Float {
+        var dx = hx - reachX * CELL, dy = hy - reachY * CELL;
+        return Math.sqrt(dx * dx + dy * dy);
+    }
 
     /** 0 nothing, 1 searching, 2 path ready, 3 no way found. */
     public var state = 0;
@@ -76,7 +108,27 @@ class NavGrid {
     static var blocked:Map<Int, Float> = new Map();
     /** False when the hero has no glider equipped: high drops are closed. */
     public static var hasGlider = true;
+    /** True once a glide was seen to hold in this session (Nav.glideWorks): only then are the drops above UNTRUSTED_DROP planned. */
+    public static var glideTrusted = false;
+    static inline var UNTRUSTED_DROP = 25.0;
     public static var deadEnds:Array<{x:Float, y:Float}> = [];
+    /** The bumpers of the loaded world as launches: a throw from the pad's cell lands on ground up to `rise` m higher within `reach` m. */
+    public static var pads:Array<{ix:Int, iy:Int, z:Float, rise:Float, reach:Float}> = [];
+    /** Landing cells of throws that failed (the hero did not get there): closed for a while. */
+    static var badLandings:Map<Int, Float> = new Map();
+    /** A throw costs this much more than the walk of the same length (it is a gamble: dearer than a short way round, cheaper than a long one). */
+    static inline var LAUNCH_COST = 14.0;
+    static inline var LAUNCH_STEP = 3;
+    static inline var LAUNCH_MIN_RISE = 2.5;
+
+    public static function setPads(list:Array<Pads.Pad>):Void {
+        pads = [for (p in list) {ix: cell(p.x), iy: cell(p.y), z: p.z, rise: Pads.expectedRise(p), reach: Pads.expectedReach(p)}];
+    }
+
+    /** A throw that did not reach its landing: the cell stays closed for 3 minutes. */
+    public static function badLanding(x:Float, y:Float, now:Float):Void {
+        for (ox in -1...2) for (oy in -1...2) badLandings.set(key(cell(x) + ox, cell(y) + oy), now + 180);
+    }
 
     var nodes:Map<Int, Node> = new Map();
     var heap:Array<Node> = [];
@@ -104,6 +156,9 @@ class NavGrid {
     var startLiquid = false;
     var roughMemo:Map<Int, Bool> = new Map();
     var best:Node;
+    /** The node on the border of the window nearest the spot: with the spot beyond the window the path leads there (a cliff's edge nearer the spot is a dead end), not to the nearest interior node. */
+    var edgeBest:Node;
+    var edgeH = Math.POSITIVE_INFINITY;
     var bestH = Math.POSITIVE_INFINITY;
     var count = 0;
 
@@ -182,6 +237,11 @@ class NavGrid {
 
     static var cached = 0;
 
+    static function padCell(ix:Int, iy:Int):Bool {
+        for (p in pads) if (p.ix == ix && p.iy == iy) return true;
+        return false;
+    }
+
     static function solid(ix:Int, iy:Int, z:Float, k:Int):Bool {
         var known = solids.get(k);
         if (known != null) return known;
@@ -198,7 +258,7 @@ class NavGrid {
         if (Hazard.trapCount() > 0 && Hazard.trapAt(ix * CELL, iy * CELL, z) && !(Math.abs(ix - sx) <= START_BANK && Math.abs(iy - sy) <= START_BANK)) return Math.NaN;
         var k = heightKey(ix, iy, refZ);
         // a prop with a body closes its cell (the hero's own surroundings at the start stay open, it may stand next to one)
-        if (strict && !(ix == sx && iy == sy) && solid(ix, iy, z, k)) return Math.NaN; // (the soft search passes them at a price, see `step`)
+        if (strict && !(ix == sx && iy == sy) && !padCell(ix, iy) && solid(ix, iy, z, k)) return Math.NaN; // (the soft search passes them at a price, see `step`)
         if (wet.exists(k)) {
             var near = Math.abs(ix - sx) <= ESCAPE && Math.abs(iy - sy) <= ESCAPE;
             if (!(escape && near)) {
@@ -208,6 +268,19 @@ class NavGrid {
             }
         }
         return z;
+    }
+
+    /** Developer: what the planner sees in the column at (x, y), looking from heights `from`..`to` every 3 m. */
+    public static function column(x:Float, y:Float, from:Float, to:Float):Array<String> {
+        var now = haxe.Timer.stamp();
+        var out = [];
+        var ref = from;
+        while (ref <= to) {
+            var z = height(cell(x), cell(y), ref, now);
+            out.push("ref " + Math.round(ref) + " -> " + (Math.isFinite(z) ? Std.string(Math.round(z * 10) / 10) : "none") + (Math.isFinite(z) && Math.abs(z - ref) <= 2.6 ? " HIT" : ""));
+            ref += 3;
+        }
+        return out;
     }
 
     /** Developer: a text map around (cx, cy) of how the planner sees the ground (seen from refZ). */
@@ -250,6 +323,17 @@ class NavGrid {
         begin(true, goalX, goalY);
     }
 
+    /** Starts a flood search from the hero's place (see `flood`). */
+    public function startFlood(hx:Float, hy:Float, hz:Float, inLiquid:Bool):Void {
+        flood = true;
+        startX = hx;
+        startY = hy;
+        startZ = hz;
+        startLiquid = inLiquid;
+        softTried = true; // (no second pass: the one search is the soft one)
+        begin(false, hx + 100000, hy);
+    }
+
     /** One search; `strict` keeps a cell's width away from walls and water (a second, soft one follows when that finds no way). */
     function begin(strict:Bool, goalX:Float, goalY:Float):Void {
         var hx = startX, hy = startY, hz = startZ;
@@ -263,6 +347,8 @@ class NavGrid {
         heap = [];
         count = 0;
         best = null;
+        edgeBest = null;
+        edgeH = Math.POSITIVE_INFINITY;
         bestH = Math.POSITIVE_INFINITY;
         path = [];
         shortBy = 0;
@@ -285,6 +371,7 @@ class NavGrid {
     inline function nodeKey(ix:Int, iy:Int):Int return (ix - sx + 128) * 512 + (iy - sy + 128);
 
     function h(ix:Int, iy:Int):Float {
+        if (flood) return 0;
         var dx = Math.abs(ix - tx), dy = Math.abs(iy - ty);
         var v = (dx + dy) + (1.4142 - 2) * Math.min(dx, dy);
         for (d in deadEnds) if (Math.abs(ix * CELL - d.x) < DEAD_RADIUS && Math.abs(iy * CELL - d.y) < DEAD_RADIUS) { v += 80; break; }
@@ -349,12 +436,17 @@ class NavGrid {
             n.closed = true;
             var hh = h(n.ix, n.iy);
             if (hh < bestH) { bestH = hh; best = n; }
-            if (n.ix == tx && n.iy == ty) { finish(n, now); return; }
-            if (++count > MAX_NODES) { finish(best, now); return; }
+            // (the spot of a known height counts only at that height: a ledge above a node or a floor below one is not the spot)
+            if (n.ix == tx && n.iy == ty && (!Math.isFinite(goalZ) || Math.abs(n.z - goalZ) < GOAL_DZ)) { finish(n, now); return; }
+            if (++count > MAX_NODES) { finish(partialEnd(), now); return; }
             for (dir in 0...8) {
                 var dx = DX[dir], dy = DY[dir];
                 var nx = n.ix + dx, ny = n.iy + dy;
-                if (Math.abs(nx - sx) > RADIUS || Math.abs(ny - sy) > RADIUS) { touchedWindow = true; continue; }
+                if (Math.abs(nx - sx) > RADIUS || Math.abs(ny - sy) > RADIUS) {
+                    touchedWindow = true;
+                    if (hh < edgeH) { edgeH = hh; edgeBest = n; } // the ground goes on from this node: a way out of the window
+                    continue;
+                }
                 if (isBlocked(nx, ny, now)) continue;
                 var existing = nodes.get(nodeKey(nx, ny));
                 if (existing != null && existing.closed) continue;
@@ -368,6 +460,7 @@ class NavGrid {
                 if (dz < -safeDrop()) {
                     if (noCliff) continue; // in a fight a cliff is never gone down
                     if (!hasGlider && -dz > NO_GLIDER_DROP) continue; // no glider: too high to fall
+                    if (!glideTrusted && -dz > UNTRUSTED_DROP) continue; // the glider has not been seen to hold yet: a fall this high is no gamble to take
                     // never down below the level of the spot (a gorge or a pit cannot be climbed out of): only as far as it needs
                     if (Math.isFinite(goalZ) && z < goalZ - 4) continue;
                     extra = Math.min(70, 8 + -dz * 1.5); // a drop is a one-way road: dearer than a long walk round; above GLIDE_DROP the glider is opened in the air
@@ -396,18 +489,102 @@ class NavGrid {
                     existing.parent = n;
                     existing.z = z;
                     existing.jump = jump;
+                    existing.fly = false;
                     push(existing);
                 }
             }
+            if (pads.length > 0) launches(n, now);
         }
         exhausted = true;
-        finish(best, now);
+        finish(partialEnd(), now);
+    }
+
+    /** Where a path that does not reach the spot ends: at the window's border when the spot lies beyond the window and the ground goes on there. */
+    function partialEnd():Node {
+        if (!flood && edgeBest != null && (Math.abs(tx - sx) > RADIUS || Math.abs(ty - sy) > RADIUS)) return edgeBest;
+        return best;
+    }
+
+    /**
+     * The throws from the bumper at node `n`: every dry, roomy cell of higher ground within the flight's reach (sampled every
+     * LAUNCH_STEP cells) is a node reached by a flight. Only real climbs count (a rise the legs cannot make).
+     */
+    function launches(n:Node, now:Float):Void {
+        for (p in pads) {
+            if (p.ix != n.ix || p.iy != n.iy || Math.abs(p.z - n.z) > 3) continue;
+            var found = 0, tried = 0;
+            var r = Std.int(p.reach);
+            var ox = -r;
+            while (ox <= r) {
+                var oy = -r;
+                while (oy <= r) {
+                    var d = Math.sqrt(ox * ox + oy * oy);
+                    var lx = p.ix + ox, ly = p.iy + oy;
+                    oy += LAUNCH_STEP;
+                    if (d < 3 || d > p.reach || Math.abs(lx - sx) > RADIUS || Math.abs(ly - sy) > RADIUS) continue;
+                    var bad = badLandings.get(key(lx, ly));
+                    if (bad != null && now < bad) continue;
+                    var existing = nodes.get(nodeKey(lx, ly));
+                    if (existing != null && existing.closed) continue;
+                    // the ground there at the heights a throw can reach (the highest that is dry and roomy wins)
+                    var bestZ = Math.NaN;
+                    var probe = p.rise * 0.9 + n.z;
+                    while (probe >= n.z + LAUNCH_MIN_RISE - 1.0) {
+                        var z = open(lx, ly, probe, now);
+                        if (Math.isFinite(z) && Math.abs(z - probe) <= 2.6 && z - n.z >= LAUNCH_MIN_RISE && z - n.z <= p.rise && d <= Pads.RISE_RUN + Pads.GLIDE_RATIO * (p.rise - (z - n.z))) { bestZ = z; break; }
+                        probe -= 3.0;
+                    }
+                    tried++;
+                    if (!Math.isFinite(bestZ)) continue;
+                    // (a narrow ledge or one at a wall is rough: fine for a landing, the strict search skips it, the soft one takes it at a price)
+                    var rg = rough(lx, ly, bestZ, now);
+                    if (strict && rg) continue;
+                    found++;
+                    var g = n.g + LAUNCH_COST + d * 0.8 + (rg ? 4 : 0);
+                    if (existing == null) {
+                        existing = new Node(lx, ly, bestZ);
+                        existing.g = g;
+                        existing.f = g + h(lx, ly);
+                        existing.parent = n;
+                        existing.jump = true;
+                        existing.fly = true;
+                        nodes.set(nodeKey(lx, ly), existing);
+                        push(existing);
+                    } else if (g < existing.g) {
+                        existing.g = g;
+                        existing.f = g + h(lx, ly);
+                        existing.parent = n;
+                        existing.z = bestZ;
+                        existing.jump = true;
+                        existing.fly = true;
+                        push(existing);
+                    }
+                }
+                ox += LAUNCH_STEP;
+            }
+            Log.t("nav", "pad at " + p.ix + "," + p.iy + " z " + Math.round(p.z) + " (rise " + Math.round(p.rise) + ", reach " + Math.round(p.reach) + "): " + found + " landings of " + tried + " cells looked at");
+        }
     }
 
     static var DX = [1, -1, 0, 0, 1, 1, -1, -1];
     static var DY = [0, 0, 1, -1, 1, -1, 1, -1];
 
     function finish(end:Node, now:Float):Void {
+        if (flood) {
+            reach = new Map();
+            reachCount = 0;
+            for (n in nodes) { reach.set(key(n.ix, n.iy), n.z); reachCount++; }
+            reachX = sx;
+            reachY = sy;
+            reachClosed = exhausted && !touchedWindow;
+            flood = false;
+            path = [];
+            state = 2;
+            Log.t("nav", "reach map from " + sx + "," + sy + ": " + reachCount + " cells can be walked to" + (noCliff ? "" : " (descents allowed)") + (reachClosed ? ", a closed region" : ""));
+            nodes = new Map();
+            heap = [];
+            return;
+        }
         var ex0 = end.ix * CELL - goalX, ey0 = end.iy * CELL - goalY;
         if (strict && !softTried && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && ((Math.abs(goalX - startX) < RADIUS - 20 && Math.abs(goalY - startY) < RADIUS - 20) || count < 150 || (exhausted && !touchedWindow))) {
             // no clean way: the same search again, now allowed to pass close to walls
@@ -421,7 +598,7 @@ class NavGrid {
         var list:Array<Waypoint> = [];
         var n = end;
         while (n != null) {
-            list.push({x: n.ix * CELL, y: n.iy * CELL, jump: n.jump});
+            list.push({x: n.ix * CELL, y: n.iy * CELL, jump: n.jump, fly: n.fly});
             n = n.parent;
         }
         list.reverse();

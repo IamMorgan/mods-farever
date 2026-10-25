@@ -61,6 +61,11 @@ class Bot {
     var lastFightLog = 0.0;
     var failTimes:Array<Float> = [];
     var escapeBumper:Dynamic = null;
+    /** The reach map with the glider's descents is asked for (nothing was left to go to on foot), and a target that needs one. */
+    var needDescents = false;
+    var descentNoteAt = -100.0;
+    var targetDescent = false;
+    var lastCut = 0;
     var escapeAt = 0.0;
     var progressBest = 1e9;
     var progressAt = 0.0;
@@ -70,10 +75,14 @@ class Bot {
     var bumperHopAt = -100.0;
     var gotoX:Null<Float> = null;
     var gotoY:Null<Float> = null;
+    var gotoArrive = 2.0;
+    var gotoZ = Math.NaN;
 
     static inline var LOOT_SEEK = 16.0;
     /** A monster this much above or below the hero is on another tier (a plateau, a gorge): the way there is long or none, and the walk along the edge circles. */
     static inline var MAX_DZ = 8.0;
+    /** A monster farther than this (score metres) is not picked while hunting drops: the roaming goes there first. */
+    static inline var FAR_TARGET = 300.0;
     /** A monster this close to the hero is fought before going on with a node. */
     static inline var THREAT_RANGE = 9.0;
     static inline var BUMPER_RANGE = 90.0;
@@ -263,12 +272,14 @@ class Bot {
         if (G.field(hero, "inCutscene") == true) return;
 
         updateCounts();
+        Nodes.remember(hero, now);
         // once, at the start: a jump on the spot, to learn how high the hero jumps (the planner's jump height)
         if (target == null && gotoX == null && nav.calibrateJump(hero, now)) return;
 
         if (gotoX != null) {
-            if (Nav.distance(hero, gotoX, gotoY) < 3) { gotoX = null; nav.stop(); message = "arrived"; return; }
-            moveTo(gotoX, gotoY, 2.0, now);
+            if (Nav.distance(hero, gotoX, gotoY) < gotoArrive + 1) { gotoX = null; nav.stop(); message = "arrived"; return; }
+            if (nav.gaveUp && !nav.walkingToObelisk()) { gotoX = null; nav.stop(); message = "unreachable"; Log.t("bot", "goto: the spot cannot be reached"); return; }
+            moveTo(gotoX, gotoY, gotoArrive, now, gotoZ);
             return;
         }
         if (job != null) { runJob(now); return; }
@@ -539,8 +550,18 @@ class Bot {
             // what lies on the ground is taken first (the pick-up itself is Loot.update's)
             if (seekLoot(now)) return;
             if (now < lootWait) { nav.stop(); message = Locale.f("stLoot"); return; }
-            pickTarget(now, leveling, level);
+            // what ground the hero can walk to from here is worked out first (a moment): no monster or node is chosen that no way leads to
+            if (nav.ensureReach(hero, now, needDescents)) { message = Locale.f("stTravel"); return; }
+            pickTarget(now, leveling, level, needDescents);
+            if (target == null && !needDescents && lastCut > 0) {
+                // nothing on the ground the hero can walk to: the ground below, reached by the glider, is looked at next
+                needDescents = true;
+                if (now - descentNoteAt > 20) { descentNoteAt = now; Log.w(lastCut + " candidates are out of reach on foot: looking at the ground the glider reaches"); }
+                return;
+            }
+            needDescents = false;
             if (target == null && leveling && roam(now, level, 2)) return;
+            if (target == null && !leveling && wantsGather() && nodeRoam(now)) return;
             if (target == null && !leveling && huntRoam(now, level)) return;
             if (target == null) {
                 // nothing to do right now: wait for nodes to respawn
@@ -630,27 +651,29 @@ class Bot {
                 deadAreas.push({x: G.number(G.field(target, "posx")), y: G.number(G.field(target, "posy")), until: now + 120});
             }
             nav.gaveUp = false;
-            if (rise > 4 && escapeBumper == null && now - bumperHopAt > 60) {
-                // the target lies on a height no way leads to: a trampoline of the world throws the hero up (the glider and the way on do the rest)
-                var b = nearestBumper();
-                if (b != null) {
-                    bumperHopAt = now;
-                    escapeBumper = b;
-                    escapeAt = now;
-                    Log.w("target is " + Math.round(rise) + " m higher and unreachable on foot: the trampoline " + G.s(G.field(G.field(b, "inf"), "id")) + " is used");
-                }
-            }
+            // (a target higher than the hero that is out of reach is out of reach by bumper too: the planner (NavGrid) already counts the pads)
             if (failTimes.length == 0) { trapRefX = G.number(G.field(hero, "posx")); trapRefY = G.number(G.field(hero, "posy")); }
             failTimes.push(now);
             while (failTimes.length > 0 && now - failTimes[0] > 70) failTimes.shift();
             return false;
         }
         if (targetKind == "node") {
+            // right under or over the node (a floor above it, a ledge below it): out of reach however near
+            if (dNow < 6 && Math.abs(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) > 8 && now - targetSince > 6) {
+                Log.w("node at another height (dz " + Math.round(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) + " m) with no way there: blacklisted for 2 min");
+                blacklist.set(key(target), now + 120);
+                return false;
+            }
             if (G.field(target, "enabled") != true || G.call("ent.Element", "isHidden", target) == true) return false;
             return wantsNode(target);
         }
         if (G.call("ent.GameObject", "isDead", target) == true || G.field(target, "dying") == true) return false;
         return true;
+    }
+
+    function wantsGather():Bool {
+        for (id in plan.active(false)) return true;
+        return false;
     }
 
     function wantsNode(node:Dynamic):Bool {
@@ -660,7 +683,9 @@ class Bot {
         return false;
     }
 
-    function pickTarget(now:Float, leveling:Bool, level:Int):Void {
+    function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool):Void {
+        targetDescent = false;
+        lastCut = 0;
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         var layer = G.field(hero, "layer");
         var player = G.field(hero, "player");
@@ -671,6 +696,7 @@ class Bot {
             var dx = G.number(G.field(e, "posx")) - hx, dy = G.number(G.field(e, "posy")) - hy, dz = G.number(G.field(e, "posz")) - hz;
             return Math.sqrt(dx * dx + dy * dy) + Math.abs(dz) * 4.0; // another level (a plateau, a gorge) means a long way round
         }
+        var cut = 0; // candidates no way leads to
         var wantGather = false;
         for (id in plan.active(false)) { wantGather = true; break; }
         if (wantGather) {
@@ -678,6 +704,11 @@ class Bot {
                 if (e == null || G.field(e, "removed") == true || !G.isA(e, "ent.interactible.Gatherable")) continue;
                 if (G.field(e, "enabled") != true || G.call("ent.Element", "isHidden", e) == true || blacklisted(e, now)) continue;
                 if (!wantsNode(e)) continue;
+                var rc = nav.canReach(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), descents);
+                if (rc == 0) { cut++; continue; } // no way there from here
+                // beyond the reach map and on another tier: a way round on foot is a guess (it ran the hero in circles); only the glider's descent, from a higher tier, is tried
+                var nodeDz = G.number(G.field(e, "posz")) - hz;
+                if (rc < 0 && Math.abs(nodeDz) > 8 && (!descents || nodeDz > 0)) { cut++; continue; }
                 if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
                 if (Hazard.trapAt(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")))) continue; // in a trap
                 try if (!Services.isOk(G.call("ent.interactible.Gatherable", "getNoActionReason", e, [player]))) continue catch (_:Dynamic) continue;
@@ -685,6 +716,8 @@ class Bot {
                 if (c < bestScore) { bestScore = c; best = e; kind = "node"; }
             }
             if (best != null) {
+                targetDescent = descents && nav.canReach(G.number(G.field(best, "posx")), G.number(G.field(best, "posy")), G.number(G.field(best, "posz")), false) != 1;
+                lastCut = cut;
                 target = best; targetKind = kind;
                 Log.w("target node " + G.s(G.field(G.field(best, "gatherInf"), "id")) + " at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m");
                 return;
@@ -692,6 +725,11 @@ class Bot {
         }
         var wantHunt = [for (id in plan.active(true)) id];
         if (wantHunt.length == 0 && !leveling) return;
+        var padRise = 0.0; // the highest throw of a bumper the hero can walk to
+        for (pad in Pads.list) {
+            if (pad.id.indexOf("Flying") >= 0 || pad.id.indexOf("Wall") >= 0 || Math.abs(pad.z - hz) > 3 || Nav.distance(hero, pad.x, pad.y) > 110) continue;
+            padRise = Math.max(padRise, Pads.expectedRise(pad));
+        }
         var seen:Map<Int, Int> = new Map();
         var foePos:Array<{x:Float, y:Float}> = [];
         var cands:Array<{e:Dynamic, score:Float, x:Float, y:Float}> = [];
@@ -710,8 +748,17 @@ class Bot {
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
             var foeLevel = G.integer(G.field(e, "_level"));
             // another height (a plateau, a gorge, an upper storey) is a long way round or none: such monsters are not chosen
+            // (hunting drops: a monster across the map is the roaming's business, not a target; leveling goes as far as its level needs)
+            if (!leveling && cost(e) > FAR_TARGET) continue;
             var dzFoe = Math.abs(G.number(G.field(e, "posz")) - hz);
-            if (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25)) continue;
+            // (a bumper within reach lifts the hero onto a ledge up to its throw: then a monster up there is a target too)
+            var reach = nav.canReach(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), descents);
+            if (reach == 0) { cut++; continue; } // the reach map says no way leads there (another tier, behind a cliff)
+            if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
+                var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
+                if (!lift && (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25))) continue;
+                if (lift && dzFoe > 4 && cost(e) - dzFoe * 4.0 > 110) continue;
+            }
             var score = cost(e);
             var drops = false;
             if (wantHunt.length > 0 && unit != null) {
@@ -743,7 +790,9 @@ class Bot {
             var s = c.score + counted * GROUP_COST;
             if (s < bestScore) { bestScore = s; best = c.e; kind = "mob"; groupOfBest = Std.int(Math.max(0, others)); }
         }
+        lastCut = cut;
         if (best != null) {
+            targetDescent = descents && nav.canReach(G.number(G.field(best, "posx")), G.number(G.field(best, "posy")), G.number(G.field(best, "posz")), false) != 1;
             target = best; targetKind = kind; lockedFoe = null;
             Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.field(best, "_level") + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
                 + Math.round(G.number(G.field(best, "posz")) - hz) + ", score " + Math.round(bestScore) + ", " + groupOfBest + " others within " + GROUP_RANGE + " m" + (leveling ? ", leveling" : ", hunting drops"));
@@ -751,7 +800,7 @@ class Bot {
             lastSeenLog = haxe.Timer.stamp();
             var levels = [for (l => n in seen) l + "x" + n];
             levels.sort(Reflect.compare);
-            Log.w("no mob to fight for hero L" + level + (leveling ? " (own level -3..+2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
+            Log.w((cut > 0 ? cut + " candidates cut as unreachable; " : "") + "no mob to fight for hero L" + level + (leveling ? " (own level -3..+2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
         }
     }
 
@@ -767,26 +816,36 @@ class Bot {
     /** No monster of the hero's level is loaded: walks (or flies by obelisk) to the nearest zone of that level. True while it does. */
     var huntKey = "";
     var huntLevels:Array<Int> = [];
+    var huntZones:Map<String, Bool> = new Map();
 
     /** Hunting drops and none of the wanted monsters is loaded: goes to a zone where monsters that drop them live. */
     function huntRoam(now:Float, level:Int):Bool {
         var wanted = [for (id in plan.active(true)) id];
         if (wanted.length == 0) return false;
         var k = wanted.join(",");
-        if (k != huntKey) { huntKey = k; huntLevels = Catalog.dropLevels(wanted); Log.t("hunt", "monsters that drop the wanted items have levels " + huntLevels.join(" ")); }
+        if (k != huntKey) {
+            huntKey = k;
+            huntLevels = Catalog.dropLevels(wanted);
+            var units = Catalog.dropUnits(wanted);
+            huntZones = Hunt.zonesOf(units);
+            var zoneNames = [for (z in huntZones.keys()) z];
+            zoneNames.sort(Reflect.compare);
+            Log.t("hunt", "monsters that drop the wanted items: " + units.length + " kinds (levels " + huntLevels.join(" ") + "), living in " + zoneNames.length + " zones of the map: " + zoneNames.slice(0, 40).join(" "));
+        }
         if (huntLevels.length == 0) return false;
-        return roam(now, level, 3, huntLevels);
+        return roam(now, level, 3, huntLevels, huntZones);
     }
 
-    function roam(now:Float, level:Int, wide:Int = 2, ?zoneLevels:Array<Int>):Bool {
+    function roam(now:Float, level:Int, wide:Int = 2, ?zoneLevels:Array<Int>, ?zoneIds:Map<String, Bool>):Bool {
         if (!Hunt.onWorld(hero)) return false;
         if (!Hunt.ready()) { Hunt.scan(250); message = Locale.f("stTravel"); return true; }
         if (now < roamWaitUntil) { nav.stop(); message = Locale.f("noTargets"); return true; } // just arrived: the monsters are loading
         if (roamKey >= 0) {
             var arrived = Nav.distance(hero, roamX, roamY) < 30;
-            if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > 300) {
-                Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 5 min");
-                for (c in Hunt.around(roamKey, 3)) roamVisited.set(c, now + 300); // (the cells next to it are the same ground)
+            var stuckWay = !arrived && !nav.walkingToObelisk() && noProgress(roamX, roamY, now);
+            if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > 300 || stuckWay) {
+                Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 8 min");
+                for (c in Hunt.around(roamKey, 4)) roamVisited.set(c, now + 480); // (the cells next to it are the same ground; the monsters take minutes to come back)
                 roamKey = -1;
                 nav.gaveUp = false;
                 nav.stop();
@@ -794,27 +853,153 @@ class Bot {
             }
         }
         if (roamKey < 0) {
-            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels);
-            if (g == null) { Log.t("hunt", "no hunting ground of level " + level + ".." + (level + 2) + " on the map"); return false; }
+            // the monsters' own zones when the game's tables know them (the whole map), else the zones of their levels
+            var useZones = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
+            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN));
+            if (g == null) {
+                Log.t("hunt", "no hunting ground left that was not visited lately (" + Lambda.count({iterator: () -> roamVisited.keys()}) + " cells remembered): the memory is wiped, the sweep starts over");
+                roamVisited = new Map();
+                roamWaitUntil = now + 6; // (look again in a few seconds: the reach map may be made by then)
+                return false;
+            }
             roamKey = g.key;
             roamX = g.x;
             roamY = g.y;
             roamSince = now;
+            progressReset(now);
             Log.t("hunt", "going to a hunting ground: zone " + g.zone + " (level " + g.level + ") at " + Math.round(g.x) + "," + Math.round(g.y) + ", " + Math.round(g.away) + " m away");
         }
         message = Locale.f("stTravel");
-        // far from every opened obelisk and the ground is far too: the home stone first (the city has an obelisk at hand), as a player would
-        if (Nav.distance(hero, roamX, roamY) > 500 && now - stoneAt > 600) {
-            var nearest = Math.POSITIVE_INFINITY;
-            for (o in Nav.obelisks(hero)) nearest = Math.min(nearest, Nav.distance(hero, o.x, o.y));
-            if (nearest > 200) {
-                stoneAt = now;
-                var used = useHomeStone();
-                Log.t("bot", "the ground is " + Math.round(Nav.distance(hero, roamX, roamY)) + " m away and the nearest obelisk " + Math.round(nearest) + " m: home stone " + (used ? "used" : "not in the bag"));
-                if (used) { nav.stop(); nav.forgetObeliskTrouble(); message = Locale.f("stHome"); nextThink = now + 14; return true; }
+        if (stoneIfFar(roamX, roamY, now)) return true;
+        moveTo(roamX, roamY, 8, now);
+        return true;
+    }
+
+    /** Far from every opened obelisk and the place is far too: the home stone first (the city has an obelisk at hand), as a player would. True when it was used. */
+    function stoneIfFar(x:Float, y:Float, now:Float):Bool {
+        if (Nav.distance(hero, x, y) <= 500 || now - stoneAt <= 600) return false;
+        var nearest = Math.POSITIVE_INFINITY;
+        for (o in Nav.obelisks(hero)) nearest = Math.min(nearest, Nav.distance(hero, o.x, o.y));
+        if (nearest <= 200) return false;
+        stoneAt = now;
+        var used = useHomeStone();
+        Log.t("bot", "the place is " + Math.round(Nav.distance(hero, x, y)) + " m away and the nearest obelisk " + Math.round(nearest) + " m: home stone " + (used ? "used" : "not in the bag"));
+        if (used) { nav.stop(); nav.forgetObeliskTrouble(); message = Locale.f("stHome"); nextThink = now + 14; }
+        return used;
+    }
+
+    // ---- going to where the wanted ore and plants grow ----
+
+    var flightAt = -100.0;
+    var flightOut = false;
+
+    /** The spot can be walked to (or the reach map does not know), or the hero can walk to an opened obelisk and fly (a closed region, an island). */
+    function footOrFlight(x:Float, y:Float, z:Float):Bool {
+        if (nav.canReach(x, y, z) != 0 || nav.canReach(x, y, z, true) != 0) return true; // (on foot, or with the glider's descents)
+        var now = haxe.Timer.stamp();
+        if (now - flightAt > 5) {
+            flightAt = now;
+            flightOut = false;
+            var list = Nav.obelisks(hero);
+            if (list.length >= 2) for (o in list) if (nav.canReach(o.x, o.y, o.z) != 0) { flightOut = true; break; }
+        }
+        return flightOut;
+    }
+
+    var progBest = 1e9;
+    var progAt = 0.0;
+
+    /** A new place to go to: the progress is measured from the start. */
+    function progressReset(now:Float):Void { progBest = 1e9; progAt = now; }
+
+    /** True when the hero got no nearer (by 15 m) to (x, y) in `limit` seconds: a way that runs in circles (back and forth along a ridge, round a pocket). */
+    function noProgress(x:Float, y:Float, now:Float, limit:Float = 50):Bool {
+        var d = Nav.distance(hero, x, y);
+        if (d < progBest - 15) { progBest = d; progAt = now; }
+        return now - progAt > limit;
+    }
+
+    var nodeKey = -1;
+    var nodeX = 0.0;
+    var nodeY = 0.0;
+    var nodeZ = Math.NaN;
+    var nodeSince = 0.0;
+    var nodeWaitUntil = 0.0;
+    var nodeVisited:Map<Int, Float> = new Map();
+
+    /** No wanted node is loaded: goes to the nearest one of the whole world's table (by obelisk when far). True while it does. */
+    function nodeRoam(now:Float):Bool {
+        if (!Hunt.onWorld(hero)) return false;
+        if (now < nodeWaitUntil) { nav.stop(); message = Locale.f("noTargets"); return true; } // just arrived: the nodes are loading
+        if (nodeKey >= 0) {
+            var arrived = Nav.distance(hero, nodeX, nodeY) < 18;
+            var stuckWay = !arrived && !nav.walkingToObelisk() && noProgress(nodeX, nodeY, now);
+            if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - nodeSince > 300 || stuckWay) {
+                Log.t("hunt", "node spot " + Math.round(nodeX) + "," + Math.round(nodeY) + " " + (arrived ? "reached, no node to gather in sight" : nav.gaveUp ? "cannot be reached" : stuckWay ? "no nearer in 50 s (the way runs in circles)" : "took too long") + ": the outcrop is left alone for 6 min");
+                for (s in Nodes.near(nodeX, nodeY, 70)) nodeVisited.set(s.key, now + 360);
+                nodeKey = -1;
+                nav.gaveUp = false;
+                nav.stop();
+                if (arrived) { nodeWaitUntil = now + 3; return true; }
             }
         }
-        moveTo(roamX, roamY, 8, now);
+        if (nodeKey < 0) {
+            var g = Nodes.find(hero, plan, nodeVisited, now, Nav.obelisks(hero), (x, y, z) -> footOrFlight(x, y, z));
+            if (g == null) {
+                if (nodeVisited.keys().hasNext()) { Log.t("hunt", "every known node of the wanted resources was visited lately: the memory is wiped"); nodeVisited = new Map(); return false; }
+                // none seen yet anywhere: the world is searched zone by zone (the loaded world reaches a few hundred metres, so one stop covers a lot)
+                return explore(now);
+            }
+            nodeKey = g.spot.key;
+            nodeX = g.spot.x;
+            nodeY = g.spot.y;
+            nodeZ = g.spot.z;
+            nodeSince = now;
+            progressReset(now);
+            Log.t("hunt", "going to a node of the wanted resources: " + g.spot.gatherable + " at " + Math.round(nodeX) + "," + Math.round(nodeY) + ", " + Math.round(g.away) + " m away (" + g.count + " such nodes in the world)");
+        }
+        message = Locale.f("stTravel");
+        if (stoneIfFar(nodeX, nodeY, now)) return true;
+        moveTo(nodeX, nodeY, 8, now, nodeZ);
+        return true;
+    }
+
+    var exploreKey = -1;
+    var exploreX = 0.0;
+    var exploreY = 0.0;
+    var exploreSince = 0.0;
+    var exploreVisited:Map<Int, Float> = new Map();
+
+    /** Nothing known about where the wanted nodes grow: visits the map's zones that suit the hero's level, nearest first, until a node shows up. True while it does. */
+    function explore(now:Float):Bool {
+        if (!Hunt.ready()) { Hunt.scan(250); message = Locale.f("stTravel"); return true; }
+        var level = G.integer(G.field(hero, "_level"), 1);
+        if (exploreKey >= 0) {
+            var arrived = Nav.distance(hero, exploreX, exploreY) < 40;
+            var stuckWay = !arrived && !nav.walkingToObelisk() && noProgress(exploreX, exploreY, now);
+            if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - exploreSince > 300 || stuckWay) {
+                Log.t("hunt", "search spot " + Math.round(exploreX) + "," + Math.round(exploreY) + " " + (arrived ? "reached" : nav.gaveUp ? "cannot be reached" : stuckWay ? "no nearer in 50 s" : "took too long") + ": the surroundings are left alone for 20 min");
+                for (c in Hunt.around(exploreKey, 8)) exploreVisited.set(c, now + 1200); // (the loaded world reaches ~400 m: a stop covers a lot)
+                exploreKey = -1;
+                nav.gaveUp = false;
+                nav.stop();
+                if (arrived) { nodeWaitUntil = now + 4; return true; }
+            }
+        }
+        if (exploreKey < 0) {
+            var lv = [for (l in 1...level + 1) l];
+            var g = Hunt.find(hero, level, exploreVisited, now, Nav.obelisks(hero), 0, lv, null, (x, y) -> footOrFlight(x, y, Math.NaN));
+            if (g == null) { Log.t("hunt", "nothing left to search on the map"); exploreVisited = new Map(); return false; }
+            exploreKey = g.key;
+            exploreX = g.x;
+            exploreY = g.y;
+            exploreSince = now;
+            progressReset(now);
+            Log.t("hunt", "no node of the wanted resources known: searching the zone " + g.zone + " (level " + g.level + ") at " + Math.round(g.x) + "," + Math.round(g.y) + ", " + Math.round(g.away) + " m away");
+        }
+        message = Locale.f("stTravel");
+        if (stoneIfFar(exploreX, exploreY, now)) return true;
+        moveTo(exploreX, exploreY, 12, now);
         return true;
     }
 
@@ -822,8 +1007,14 @@ class Bot {
         nav.goalZ = z == null ? Math.NaN : z;
         // no cliff is ever gone down (a fall is no way to a monster, a node or a hunting ground: a spot below is reached by the way round,
         // by obelisk or not at all); only the climb out of a pit (escapePit) may. No water is entered ever.
-        nav.noCliff = escapeBumper == null;
-        if (!nav.travel(hero, x, y, now)) nav.go(x, y, arrive, now);
+        var zz = z == null ? Math.NaN : z;
+        var plain = nav.canReach(x, y, zz);
+        var viaGlide = (targetDescent && target != null) || (plain == 0 && nav.canReach(x, y, zz, true) != 0); // (only the glider's descents lead there: the cliffs are open)
+        nav.noCliff = escapeBumper == null && !(viaGlide && !engaged);
+        nav.descentOk = escapeBumper == null && !engaged;
+        // a spot the reach map says no way on foot leads to: by obelisk, whatever the gain (the glider's descents excepted)
+        var force = !viaGlide && plain == 0;
+        if (!nav.travel(hero, x, y, now, force)) nav.go(x, y, arrive, now);
     }
 
     function workNode(now:Float):Void {
@@ -1407,6 +1598,46 @@ class Bot {
                     rowsZ.push(G.s(G.field(G.field(def, "inf"), "id")) + " map " + G.s(G.field(def, "mapId")) + " at " + Math.round(G.number(G.field(pre, "x"))) + "," + Math.round(G.number(G.field(pre, "y"))) + "," + Math.round(G.number(G.field(pre, "z"))) + " zone " + zid);
                 }
                 return rowsZ;
+            case "elements":
+                // developer: the world's element definitions that are gatherables (ore, plants): count and a few samples
+                var all = G.staticCall("HElement", "all", []);
+                var total = G.len(all), gat = 0, byMap:Map<String, Int> = new Map(), sample = [];
+                for (def in G.fastArray(all)) {
+                    if (def == null) continue;
+                    var gid = G.s(G.field(G.field(G.field(def, "inf"), "props"), "gatherable"));
+                    if (gid == "") continue;
+                    gat++;
+                    var mid = G.s(G.field(def, "mapId"));
+                    byMap.set(mid, (byMap.exists(mid) ? byMap.get(mid) : 0) + 1);
+                    if (sample.length < 6) {
+                        var pre = G.field(def, "prefab");
+                        sample.push(G.s(G.field(G.field(def, "inf"), "id")) + " -> " + gid + " map " + mid + " at " + Math.round(G.number(G.field(pre, "x"))) + "," + Math.round(G.number(G.field(pre, "y"))) + "," + Math.round(G.number(G.field(pre, "z"))));
+                    }
+                }
+                var byGid:Map<String, Int> = new Map(), loaded = [];
+                for (def in G.fastArray(all)) {
+                    if (def == null) continue;
+                    var g2 = G.s(G.field(G.field(G.field(def, "inf"), "props"), "gatherable"));
+                    if (g2 != "") byGid.set(g2, (byGid.exists(g2) ? byGid.get(g2) : 0) + 1);
+                }
+                for (e in G.fastArray(G.field(G.field(hero, "layer"), "interactibles"))) {
+                    if (e == null || G.field(e, "removed") == true || !G.isA(e, "ent.interactible.Gatherable")) continue;
+                    if (loaded.length < 12) loaded.push(G.s(G.field(G.field(e, "inf"), "id")) + " / " + G.s(G.field(G.field(e, "gatherInf"), "id")) + " kind=" + G.s(G.field(e, "kind")) + " at " + Math.round(G.number(G.field(e, "posx"))) + "," + Math.round(G.number(G.field(e, "posy"))) + " d=" + Math.round(Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")))));
+                }
+                return {total: total, gatherables: gat, byMap: [for (k => v in byMap) k + "=" + v], byGid: [for (k => v in byGid) k + "=" + v], loaded: loaded, sample: sample};
+            case "glidemode":
+                Nav.glideMode = Std.int(Reflect.field(cmd, "mode"));
+                return "glide mode " + Nav.glideMode;
+            case "pads":
+                return Pads.describe(hero);
+            case "column":
+                return NavGrid.column(Reflect.field(cmd, "x"), Reflect.field(cmd, "y"), Reflect.field(cmd, "from"), Reflect.field(cmd, "to"));
+            case "spawns":
+                // developer: where a monster lives (unit) / which monsters live in a zone (zone), from the game's spawner tables
+                var smap = G.current("HSpawner", Reflect.hasField(cmd, "zone") ? "zoneUnits" : "unitZones");
+                var skey = Std.string(Reflect.hasField(cmd, "zone") ? Reflect.field(cmd, "zone") : Reflect.field(cmd, "unit"));
+                var sval = G.call("haxe.ds.StringMap", "get", smap, [skey]);
+                return {type: G.typeName(sval), value: sval == null ? null : [for (v in G.fastArray(sval)) G.s(v)].join(" ")};
             case "obelisks":
                 return [for (o in Nav.obelisks(hero)) o.id + " " + Math.round(o.x) + "," + Math.round(o.y)];
             case "zones":
@@ -1426,9 +1657,12 @@ class Bot {
             case "goto":
                 // developer: walks (by obelisk when far) to x,y without a plan
                 running = true;
+                noHome = true;
                 AutoDodge.enabled = true;
                 gotoX = Reflect.field(cmd, "x");
                 gotoY = Reflect.field(cmd, "y");
+                gotoArrive = Reflect.hasField(cmd, "arrive") ? Reflect.field(cmd, "arrive") : 2.0;
+                gotoZ = Reflect.hasField(cmd, "z") ? Reflect.field(cmd, "z") : Math.NaN;
                 return "going";
             case "stop":
                 gotoX = null;

@@ -12,7 +12,7 @@ class Hunt {
     static inline var STEP = 32.0;
     static inline var X0 = -1250.0;
     static inline var Y0 = -850.0;
-    static inline var NX = 100;
+    static inline var NX = 112;
     static inline var NY = 96;
     static inline var SAMPLE_Z = 100.0;
 
@@ -67,8 +67,34 @@ class Hunt {
 
     static var spread = 2;
     static var allow:Map<Int, Bool> = null;
+    static var allowZones:Map<String, Bool> = null;
+
+    /**
+     * The zones (ids) where any of the monsters lives, from the game's own spawner tables (HSpawner.unitZones: monster -> zones). The
+     * whole map is searched with them, not just the zone of the hero's level.
+     */
+    public static function zonesOf(unitIds:Array<String>):Map<String, Bool> {
+        var out = new Map<String, Bool>();
+        try {
+            var table = G.current("HSpawner", "unitZones");
+            for (u in unitIds) {
+                var zs = G.call("haxe.ds.StringMap", "get", table, [u]);
+                if (zs == null) continue;
+                for (z in G.fastArray(zs)) out.set(G.s(z), true);
+            }
+        } catch (_:Dynamic) {}
+        return out;
+    }
+
+    /** How many grid spots lie in any of the zones (to tell a usable zone set from an empty one). */
+    public static function spotsIn(zones:Map<String, Bool>):Int {
+        var n = 0;
+        for (z in ids) if (zones.exists(z)) n++;
+        return n;
+    }
 
     static function wanted(index:Int, level:Int):Bool {
+        if (allowZones != null) return allowZones.exists(ids[index]);
         var l = levels[index];
         if (allow != null) return allow.exists(l);
         return l >= level && l <= level + spread;
@@ -78,9 +104,10 @@ class Hunt {
      * The best hunting ground for a hero of `level`, not in `visited` (cell -> time until which it is left alone): a spot in the
      * middle of a zone of the right level, near the hero or near an opened obelisk (the flight costs little).
      */
-    public static function find(hero:Dynamic, level:Int, visited:Map<Int, Float>, now:Float, obelisks:Array<Nav.ObeliskInfo>, ?wide:Int, ?zoneLevels:Array<Int>):Null<{key:Int, x:Float, y:Float, zone:String, level:Int, away:Float}> {
+    public static function find(hero:Dynamic, level:Int, visited:Map<Int, Float>, now:Float, obelisks:Array<Nav.ObeliskInfo>, ?wide:Int, ?zoneLevels:Array<Int>, ?zoneIds:Map<String, Bool>, ?ok:(Float, Float) -> Bool):Null<{key:Int, x:Float, y:Float, zone:String, level:Int, away:Float}> {
         spread = wide == null ? 2 : wide;
         allow = null;
+        allowZones = zoneIds;
         if (zoneLevels != null) { allow = new Map(); for (l in zoneLevels) for (d in 0...spread + 1) allow.set(l + d, true); }
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
         var best = null;
@@ -97,12 +124,22 @@ class Hunt {
                 var jx = ix + dx, jy = iy + dy;
                 if (jx >= 0 && jy >= 0 && jx < NX && jy < NY && wanted(jy * NX + jx, level)) around++;
             }
-            if (around < 5) continue;
+            if (around < (allowZones != null ? 2 : 5)) continue; // (the places of a monster's own zones may be narrow)
             var x = X0 + ix * STEP, y = Y0 + iy * STEP;
+            if (ok != null && !ok(x, y)) continue; // (the reach map says no way leads there: the hero is on a closed island)
             var direct = Math.sqrt((x - hx) * (x - hx) + (y - hy) * (y - hy));
+            // by obelisk: the walk to the obelisk nearest the hero, the flight, the walk from the obelisk nearest the ground (the flight is cheap but
+            // not free: a hero that is far from every obelisk gains nothing, and the cost may not make a far continent look near)
             var viaObelisk = Math.POSITIVE_INFINITY;
-            for (o in obelisks) viaObelisk = Math.min(viaObelisk, Math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y)) + 120);
-            var cost = Math.min(direct, viaObelisk) + (allow != null ? 0 : (levels[index] - level) * 40);
+            if (obelisks.length >= 2) {
+                var toHero = Math.POSITIVE_INFINITY, fromGround = Math.POSITIVE_INFINITY;
+                for (o in obelisks) {
+                    toHero = Math.min(toHero, Math.sqrt((hx - o.x) * (hx - o.x) + (hy - o.y) * (hy - o.y)));
+                    fromGround = Math.min(fromGround, Math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y)));
+                }
+                viaObelisk = toHero + fromGround + 150;
+            }
+            var cost = Math.min(direct, viaObelisk) + (allow != null || allowZones != null ? 0 : (levels[index] - level) * 40);
             if (cost < bestCost) { bestCost = cost; best = {key: index, x: x, y: y, zone: ids[index], level: levels[index], away: direct}; }
         }
         return best;

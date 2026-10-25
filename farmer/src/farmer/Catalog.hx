@@ -149,6 +149,14 @@ class Catalog {
         return out;
     }
 
+    static var gatherIndex:Map<String, Dynamic> = null;
+
+    /** The data record of a gatherable by id (null: unknown). */
+    public static function gatherable(id:String):Dynamic {
+        if (gatherIndex == null || !gatherIndex.keys().hasNext()) gatherIndex = index("gatherable");
+        return gatherIndex.get(id);
+    }
+
     /** Ore (`GearPickaxe`) or plant (`GearSickle`): the tool a gatherable needs, "" when it is none of them. */
     public static function toolOf(rec:Dynamic):String {
         var current = rec;
@@ -225,6 +233,17 @@ class Catalog {
         }
         var out = [for (l in seen.keys()) l];
         out.sort((a, b) -> a - b);
+        return out;
+    }
+
+    /** The ids of the (non-boss) monsters that can drop any of the wanted items. */
+    public static function dropUnits(wanted:Array<String>):Array<String> {
+        var out = [];
+        for (rec in G.sheet("unit")) {
+            if (isBoss(rec)) continue;
+            var items = unitItems(rec);
+            for (id in wanted) if (items.exists(id)) { out.push(G.s(G.field(rec, "id"))); break; }
+        }
         return out;
     }
 

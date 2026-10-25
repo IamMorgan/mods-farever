@@ -59,6 +59,59 @@ class Nav {
     public function forgetObeliskTrouble():Void { obeliskBad = new Map(); stranded = false; }
     public function walkingToObelisk():Bool return walkId != "";
     var grid = new NavGrid();
+    /** The reach maps: what ground the hero can walk to from where it stands (see NavGrid.flood), without cliffs and with the descents (glider) allowed. */
+    var floodPlain = new FloodMap(false);
+    var floodDown = new FloodMap(true);
+
+    function floodOf(descents:Bool):FloodMap return descents ? floodDown : floodPlain;
+
+    /** True when the reach map is known and was made near here lately. */
+    function floodFresh(f:FloodMap, hero:Dynamic, now:Float):Bool {
+        return f.ready && now - f.at < 60 && f.grid.floodCentre(G.number(G.field(hero, "posx")), G.number(G.field(hero, "posy"))) < 35;
+    }
+
+    function requestFlood(f:FloodMap, hero:Dynamic, now:Float):Void {
+        NavGrid.hasGlider = hasGlider(hero);
+        NavGrid.glideTrusted = glideWorks;
+        NavGrid.setPads([for (pad in Pads.list) if (pad.id.indexOf("Flying") < 0 && pad.id.indexOf("Wall") < 0) pad]);
+        f.grid.goalZ = Math.NaN;
+        f.grid.noCliff = !f.descents;
+        f.at = now; // (the old map stays in use until the new one is done: `ready` is not cleared)
+        f.grid.startFlood(G.number(G.field(hero, "posx")), G.number(G.field(hero, "posy")), G.number(G.field(hero, "posz")), Hazard.heroInLiquid(hero));
+    }
+
+    /**
+     * Can the hero walk to (x, y) at height z (NaN: any)? 1 yes, 0 no, -1 not known (no reach map yet, or the spot is beyond it).
+     * `descents`: the map with the glider's descents allowed (for a hero on a ledge, an island).
+     */
+    public function canReach(x:Float, y:Float, z:Float, descents:Bool = false):Int {
+        var f = floodOf(descents);
+        if (!f.ready) return -1;
+        return f.grid.reached(x, y, z, 2);
+    }
+
+    /**
+     * Keeps the reach map fresh: true while it is being made (the caller waits a moment, at most a few seconds).
+     */
+    public function ensureReach(hero:Dynamic, now:Float, descents:Bool = false):Bool {
+        var f = floodOf(descents);
+        if (f.grid.state == 1) {
+            if (f.waitSince < 0) f.waitSince = now;
+            return now - f.waitSince < 5;
+        }
+        f.waitSince = -1;
+        if (airborne(hero) || flying(hero)) return false;
+        if (floodFresh(f, hero, now)) {
+            // a closed region (a ledge, an island): the map with the descents is made too, the way out is by glider
+            if (!descents && f.grid.reachCount > 0 && f.grid.reachClosed && !floodFresh(floodDown, hero, now)) return ensureReach(hero, now, true);
+            return false;
+        }
+        requestFlood(f, hero, now);
+        f.waitSince = now;
+        return true;
+    }
+
+    public function floodCells(descents:Bool = false):Int return floodOf(descents).grid.reachCount;
     var route:Array<Waypoint> = null;
     var routeIndex = 0;
     var routeShort = 0.0;
@@ -79,6 +132,10 @@ class Nav {
     /** How far ahead on the way the hero aims (m). */
     static inline var LOOK = 3.0;
     var atEnd = false;
+    /** The route index of the landing waypoint of a throw under way (-1: none), and when the throw was seen. */
+    var launchIdx = -1;
+    var launchAt = 0.0;
+    var padSince = -1.0;
     var lastFlipAt = -10.0;
     var goalHeading = false;
     var aimPX = 0.0;
@@ -89,6 +146,13 @@ class Nav {
     /** True in a fight: no cliff (a drop deeper than NavGrid.CLIFF) is gone down; set by the caller before `go`. */
     public var noCliff = false;
     var plannedCliff = false;
+    /**
+     * Set by the caller before `go`: when no way exists without a cliff (the hero perched on a ledge a bumper threw it onto, a plateau),
+     * the cliffs may be glided down after all (once per goal). Never in a fight.
+     */
+    public var descentOk = false;
+    var cliffRetried = false;
+    var cliffOverride = false;
     // circling / dithering detector: the hero's place once a second
     var trail:Array<{t:Float, x:Float, y:Float}> = [];
     var circleStrikes = 0;
@@ -112,6 +176,8 @@ class Nav {
             this.arrive = arrive;
             return;
         }
+        cliffRetried = false;
+        cliffOverride = false;
         Log.t("nav", "go to " + Math.round(x) + "," + Math.round(y) + " (z " + (Math.isFinite(goalZ) ? Std.string(Math.round(goalZ)) : "?") + ", arrive " + arrive + ", noCliff " + noCliff + ")");
         trail = [];
         circleStrikes = 0;
@@ -173,6 +239,14 @@ class Nav {
     /** Every frame: the path search, stuck handling, jumping, gliding. */
     public function update(hero:Dynamic, now:Float):Void {
         glide(hero);
+        for (f in [floodPlain, floodDown]) {
+            if (f.grid.state != 1) continue;
+            f.grid.step(now);
+            if (f.grid.state == 2) { f.grid.state = 0; f.ready = true; f.at = now; }
+        }
+        Pads.scan(hero, now);
+        Pads.watch(hero, now, groundUnder(hero));
+        checkLanding(hero, now);
         watchJump(hero, now);
         try watchFall(hero, now) catch (_:Dynamic) {}
         if (!active) return;
@@ -324,13 +398,25 @@ class Nav {
             lastPlanX = hx;
             lastPlanY = hy;
             NavGrid.hasGlider = hasGlider(hero);
+            NavGrid.glideTrusted = glideWorks;
+            NavGrid.setPads([for (pad in Pads.list) if (pad.id.indexOf("Flying") < 0 && pad.id.indexOf("Wall") < 0) pad]);
             grid.goalZ = goalZ;
-            grid.noCliff = noCliff;
+            grid.noCliff = noCliff && !cliffOverride;
             plannedCliff = noCliff;
             Log.t("nav", "planning from " + Math.round(hx) + "," + Math.round(hy) + "," + Math.round(hz) + " to " + Math.round(tx) + "," + Math.round(ty) + " glider " + NavGrid.hasGlider + " noCliff " + noCliff + " traps " + Hazard.trapCount());
             grid.start(hx, hy, hz, tx, ty, Hazard.heroInLiquid(hero));
         }
         if (grid.state == 1) grid.step(now);
+        if ((grid.state == 2 && grid.unreachable || grid.state == 3) && noCliff && descentOk && !cliffRetried && distance(hero, tx, ty) > 6) {
+            // no way without a cliff (a ledge, a plateau the hero stands on): the glider may take the hero down after all
+            cliffRetried = true;
+            cliffOverride = true;
+            grid.state = 0;
+            needPlan = true;
+            planBlock = 0;
+            Log.t("nav", "no way to " + Math.round(tx) + "," + Math.round(ty) + " without a cliff: descents by glider allowed for this goal");
+            return;
+        }
         if (grid.state == 2) {
             if (grid.unreachable && distance(hero, tx, ty) > 6) {
                 Log.t("nav", "spot " + Math.round(tx) + "," + Math.round(ty) + " cannot be reached from here (the ground around runs out " + Math.round(grid.shortBy) + " m short): given up");
@@ -355,6 +441,30 @@ class Nav {
             if (distance(hero, tx, ty) > 6 && ++deadTries > 4) { stop(); gaveUp = true; }
             else needPlan = true;
         }
+    }
+
+    /** A throw is over (the hero is on the ground again): on the ledge aimed at, or a miss (the landing is closed and the way planned again). */
+    function checkLanding(hero:Dynamic, now:Float):Void {
+        if (launchIdx < 0) return;
+        if (route == null || launchIdx >= route.length) { launchIdx = -1; return; }
+        if (airborne(hero) || Pads.flying() || now - launchAt < 0.6) return;
+        var w = route[launchIdx];
+        var miss = distance(hero, w.x, w.y);
+        if (miss <= 4.5 && Math.abs(G.number(G.field(hero, "posz")) - NavGrid.fineZ(w.x, w.y, G.number(G.field(hero, "posz")))) < 3.5) {
+            Log.t("nav", "LANDED on the ledge (" + Math.round(miss * 10) / 10 + " m from the landing)");
+            routeIndex = launchIdx;
+            aimFrom = -1;
+        } else if (miss <= 10 && Math.abs(G.number(G.field(hero, "posz")) - NavGrid.fineZ(w.x, w.y, G.number(G.field(hero, "posz")))) < 3.5) {
+            // on the same ledge, a few metres off the aimed cell: a new way from here (the throw itself worked)
+            Log.t("nav", "LANDED on the ledge, " + Math.round(miss) + " m from the aimed cell: new way from here");
+            needPlan = true;
+        } else {
+            Log.t("nav", "throw MISSED the landing by " + Math.round(miss) + " m (hero z " + Math.round(G.number(G.field(hero, "posz"))) + "): landing closed, new way");
+            NavGrid.badLanding(w.x, w.y, now);
+            Pads.shrink();
+            needPlan = true;
+        }
+        launchIdx = -1;
     }
 
     /** A hit just landed (the hero staggers a moment): standing still then is no sign of a wall. */
@@ -411,17 +521,53 @@ class Nav {
     /** Falling from a height: open the glider (the way down from a cliff). The game itself says when it may open (canStartGlide). */
     function glide(hero:Dynamic):Void {
         try {
-            if (G.field(hero, "gliding") == true) return;
+            if (G.field(hero, "gliding") == true) { glideWorks = true; glideSeen = true; return; }
             var t = haxe.Timer.stamp();
+            if (glideCheckAt > 0 && t >= glideCheckAt) {
+                glideCheckAt = -1;
+                glideFails++;
+                Log.t("nav", "GLIDER did not hold 0.35 s after the request (mode " + glideMode + "): " + glideWhy(hero));
+                if (glideFails % 3 == 0) { glideMode = 1 - glideMode; Log.t("nav", "glider mode switched to " + glideMode); } // (the other way of opening it)
+            }
             if (t - glideAskedAt < 0.5) return; // the request travels to the server and back: one at a time
             var above = G.number(G.field(hero, "posz")) - groundUnder(hero);
             if (above < GLIDE_HEIGHT) return;
             if (G.call("ent.Hero", "canStartGlide", hero) == true) {
                 glideAskedAt = t;
-                G.call("ent.Hero", "enterGlider", hero);
+                if (glideMode == 1) G.call("ent.Hero", "toggleGlide", hero, [true]); // (what the game's own jump key does in the toggle mode)
+                else G.call("ent.Hero", "enterGlider", hero);
+                glideCheckAt = t + 0.35;
                 Log.t("nav", "glider opened at " + Math.round(above) + " m above the ground");
             }
         } catch (_:Dynamic) {}
+    }
+
+    /** Developer: how the glider is opened (0 the server request enterGlider, 1 toggleGlide as the jump key does). */
+    public static var glideMode = 1;
+    var glideCheckAt = -1.0;
+    var glideFails = 0;
+    var glideSeen = false;
+    /** True once a glide was seen to hold in this session (a descent by glider is trusted only after that). */
+    public static var glideWorks = false;
+
+    /** Diagnostics: why a glide the bot asked for did not hold (every condition of the game's canGlide, one by one). */
+    function glideWhy(hero:Dynamic):String {
+        var parts = [];
+        function chk(name:String, f:() -> Dynamic):Void { try parts.push(name + "=" + Std.string(f())) catch (_:Dynamic) parts.push(name + "=?"); }
+        var t = G.number(G.field(G.call("client.UnitController", "get_time", G.current("client.PlayerController", "inst")), "serverNow"), 0);
+        chk("propulsion", () -> G.call("ent.Unit", "isInPropulsion", hero));
+        chk("blockEnd", () -> Math.round((G.number(G.field(hero, "gliderBlockEnd")) - t) * 100) / 100);
+        chk("grapple", () -> G.call("ent.Unit", "isGrappling", hero));
+        chk("moveModeOk", () -> G.call("ent.Hero", "moveModeAllowGlide", hero));
+        chk("canGlide", () -> G.call("ent.Hero", "canGlide", hero));
+        chk("canStart", () -> G.call("ent.Hero", "canStartGlide", hero));
+        chk("gliding", () -> G.field(hero, "gliding"));
+        chk("timeOnGround", () -> G.field(G.field(hero, "body"), "timeOnGround"));
+        chk("inTrigger2", () -> G.call("ent.Unit", "isInTriggerWithFlag", hero, [2]));
+        chk("water", () -> G.call("ent.Unit", "isInWater", hero));
+        chk("lastGlideEnd", () -> Math.round((G.number(G.field(hero, "lastGlideEnd")) - t) * 100) / 100);
+        chk("z", () -> Math.round(G.number(G.field(hero, "posz"))));
+        return parts.join(" ");
     }
 
     function airborne(hero:Dynamic):Bool {
@@ -555,7 +701,9 @@ class Nav {
             if (routeIndex >= last && routeShort <= 3 && !needPlan && distance(hero, tx, ty) > arrive + 1.5 && now - plannedAt > 0.6) needPlan = true; // the goal moved on: a new way from here
             var pick = Std.int(Math.min(routeIndex + 1, last));
             if (routeIndex >= last) atEnd = true;
-            if (!atEnd && (aimFrom != routeIndex || now - aimAt > 0.12)) {
+            var flyLeg = !atEnd && route[pick].fly;
+            if (!flyLeg && padSince >= 0) padSince = -1;
+            if (!flyLeg && !atEnd && (aimFrom != routeIndex || now - aimAt > 0.12)) {
                 aimAt = now;
                 aimFrom = routeIndex;
                 // pure pursuit: the aim is the point on the way LOOK metres ahead of the hero (never past a jump), so it always lies
@@ -604,10 +752,31 @@ class Nav {
                     } else badAhead = 0;
                 } else badAhead = 0;
             }
-            if (atEnd) { aimX = route[last].x; aimY = route[last].y; }
+            if (flyLeg) {
+                // a throw from a bumper: onto the pad's centre first, then (thrown) straight at the landing
+                var pad = route[routeIndex];
+                var inAir = airborne(hero) || Pads.flying();
+                if (inAir) {
+                    if (launchIdx < 0) { launchIdx = pick; launchAt = now; Log.t("nav", "thrown towards " + Math.round(route[pick].x) + "," + Math.round(route[pick].y) + " (" + Math.round(distance(hero, route[pick].x, route[pick].y)) + " m)"); }
+                    aimX = route[pick].x; aimY = route[pick].y;
+                } else {
+                    aimX = pad.x; aimY = pad.y;
+                    if (distance(hero, pad.x, pad.y) < 0.8) {
+                        if (padSince < 0) padSince = now;
+                        aimX = route[pick].x; aimY = route[pick].y; // (on the pad: keep going the way of the throw)
+                        if (now - padSince > 2.5) {
+                            Log.t("nav", "the bumper at " + Math.round(pad.x) + "," + Math.round(pad.y) + " did not throw the hero: closed for a while");
+                            NavGrid.blockLong(pad.x, pad.y, now);
+                            padSince = -1;
+                            needPlan = true;
+                        }
+                    } else padSince = -1;
+                }
+            }
+            else if (atEnd) { aimX = route[last].x; aimY = route[last].y; }
             else { aimX = aimPX; aimY = aimPY; }
             var next = route[pick];
-            if (next.jump && jumpedFor != routeIndex && jumpDue(hero, hx, hy, hz, next)) {
+            if (next.jump && !next.fly && jumpedFor != routeIndex && jumpDue(hero, hx, hy, hz, next)) {
                 jumpedFor = routeIndex;
                 var jd = Math.sqrt((next.x - hx) * (next.x - hx) + (next.y - hy) * (next.y - hy));
                 if (jd < 0.1 || jumpSafe(hero, (next.x - hx) / jd, (next.y - hy) / jd)) { jump(hero); noteJump(hero, hx, hy, next); }
@@ -617,7 +786,14 @@ class Nav {
         // (in the air without a way the hero glides straight towards the spot, see airHeading below)
         var dx = aimX - hx, dy = aimY - hy;
         var d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 0.6 || (atEnd && goalHeading)) {
+        var keepHeading = d < 0.6 && !atEnd && route != null;
+        if (keepHeading) {
+            // on the pursuit point in the middle of the way: the next one is picked within a moment, the run goes on (turning to the far spot
+            // from here and back to the way the next frame is what made the hero shake in place)
+            dx = lastDirX;
+            dy = lastDirY;
+            d = 1.0;
+        } else if (d < 0.6 || (atEnd && goalHeading)) {
             // right at the end of the way: on to the spot itself (and once on it, only that: a heading from so near flips between the two)
             if (distance(hero, tx, ty) <= arrive) { why = "at aim"; return null; }
             dx = tx - hx;
@@ -833,7 +1009,7 @@ class Nav {
      * (from any opened obelisk the hero stands at, the flight starts at once). Returns true while a trip is under way (the caller
      * waits), false when the spot is to be walked to.
      */
-    public function travel(hero:Dynamic, x:Float, y:Float, now:Float):Bool {
+    public function travel(hero:Dynamic, x:Float, y:Float, now:Float, force:Bool = false):Bool {
         if (flying(hero)) { flightWait = now + 1.5; return true; }
         if (now < flightWait) return true; // just landed: wait for the world to settle
         // the walk to an obelisk that no way leads to (a plateau, a gorge) was given up: that obelisk is left alone for 10 minutes
@@ -845,7 +1021,7 @@ class Nav {
         }
         walkId = "";
         var direct = distance(hero, x, y);
-        if (direct < OBELISK_FROM) return false;
+        if (direct < OBELISK_FROM && !force) return false;
         var list = obelisks(hero);
         if (list.length < 2) { travelNote(now, "obelisk not used: only " + list.length + " opened here, walking " + Math.round(direct) + " m"); return false; }
         var hz = G.number(G.field(hero, "posz"));
@@ -860,7 +1036,7 @@ class Nav {
             if (b < fd) { fd = b; far = o; }
         }
         if (near == null) { stranded = true; travelNote(now, "every opened obelisk is out of reach on foot: stranded"); return false; }
-        if (near.id == far.id || direct - (nd + fd) < OBELISK_GAIN) { travelNote(now, "obelisk not used: no gain (spot " + Math.round(direct) + " m, obelisk near me " + Math.round(nd) + " m, near the spot " + Math.round(fd) + " m), walking"); return false; }
+        if (near.id == far.id || (!force && direct - (nd + fd) < OBELISK_GAIN)) { travelNote(now, "obelisk not used: no gain (spot " + Math.round(direct) + " m, obelisk near me " + Math.round(nd) + " m, near the spot " + Math.round(fd) + " m), walking"); return false; }
         var last = obeliskTried.get(far.id);
         if (last != null && now - last < 60) { travelNote(now, "obelisk " + far.id + " refused " + Math.round(now - last) + " s ago, walking"); return false; }
         var standing = null;
@@ -893,4 +1069,14 @@ class Nav {
         travelNoteAt = now;
         Log.t("nav", text);
     }
+}
+
+private class FloodMap {
+    public var grid = new NavGrid();
+    public var ready = false;
+    public var at = -1000.0;
+    public var waitSince = -1.0;
+    public var descents:Bool;
+
+    public function new(descents:Bool) this.descents = descents;
 }
