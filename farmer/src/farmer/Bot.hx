@@ -46,6 +46,7 @@ class Bot {
     var attackResumeAt = 0.0;
     /** After a node broke: its drops are on their way, nothing else is started before this time. */
     var lootWait = 0.0;
+    var bagWarnAt = -100.0;
     var seekKey = "";
     var seekSince = 0.0;
     var defendAt = -100.0;
@@ -275,10 +276,7 @@ class Bot {
         if (Services.freeSlots(hero) <= 1 && now - jobFailedAt > 30) {
             if (plan.recycle && anyQuality()) { startJob("scrap", now); return; }
             if (plan.clearBag) { startJob("bank", now); return; }
-            message = "";
-            say(Locale.f("bagFull"));
-            stop();
-            return;
+            warnBagFull(now); // a full bag does not stop the run: it keeps fighting (drops are left on the ground)
         }
         farm(now, leveling, level);
     }
@@ -343,7 +341,15 @@ class Bot {
         jobFailedAt = now;
         message = r.substr(5);
         if (kind == "scrap" && plan.clearBag) return; // the bank is next time round
-        if (Services.freeSlots(hero) <= 1) { say(message); stop(); }
+        if (Services.freeSlots(hero) <= 1) warnBagFull(now);
+    }
+
+    /** Tells about the full bag at most once a minute; the bot goes on. */
+    function warnBagFull(now:Float):Void {
+        if (now - bagWarnAt < 60) return;
+        bagWarnAt = now;
+        say(Locale.f("bagFull"));
+        Log.t("svc", "bag full, going on");
     }
 
     // ---- the end of a run ----
@@ -1186,6 +1192,7 @@ class Bot {
 
     /** Walks to the nearest drop (the pick-up itself is Loot.update's, the moment the hero is in the server's reach). */
     function seekLoot(now:Float):Bool {
+        if (Services.freeSlots(hero) <= 0) return false; // nowhere to put it: do not walk after drops
         var best = Loot.nearest(hero, LOOT_SEEK, now);
         if (best == null) return false;
         var k = Loot.key(best);
