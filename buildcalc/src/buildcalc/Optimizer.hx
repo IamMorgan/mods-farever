@@ -1716,7 +1716,8 @@ class Search implements Task {
         }
         if (pass == null) {
             // the search ends when a whole round took nothing: from its result nothing better is found again
-            if (passIndex == 0 && (round >= rounds || current <= before + 1e-12 || o.overLimit())) {
+            // the first round always runs: the talents and skills rebuilt from scratch may score below the start's (the items then bring it back)
+            if (passIndex == 0 && (round >= rounds || (round > 0 && current <= before + 1e-12) || o.overLimit())) {
                 DebugLog.line("search " + o.stage + ": score " + start + " -> " + current + ", " + (o.evals - e0) + " builds in "
                     + Math.round((haxe.Timer.stamp() - t0) * 1000) + " ms, " + round + " rounds" + (o.overLimit() ? " (limit)" : ""));
                 if (rounds > 0) { o.keepTalents(b, refTalents); o.polish(b); }
