@@ -3,6 +3,8 @@ package farmer;
 import farmer.GameAccess as G;
 import farmer.NavGrid.Waypoint;
 
+typedef ObeliskInfo = {id:String, x:Float, y:Float, z:Float, entity:Dynamic};
+
 /**
  * Walking for the bot: the direction the hero runs in replaces the keyboard's (see Bot.steer), straight towards a spot, with
  * the obstacle handling of a player: a jump over a low obstacle, a sidestep around a wall, giving up on a spot that cannot be
@@ -49,6 +51,13 @@ class Nav {
     var flightWait = 0.0;
     var flightTo = "";
     var obeliskTried:Map<String, Float> = new Map();
+    var obeliskBad:Map<String, Float> = new Map();
+    /** The obelisk the hero is walking to (to fly from there), "" when none. */
+    var walkId = "";
+    /** True when no opened obelisk can be walked to: the caller must use another way (the home stone). */
+    public var stranded = false;
+    public function forgetObeliskTrouble():Void { obeliskBad = new Map(); stranded = false; }
+    public function walkingToObelisk():Bool return walkId != "";
     var grid = new NavGrid();
     var route:Array<Waypoint> = null;
     var routeIndex = 0;
@@ -79,12 +88,21 @@ class Nav {
     var lastCircleAt = -100.0;
     /** How often the direction flipped by more than 100 degrees in the last seconds (a jitter). */
     var flips = 0;
+    var dirRing:Array<String> = [];
     var flipFrom = 0.0;
 
     public function go(x:Float, y:Float, arrive:Float, now:Float):Void {
         if (active && Math.abs(tx - x) < 0.5 && Math.abs(ty - y) < 0.5) {
             this.arrive = arrive;
             if (noCliff != plannedCliff) { needPlan = true; Log.t("nav", "cliff rule changed to " + noCliff + ": new path"); }
+            return;
+        }
+        // a goal that only moved a little (a monster on the run) keeps the way: no stop to plan again at every step
+        // (also while the way is still being worked out: starting the search over at every step would never let it finish)
+        if (active && Math.abs(tx - x) < 6 && Math.abs(ty - y) < 6 && (route != null || grid.state == 1 || needPlan)) {
+            tx = x;
+            ty = y;
+            this.arrive = arrive;
             return;
         }
         Log.t("nav", "go to " + Math.round(x) + "," + Math.round(y) + " (z " + (Math.isFinite(goalZ) ? Std.string(Math.round(goalZ)) : "?") + ", arrive " + arrive + ", noCliff " + noCliff + ")");
@@ -238,6 +256,11 @@ class Nav {
             }
             Log.t("nav", rows.join("
 "));
+            var t = G.number(G.field(G.call("client.UnitController", "get_time", G.current("client.PlayerController", "inst")), "serverNow"), 0);
+            Log.t("nav", "hero state: waitBeforeMove " + G.field(hero, "waitBeforeMove") + " ledgeBlock " + Math.round((G.number(G.field(hero, "ledgeBlockEnd")) - t) * 100) / 100 + " hitFreeze " + Math.round((G.number(G.field(hero, "hitFreezeEnd")) - t) * 100) / 100
+                + " move " + Math.round(G.number(G.field(hero, "moveX")) * 100) / 100 + "," + Math.round(G.number(G.field(hero, "moveY")) * 100) / 100 + " running " + G.field(hero, "running") + " sprinting " + G.field(hero, "sprinting") + " jumpCount " + G.field(hero, "jumpCount")
+                + " dash " + (G.field(hero, "activeDash") != null) + " queued " + (G.field(hero, "queuedSkill") != null) + " inaccessible " + G.field(hero, "inaccessibleStart") + " onPlatform " + G.field(hero, "isOnPlatform") + " gliding " + G.field(hero, "gliding")
+                + " z " + Math.round(G.number(G.field(hero, "posz")) * 100) / 100 + " groundZ " + Math.round(groundUnder(hero) * 100) / 100 + " speed " + G.number(G.call("ent.Unit", "getMoveSpeed", hero, [null]), -1) + " cc " + (G.call("ent.GameObject", "isUnderAnyCC", hero) == true));
             var near = [];
             for (list in ["units", "interactibles", "entities"]) {
                 var arr = G.field(G.field(hero, "layer"), list);
@@ -420,6 +443,7 @@ class Nav {
                 }
                 needPlan = true;
             }
+            if (routeIndex >= last && routeShort <= 3 && !needPlan && distance(hero, tx, ty) > arrive + 1.5 && now - plannedAt > 0.6) needPlan = true; // the goal moved on: a new way from here
             var pick = Std.int(Math.min(routeIndex + 1, last));
             if (aimFrom != routeIndex || now - aimAt > 0.12) {
                 // aim at the farthest of the next waypoints that the body can really run to (corners are not cut across walls or
@@ -431,7 +455,8 @@ class Nav {
                 var chosen = pick;
                 var k = far;
                 while (k > pick) {
-                    if (corridorClear(hx, hy, hz, route[k].x, route[k].y, noCliff)) { chosen = k; break; }
+                    // a waypoint right at the hero (the path curls back on itself) is no aim: the heading would be noise
+                    if (Math.abs(route[k].x - hx) + Math.abs(route[k].y - hy) > 1.6 && corridorClear(hx, hy, hz, route[k].x, route[k].y, noCliff)) { chosen = k; break; }
                     k--;
                 }
                 aimIdx = chosen;
@@ -462,10 +487,12 @@ class Nav {
         // jitter: the heading turning back on itself again and again
         if (dx * lastDirX + dy * lastDirY < -0.17) flips++;
         if (now - flipFrom > 5) {
-            if (flips >= 6) Log.t("nav", "JITTER: the heading flipped " + flips + " times in 5 s at " + Math.round(hx) + "," + Math.round(hy) + " (aim " + Math.round(aimX) + "," + Math.round(aimY) + ", route " + routeIndex + "/" + (route == null ? 0 : route.length) + ")");
+            if (flips >= 6) Log.t("nav", "JITTER: the heading flipped " + flips + " times in 5 s at " + Math.round(hx) + "," + Math.round(hy) + " (last headings: " + dirRing.join(" | ") + "; aim " + Math.round(aimX) + "," + Math.round(aimY) + ", route " + routeIndex + "/" + (route == null ? 0 : route.length) + ")");
             flips = 0;
             flipFrom = now;
         }
+        dirRing.push(Math.round(dx * 100) / 100 + "," + Math.round(dy * 100) / 100 + "@" + Math.round(hx * 10) / 10 + "," + Math.round(hy * 10) / 10 + " aim" + aimIdx + "/" + routeIndex + (airborne(hero) ? " air" : ""));
+        if (dirRing.length > 10) dirRing.shift();
         lastDirX = dx;
         lastDirY = dy;
         hasDirection = true;
@@ -475,7 +502,7 @@ class Nav {
     // ---- obelisks ----
 
     /** The obelisks of this world the hero has opened (the game's own list: loaded or not), with their places. */
-    public static function obelisks(hero:Dynamic):Array<{id:String, x:Float, y:Float, entity:Dynamic}> {
+    public static function obelisks(hero:Dynamic):Array<ObeliskInfo> {
         var out = [];
         var progress = G.field(G.field(hero, "player"), "progress");
         var map = "";
@@ -490,7 +517,7 @@ class Nav {
                 if (map != "" && mapId != map) continue;
                 try if (G.call("st.player.Progress", "hasElementCompleted", progress, [id]) != true) continue catch (_:Dynamic) continue;
                 var prefab = G.field(def, "prefab"); // the obelisks' prefabs hang straight in the world: their own x, y are the place
-                out.push({id: id, x: G.number(G.field(prefab, "x")), y: G.number(G.field(prefab, "y")), entity: null});
+                out.push({id: id, x: G.number(G.field(prefab, "x")), y: G.number(G.field(prefab, "y")), z: G.number(G.field(prefab, "z"), Math.NaN), entity: null});
                 found = true;
             }
         } catch (_:Dynamic) {}
@@ -501,7 +528,7 @@ class Nav {
             var id = G.s(G.field(G.field(e, "inf"), "id"));
             if (id == "") continue;
             try if (G.call("st.player.Progress", "hasElementCompleted", progress, [id]) != true) continue catch (_:Dynamic) continue;
-            out.push({id: id, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy")), entity: e});
+            out.push({id: id, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy")), z: G.number(G.field(e, "posz")), entity: e});
         }
         return out;
     }
@@ -514,17 +541,30 @@ class Nav {
     public function travel(hero:Dynamic, x:Float, y:Float, now:Float):Bool {
         if (flying(hero)) { flightWait = now + 1.5; return true; }
         if (now < flightWait) return true; // just landed: wait for the world to settle
+        // the walk to an obelisk that no way leads to (a plateau, a gorge) was given up: that obelisk is left alone for 10 minutes
+        if (gaveUp && walkId != "") {
+            obeliskBad.set(walkId, now + 600);
+            Log.t("nav", "no way on foot to the obelisk " + walkId + ": left alone for 10 min");
+            walkId = "";
+            gaveUp = false;
+        }
+        walkId = "";
         var direct = distance(hero, x, y);
         if (direct < OBELISK_FROM) return false;
         var list = obelisks(hero);
         if (list.length < 2) { travelNote(now, "obelisk not used: only " + list.length + " opened here, walking " + Math.round(direct) + " m"); return false; }
-        var near = list[0], far = list[0];
-        var nd = Math.POSITIVE_INFINITY, fd = Math.POSITIVE_INFINITY;
+        var hz = G.number(G.field(hero, "posz"));
+        var near = null, far = list[0];
+        var nd = Math.POSITIVE_INFINITY, fd = Math.POSITIVE_INFINITY, nCost = Math.POSITIVE_INFINITY;
         for (o in list) {
             var a = distance(hero, o.x, o.y), b = Math.sqrt((o.x - x) * (o.x - x) + (o.y - y) * (o.y - y));
-            if (a < nd) { nd = a; near = o; }
+            var bad = obeliskBad.get(o.id);
+            // an obelisk on another height costs more: its way round is long (or there is none)
+            var cost = a + (Math.isFinite(o.z) ? Math.abs(o.z - hz) * 3 : 0);
+            if ((bad == null || now > bad) && cost < nCost) { nCost = cost; nd = a; near = o; }
             if (b < fd) { fd = b; far = o; }
         }
+        if (near == null) { stranded = true; travelNote(now, "every opened obelisk is out of reach on foot: stranded"); return false; }
         if (near.id == far.id || direct - (nd + fd) < OBELISK_GAIN) { travelNote(now, "obelisk not used: no gain (spot " + Math.round(direct) + " m, obelisk near me " + Math.round(nd) + " m, near the spot " + Math.round(fd) + " m), walking"); return false; }
         var last = obeliskTried.get(far.id);
         if (last != null && now - last < 60) { travelNote(now, "obelisk " + far.id + " refused " + Math.round(now - last) + " s ago, walking"); return false; }
@@ -545,7 +585,8 @@ class Nav {
             obeliskTried.set(far.id, now);
             return false;
         }
-        travelNote(now, "walking to the obelisk " + near.id + " (" + Math.round(nd) + " m) to fly to " + far.id);
+        travelNote(now, "walking to the obelisk " + near.id + " (" + Math.round(nd) + " m, z " + Math.round(near.z) + ") to fly to " + far.id);
+        walkId = near.id;
         go(near.x, near.y, 1.5, now);
         return true;
     }

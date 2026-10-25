@@ -62,6 +62,7 @@ class Bot {
     var progressBest = 1e9;
     var progressAt = 0.0;
     var progressKey = "";
+    var progressHp = 1e12;
     var lastSeenLog = -100.0;
     var bumperHopAt = -100.0;
     var gotoX:Null<Float> = null;
@@ -126,7 +127,8 @@ class Bot {
         return c;
     }
 
-    public function holdingSkills():Bool return running && AutoDodge.holdingSkills();
+    /** The bot's skills and held Attack key wait only while the dodge is actually running (the dodge's own pause after a run would let a fight crawl). */
+    public function holdingSkills():Bool return running && AutoDodge.dodging();
 
     public function moving():Bool return running && (AutoDodge.dodging() || (hero != null && nav.wantsMove(hero)));
 
@@ -177,9 +179,10 @@ class Bot {
         var tgt = "-";
         if (target != null) {
             var inf = G.field(target, "inf");
-            tgt = targetKind + " " + G.s(G.field(inf, "id") != null ? G.field(inf, "id") : G.field(G.field(target, "gatherInf"), "id")) + (targetKind == "mob" ? " L" + G.integer(G.call("ent.GameObject", "get_level", target)) : "")
+            tgt = targetKind + " " + G.s(G.field(inf, "id") != null ? G.field(inf, "id") : G.field(G.field(target, "gatherInf"), "id")) + (targetKind == "mob" ? " L" + G.integer(G.field(target, "_level")) : "")
                 + " d=" + Math.round(Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy"))) * 10) / 10
-                + " dz=" + Math.round((G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) * 10) / 10;
+                + " dz=" + Math.round((G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) * 10) / 10
+                + (targetKind == "mob" ? " hp " + Math.round(G.number(G.call("ent.Unit", "get_health", target), -1)) + "/" + Math.round(G.number(G.call("ent.Unit", "get_maxHealth", target), -1)) : "");
         }
         Log.t("beat", "pos " + Math.round(G.number(G.field(hero, "posx")) * 10) / 10 + "," + Math.round(G.number(G.field(hero, "posy")) * 10) / 10 + "," + Math.round(G.number(G.field(hero, "posz")) * 10) / 10
             + " hp " + Math.round(hp) + "/" + Math.round(max) + " L" + G.integer(G.field(hero, "_level")) + " | " + (message == "" ? "-" : message) + " | target " + tgt
@@ -395,9 +398,37 @@ class Bot {
         nav.go(x, y, 0.4, now);
     }
 
+    var stoneAt = -1000.0;
+
+    /** Every opened obelisk is out of reach on foot (the hero sits in a gorge or on a ledge): the home stone takes the hero to its city. */
+    function strandedStone(now:Float):Bool {
+        if (!nav.stranded) return false;
+        nav.stranded = false;
+        if (now - stoneAt < 300) return false;
+        stoneAt = now;
+        var used = useHomeStone();
+        Log.t("bot", "STRANDED (no obelisk can be walked to from here): home stone " + (used ? "used" : "not in the bag"));
+        if (used) {
+            message = Locale.f("stHome");
+            nav.stop();
+            nav.forgetObeliskTrouble();
+            target = null;
+            targetKind = "";
+            roamKey = -1;
+            blacklist = new Map();
+            nextThink = now + 14;
+        }
+        return used;
+    }
+
     function farm(now:Float, leveling:Bool, level:Int):Void {
+        if (strandedStone(now)) return;
         if (escapeBumper != null || trapped()) { escapePit(now); return; }
         if (target != null && !targetValid(now, leveling)) {
+            var lostId = "";
+            try lostId = G.s(G.field(G.field(target, "inf"), "id")) catch (_:Dynamic) {}
+            var why = G.field(target, "removed") == true ? "removed" : (G.call("ent.GameObject", "isDead", target) == true || G.field(target, "dying") == true) ? "dead (killed)" : nav.gaveUp ? "unreachable" : "no longer wanted/timeout";
+            Log.t("bot", "target " + targetKind + " " + lostId + " lost: " + why + " after " + Math.round(now - targetSince) + " s");
             if (targetKind == "node") lootWait = now + 1.2; // the node broke: what it dropped is on its way
             target = null;
             targetKind = "";
@@ -418,6 +449,7 @@ class Bot {
             if (seekLoot(now)) return;
             if (now < lootWait) { nav.stop(); message = Locale.f("stLoot"); return; }
             pickTarget(now, leveling, level);
+            if (target == null && leveling && roam(now, level)) return;
             if (target == null) {
                 // nothing to do right now: wait for nodes to respawn
                 nav.stop();
@@ -476,12 +508,17 @@ class Bot {
         // no nearer after 35 s of trying (a way that does not lead there): another target
         var dNow = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
         if (dNow < progressBest - 3 || progressKey != key(target)) { progressBest = dNow; progressAt = now; progressKey = key(target); }
+        if (targetKind == "mob") { // a fight that wears the foe down is progress, however far the dodge has carried the hero
+            var thp = G.number(G.call("ent.Unit", "get_health", target), -1);
+            if (thp >= 0 && thp < progressHp - 1) progressAt = now;
+            progressHp = thp;
+        }
         if (dNow > 12 && now - progressAt > 35) {
             Log.w("no progress towards the target for 35 s (still " + Math.round(dNow) + " m): another one");
             blacklist.set(key(target), now + 180);
             return false;
         }
-        if (nav.gaveUp) {
+        if (nav.gaveUp && !nav.walkingToObelisk()) {
             var rise = G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"));
             Log.w("target " + targetKind + " given up by the way-finder (rise " + Math.round(rise) + " m, " + Math.round(dNow) + " m away): blacklisted for 2 min");
             blacklist.set(key(target), now + 120);
@@ -559,7 +596,9 @@ class Bot {
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             if (unit != null && Catalog.isBoss(unit)) continue;
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
-            var foeLevel = G.integer(G.call("ent.GameObject", "get_level", e));
+            var foeLevel = G.integer(G.field(e, "_level"));
+            // another height (a plateau, a gorge, an upper storey) is a long way round or none: such monsters are not chosen
+            if (Math.abs(G.number(G.field(e, "posz")) - hz) > 14) continue;
             var score = cost(e);
             var drops = false;
             if (wantHunt.length > 0 && unit != null) {
@@ -582,7 +621,7 @@ class Bot {
         }
         if (best != null) {
             target = best; targetKind = kind; lockedFoe = null;
-            Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.call("ent.GameObject", "get_level", best) + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
+            Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.field(best, "_level") + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
                 + Math.round(G.number(G.field(best, "posz")) - hz) + ", score " + Math.round(bestScore) + (leveling ? ", leveling" : ", hunting drops"));
         } else if (haxe.Timer.stamp() - lastSeenLog > 10) {
             lastSeenLog = haxe.Timer.stamp();
@@ -590,6 +629,56 @@ class Bot {
             levels.sort(Reflect.compare);
             Log.w("no mob to fight for hero L" + level + (leveling ? " (own level to +2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
         }
+    }
+
+    // ---- going to where the monsters of the hero's level are ----
+
+    var roamKey = -1;
+    var roamX = 0.0;
+    var roamY = 0.0;
+    var roamSince = 0.0;
+    var roamWaitUntil = 0.0;
+    var roamVisited:Map<Int, Float> = new Map();
+
+    /** No monster of the hero's level is loaded: walks (or flies by obelisk) to the nearest zone of that level. True while it does. */
+    function roam(now:Float, level:Int):Bool {
+        if (!Hunt.onWorld(hero)) return false;
+        if (!Hunt.ready()) { Hunt.scan(250); message = Locale.f("stTravel"); return true; }
+        if (now < roamWaitUntil) { nav.stop(); message = Locale.f("noTargets"); return true; } // just arrived: the monsters are loading
+        if (roamKey >= 0) {
+            var arrived = Nav.distance(hero, roamX, roamY) < 30;
+            if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > 300) {
+                Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 5 min");
+                roamVisited.set(roamKey, now + 300);
+                roamKey = -1;
+                nav.gaveUp = false;
+                nav.stop();
+                if (arrived) { roamWaitUntil = now + 4; return true; }
+            }
+        }
+        if (roamKey < 0) {
+            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero));
+            if (g == null) { Log.t("hunt", "no hunting ground of level " + level + ".." + (level + 2) + " on the map"); return false; }
+            roamKey = g.key;
+            roamX = g.x;
+            roamY = g.y;
+            roamSince = now;
+            Log.t("hunt", "going to a hunting ground: zone " + g.zone + " (level " + g.level + ") at " + Math.round(g.x) + "," + Math.round(g.y) + ", " + Math.round(g.away) + " m away");
+        }
+        message = Locale.f("stTravel");
+        // far from every opened obelisk and the ground is far too: the home stone first (the city has an obelisk at hand), as a player would
+        if (Nav.distance(hero, roamX, roamY) > 500 && now - stoneAt > 600) {
+            var nearest = Math.POSITIVE_INFINITY;
+            for (o in Nav.obelisks(hero)) nearest = Math.min(nearest, Nav.distance(hero, o.x, o.y));
+            if (nearest > 200) {
+                stoneAt = now;
+                var used = useHomeStone();
+                Log.t("bot", "the ground is " + Math.round(Nav.distance(hero, roamX, roamY)) + " m away and the nearest obelisk " + Math.round(nearest) + " m: home stone " + (used ? "used" : "not in the bag"));
+                if (used) { nav.stop(); nav.forgetObeliskTrouble(); message = Locale.f("stHome"); nextThink = now + 14; return true; }
+            }
+        }
+        moveTo(roamX, roamY, 8, now);
+        return true;
     }
 
     function moveTo(x:Float, y:Float, arrive:Float, now:Float, ?z:Float):Void {
@@ -649,7 +738,7 @@ class Bot {
      * the combo goes on hit after hit (a held key asks for the next hit every frame; a tap per hit would lose the ones in between).
      */
     function attack(now:Float, tx:Float, ty:Float):Void {
-        if (G.call("ent.GameObject", "isUnderAnyCC", hero) == true) {
+        if (underCC()) {
             if (now - lastFightLog > 2) { lastFightLog = now; Log.t("fight", "hero is under crowd control: no attack"); }
             return;
         }
@@ -721,6 +810,11 @@ class Bot {
             } else G.call("client.UnitController", "requestSkillKind", ctl, ["Skill1", kind]);
         } catch (error:Dynamic) Log.err("cast " + kind, error);
         ownCast = false;
+    }
+
+    /** The game's own check throws now and then (a skill without data while it changes): then the hero counts as free. */
+    function underCC():Bool {
+        try return G.call("ent.GameObject", "isUnderAnyCC", hero) == true catch (_:Dynamic) return false;
     }
 
     var castKind = "";
@@ -823,7 +917,7 @@ class Bot {
         var k = Loot.key(best);
         if (k != seekKey) { seekKey = k; seekSince = now; }
         // a drop that cannot be reached or taken (12 s of trying) is left alone for a minute
-        if (nav.gaveUp || now - seekSince > 12) { nav.gaveUp = false; Loot.skip(best, now, 60); seekKey = ""; return false; }
+        if ((nav.gaveUp && !nav.walkingToObelisk()) || now - seekSince > 12) { nav.gaveUp = false; Loot.skip(best, now, 60); seekKey = ""; return false; }
         var x = G.number(G.field(best, "posx")), y = G.number(G.field(best, "posy"));
         nav.goalZ = G.number(G.field(best, "posz"));
         nav.noCliff = true;
@@ -871,6 +965,44 @@ class Bot {
                 var rr = Reflect.hasField(cmd, "r") ? Std.int(Reflect.field(cmd, "r")) : 25;
                 var hzz = Reflect.hasField(cmd, "z") ? G.number(Reflect.field(cmd, "z")) : G.number(G.field(hero, "posz"));
                 return {rows: NavGrid.debugMap(mx, my, rr, hzz, nav.debugRoute(), G.number(G.field(hero, "posx")), G.number(G.field(hero, "posy")), nav.goalX(), nav.goalY())};
+            case "foes":
+                // developer: the monsters within r metres with every level the game can tell
+                var fr = Reflect.hasField(cmd, "r") ? G.number(Reflect.field(cmd, "r")) : 40.0;
+                var fl = [];
+                for (e in G.fastArray(G.field(G.field(hero, "layer"), "units"))) {
+                    if (e == null || e == hero || !G.isA(e, "ent.Foe") || Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > fr) continue;
+                    var fi = G.field(e, "inf");
+                    var enemy = false, aggro = false;
+                    try enemy = G.call("ent.GameObject", "isEnemyWith", hero, [e]) == true catch (_:Dynamic) {}
+                    try aggro = G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) {}
+                    fl.push(G.s(G.field(fi, "id")) + " get_level=" + G.call("ent.GameObject", "get_level", e) + " _level=" + G.field(e, "_level") + " lvl=" + G.field(fi, "lvl") + " max=" + G.field(fi, "maxLvl")
+                        + " hp=" + Math.round(G.number(G.call("ent.Unit", "get_health", e), -1)) + "/" + Math.round(G.number(G.call("ent.Unit", "get_maxHealth", e), -1)) + " enemy=" + enemy + " aggro=" + aggro + " type=" + G.s(G.field(fi, "type"))
+                        + " flags=" + G.field(fi, "flags") + " d=" + Math.round(Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")))) + " dying=" + G.field(e, "dying") + " summon=" + (G.field(e, "summonOwner") != null));
+                }
+                return fl;
+            case "zoneat":
+                // developer: the zone record at x,y,z (the hero's place when missing), and the same for a list of offsets
+                var zxx:Float = Reflect.hasField(cmd, "x") ? Reflect.field(cmd, "x") : G.number(G.field(hero, "posx"));
+                var zyy:Float = Reflect.hasField(cmd, "y") ? Reflect.field(cmd, "y") : G.number(G.field(hero, "posy"));
+                var zzz:Float = Reflect.hasField(cmd, "z") ? Reflect.field(cmd, "z") : G.number(G.field(hero, "posz"));
+                var out = [];
+                for (dz in [0.0, 50.0, -50.0]) {
+                    var zr = null;
+                    try zr = G.call("world.World", "getZone", G.current("world.World", "inst"), [zxx, zyy, zzz + dz, null]) catch (e:Dynamic) out.push("dz " + dz + " error " + Std.string(e));
+                    if (zr != null) out.push("dz " + dz + ": " + G.s(G.field(zr, "id")) + " L" + G.integer(G.field(zr, "level")));
+                }
+                return out;
+            case "zonemap":
+                // developer: obelisks of the world with their zones and levels
+                var rowsZ = [];
+                for (def in G.fastArray(G.current("HElement", "obelisks"))) {
+                    if (def == null) continue;
+                    var props = G.field(G.field(def, "inf"), "props");
+                    var zid = G.s(G.field(props, "targetZone"));
+                    var pre = G.field(def, "prefab");
+                    rowsZ.push(G.s(G.field(G.field(def, "inf"), "id")) + " map " + G.s(G.field(def, "mapId")) + " at " + Math.round(G.number(G.field(pre, "x"))) + "," + Math.round(G.number(G.field(pre, "y"))) + "," + Math.round(G.number(G.field(pre, "z"))) + " zone " + zid);
+                }
+                return rowsZ;
             case "obelisks":
                 return [for (o in Nav.obelisks(hero)) o.id + " " + Math.round(o.x) + "," + Math.round(o.y)];
             case "zones":

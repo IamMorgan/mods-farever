@@ -54,6 +54,8 @@ class Loot {
         return best;
     }
 
+    static var lastErrAt = -100.0;
+
     /** Called every frame: sends the pick-up requests of the drops in reach. */
     public static function update(hero:Dynamic, now:Float):Void {
         try {
@@ -73,7 +75,7 @@ class Loot {
                 if (++sent >= PER_FRAME) break;
             }
             if (now >= nextClean) clean(now);
-        } catch (error:Dynamic) Log.err("loot", error);
+        } catch (error:Dynamic) { if (now - lastErrAt > 30) { lastErrAt = now; Log.err("loot", error); } }
     }
 
     /** Forgets the drops that are gone. */
