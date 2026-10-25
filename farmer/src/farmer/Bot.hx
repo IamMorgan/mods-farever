@@ -518,6 +518,12 @@ class Bot {
             blacklist.set(key(target), now + 180);
             return false;
         }
+        if (targetKind == "mob" && dNow <= 12 && now - progressAt > 15) {
+            // in reach and fighting, yet the monster has lost no health for 15 s (out of the hits' reach, on a ledge, immune): another one
+            Log.t("bot", "the foe lost no health for 15 s at " + Math.round(dNow * 10) / 10 + " m (dz " + Math.round(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) + "): another one");
+            blacklist.set(key(target), now + 120);
+            return false;
+        }
         if (nav.gaveUp && !nav.walkingToObelisk()) {
             var rise = G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"));
             Log.w("target " + targetKind + " given up by the way-finder (rise " + Math.round(rise) + " m, " + Math.round(dNow) + " m away): blacklisted for 2 min");

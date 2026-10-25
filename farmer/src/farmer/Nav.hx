@@ -209,7 +209,7 @@ class Nav {
             var ahead:Array<{x:Float, y:Float}> = [{x: hx + lastDirX * 1.2, y: hy + lastDirY * 1.2}, {x: hx + lastDirX * 2.0, y: hy + lastDirY * 2.0}];
             if (route != null) for (i in routeIndex + 1...Std.int(Math.min(routeIndex + 4, route.length))) ahead.push({x: route[i].x, y: route[i].y});
             for (a in ahead) NavGrid.blockAround(a.x, a.y, radius, hx, hy, now);
-            if (stuckLevel >= 4) { // the closed cells did not help: this spot cannot be reached from here
+            if (stuckLevel >= 6) { // the closed cells did not help: this spot cannot be reached from here
                 Log.t("nav", "stuck at " + Math.round(hx) + "," + Math.round(hy) + " for good: spot given up");
                 NavGrid.clearBlocked();
                 stop();
