@@ -53,6 +53,7 @@ class Bot {
     var seekKey = "";
     var seekSince = 0.0;
     var defendAt = -100.0;
+    var unfinished:Dynamic = null;
     var lastNoTarget = 0.0;
     var lastNote = 0.0;
     var wasDead = false;
@@ -548,11 +549,23 @@ class Bot {
                 var unnoticed = aggroOnHero(attacker) && !aggroOnHero(target) && toAttacker <= toTarget + 2;
                 if (!finishing && (toAttacker + margin < toTarget || unnoticed)) {
                     Log.t("bot", "defending against " + G.s(G.field(G.field(attacker, "inf"), "id")) + " at " + Math.round(toAttacker) + " m instead of the target at " + Math.round(toTarget) + " m" + (unnoticed ? " (the target has not noticed the hero)" : ""));
+                    if (hurt(target)) unfinished = target; // (it is gone back to once the attacker is down)
                     target = attacker; targetKind = "mob"; lockedFoe = null; targetSince = now;
                     engaged = false;
                     nav.stop();
                 }
             }
+        }
+        if (target == null && unfinished != null) {
+            var back = unfinished;
+            unfinished = null;
+            try {
+                if (G.field(back, "removed") != true && G.call("ent.GameObject", "isDead", back) != true && G.field(back, "dying") != true
+                    && G.number(G.call("ent.Unit", "get_health", back), 1) > 0 && Nav.distance(hero, G.number(G.field(back, "posx")), G.number(G.field(back, "posy"))) < 40) {
+                    target = back; targetKind = "mob"; lockedFoe = null; targetSince = now;
+                    Log.t("bot", "back to the foe left unfinished: " + G.s(G.field(G.field(back, "inf"), "id")));
+                }
+            } catch (_:Dynamic) {}
         }
         if (target == null) {
             // what lies on the ground is taken first (the pick-up itself is Loot.update's)
@@ -595,7 +608,7 @@ class Bot {
         var nodeX = 0.0, nodeY = 0.0, haveNode = false;
         if (target != null && targetKind == "node") { nodeX = G.number(G.field(target, "posx")); nodeY = G.number(G.field(target, "posy")); haveNode = true; }
         for (e in G.fastArray(G.field(G.field(hero, "layer"), "units"))) {
-            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true || blacklisted(e, now)) continue;
+            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true) continue;
             if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true || G.field(e, "summonOwner") != null) continue;
             try if (G.call("ent.GameObject", "isEnemyWith", hero, [e]) != true) continue catch (_:Dynamic) continue;
             var inf = G.field(e, "inf");
@@ -607,6 +620,7 @@ class Bot {
             if (d > AGGRO_RANGE) continue;
             var aggro = false;
             try aggro = G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) {}
+            if (!aggro && blacklisted(e, now)) continue; // (a foe that was given up but hits the hero is fought all the same)
             var near = d <= THREAT_RANGE || (haveNode && Math.sqrt((ex - nodeX) * (ex - nodeX) + (ey - nodeY) * (ey - nodeY)) <= NODE_GUARD && d <= 30);
             if (!aggro && !near) continue;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
@@ -614,6 +628,12 @@ class Bot {
             if (d < bestD) { bestD = d; best = e; }
         }
         return best;
+    }
+
+    /** The monster has lost health (the hero has begun to kill it). */
+    function hurt(e:Dynamic):Bool {
+        var hp = G.number(G.call("ent.Unit", "get_health", e), -1), max = G.number(G.call("ent.Unit", "get_maxHealth", e), -1);
+        return max > 0 && hp >= 0 && hp < max - 0.5;
     }
 
     function aggroOnHero(e:Dynamic):Bool {
@@ -634,7 +654,7 @@ class Bot {
 
     function targetValid(now:Float, leveling:Bool):Bool {
         if (G.field(target, "removed") == true) return false;
-        if (now - targetSince > 150) { blacklist.set(key(target), now + 120); return false; }
+        if (now - targetSince > 150 && !(targetKind == "mob" && engaged)) { blacklist.set(key(target), now + 120); return false; }
         // no nearer after 35 s of trying (a way that does not lead there): another target
         var dNow = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
         if (dNow < progressBest - 3 || progressKey != key(target)) { progressBest = dNow; progressAt = now; progressKey = key(target); }
@@ -648,7 +668,8 @@ class Bot {
             blacklist.set(key(target), now + 180);
             return false;
         }
-        if (targetKind == "mob" && dNow <= 12 && now - progressAt > NO_DAMAGE_TIME) {
+        // (a foe the hero has hurt is never given up while it stands in reach: only one that took no damage at all for a long time, out of the hits' reach)
+        if (targetKind == "mob" && dNow <= 12 && now - progressAt > (hurt(target) ? NO_DAMAGE_TIME * 6 : NO_DAMAGE_TIME)) {
             // in reach and fighting, yet the monster has lost no health for a while (out of the hits' reach, on a ledge, immune): another one
             Log.t("bot", "the foe lost no health for " + NO_DAMAGE_TIME + " s at " + Math.round(dNow * 10) / 10 + " m (dz " + Math.round(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) + "): another one");
             blacklist.set(key(target), now + 120);
@@ -778,6 +799,7 @@ class Bot {
                 if (lift && dzFoe > 4 && cost(e) - dzFoe * 4.0 > 110) continue;
             }
             var score = cost(e);
+            if (hurt(e)) score -= 60; // a wounded foe (one the hero began, or one that fought it) is finished before a fresh one is started
             var drops = false;
             if (wantHunt.length > 0 && unit != null) {
                 var items = Catalog.unitItems(unit);
@@ -1091,6 +1113,7 @@ class Bot {
         G.call("ent.Unit", "requestInteractAction", hero, [target]);
     }
 
+    static inline var MAX_FIGHT_RANGE = 22.0;
     var rangeAt = -100.0;
     var rangeValue = 2.6;
     var rangeLogged = -1.0;
@@ -1114,7 +1137,7 @@ class Bot {
         } catch (_:Dynamic) {}
         var fallback = rangedWeapon() ? 9.0 : 2.6;
         // (the margin keeps the hero inside the reach while the foe steps about; melee reach is the body's too, so it stays close)
-        rangeValue = basic > 0 ? Math.max(2.2, Math.min(16.0, basic * 0.8)) : fallback;
+        rangeValue = basic > 0 ? Math.max(2.2, Math.min(MAX_FIGHT_RANGE, basic * 0.8)) : fallback;
         if (Math.abs(rangeValue - rangeLogged) > 0.3) { rangeLogged = rangeValue; Log.t("fight", "fight range " + Math.round(rangeValue * 10) / 10 + " m (basic attack reach " + Math.round(basic * 10) / 10 + " m, " + (basic > 0 ? "from the game" : "fallback for the weapon") + ")"); }
         return rangeValue;
     }
@@ -1361,6 +1384,19 @@ class Bot {
             if (active != null && !isBasic(active)) castSeen = true;
             // the cast is judged when it ran and is over, or when 0.7 s went by without it starting
             if ((castSeen && active == null) || now - castAt > 0.7) {
+                // a cast the dodge cut: twice in 20 s and the skill is left alone for 15 s (the hero strikes with the quick ones and the basic attack
+                // meanwhile); a long cast in a crowd of hits is a cast that never lands, and the fight of it never ends
+                if (AutoDodge.interruptedKind == castKind && AutoDodge.interruptedAt >= castAt - 0.1) {
+                    var times = cutCasts.exists(castKind) ? cutCasts.get(castKind) : [];
+                    times = [for (t in times) if (now - t < 20) t];
+                    times.push(now);
+                    cutCasts.set(castKind, times);
+                    if (times.length >= 2) {
+                        castBan.set(castKind, now + 15);
+                        cutCasts.set(castKind, []);
+                        Log.t("fight", castKind + " is cut by the dodge again and again: left alone for 15 s, the quick skills and the basic attack strike instead");
+                    }
+                }
                 var fails = castFails.exists(castKind) ? castFails.get(castKind) : 0;
                 if (!castSeen && castSkill != null && skillOk(castSkill)) {
                     fails++;
@@ -1387,6 +1423,7 @@ class Bot {
                 if (kindName == castKind) continue;
                 var banned = castBan.get(kindName);
                 if (banned != null && now < banned) continue;
+                if (crowded(now) && castTime(skill) > LONG_CAST) continue; // (surrounded, a long cast is cut by the dodge before it lands: the quick ones strike)
                 if (skillOk(skill)) { ready = skill; break; }
             }
         }
@@ -1427,12 +1464,38 @@ class Bot {
         try return G.call("ent.GameObject", "isUnderAnyCC", hero) == true catch (_:Dynamic) return false;
     }
 
+    static inline var LONG_CAST = 1.0;
+    var crowdAt = -100.0;
+    var crowdValue = false;
+
+    /** Two or more hostile monsters within 8 m (the dodge keeps the hero moving: a long cast has no time to finish). */
+    function crowded(now:Float):Bool {
+        if (now - crowdAt < 0.5) return crowdValue;
+        crowdAt = now;
+        var n = 0;
+        try for (f in foesAround(8)) n++ catch (_:Dynamic) {}
+        crowdValue = n >= 2;
+        return crowdValue;
+    }
+
+    /** The time a skill takes from the start to the end of its cast (seconds), 0 when the data has none. */
+    function castTime(skill:Dynamic):Float {
+        try {
+            var inf = G.field(skill, "inf");
+            var t = G.number(G.field(inf, "duration"), 0);
+            var anim = G.field(inf, "anim");
+            if (anim != null) t = Math.max(t, G.number(G.field(anim, "duration"), 0));
+            return Math.isFinite(t) ? t : 0;
+        } catch (_:Dynamic) return 0;
+    }
+
     var castKind = "";
     var castSkill:Dynamic = null;
     var castAt = 0.0;
     var castSeen = false;
     var castFails:Map<String, Int> = new Map();
     var castBan:Map<String, Float> = new Map();
+    var cutCasts:Map<String, Array<Float>> = new Map();
     var skillDumpAt = -100.0;
 
     function skillOk(skill:Dynamic):Bool {
@@ -1448,7 +1511,7 @@ class Bot {
                 var inf = G.field(skill, "inf");
                 var use = "?";
                 try { var r = G.call("st.skill.Skill", "checkUse", skill, [null]); use = Type.enumConstructor(r) + (Type.enumParameters(r).length > 0 ? Std.string(Type.enumParameters(r)) : ""); } catch (_:Dynamic) {}
-                rows.push(G.s(G.field(skill, "kind")) + "{type " + G.integer(G.field(inf, "type"), -1) + " nature " + G.integer(G.field(inf, "nature"), -1) + (usable(skill) ? " BOT-USES" : " skipped") + " " + use + " range " + Math.round(G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), -1) * 10) / 10 + "}");
+                rows.push(G.s(G.field(skill, "kind")) + "{type " + G.integer(G.field(inf, "type"), -1) + " nature " + G.integer(G.field(inf, "nature"), -1) + (usable(skill) ? " BOT-USES" : " skipped") + " " + use + " cast " + Math.round(castTime(skill) * 100) / 100 + "s range " + Math.round(G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), -1) * 10) / 10 + "}");
             }
         } catch (error:Dynamic) Log.err("dumpSkills", error);
         Log.t("fight", "skills of the hero: " + rows.join(" "));

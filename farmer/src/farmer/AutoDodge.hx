@@ -515,6 +515,10 @@ class AutoDodge {
 
     /** The hero's own skill (a macro's cast, an attack) is stopped when a dodge starts: while it
         runs, the game doesn't let the hero walk. The dash is left alone. */
+    /** The last own skill the dodge cut (the bot learns from it which casts do not fit in the gaps between the hits it runs from). */
+    public static var interruptedKind = "";
+    public static var interruptedAt = -100.0;
+
     static function interruptOwnSkill():Void {
         try {
             var skill = G.call("ent.GameObject", "getActiveSkill", currentHero);
@@ -522,6 +526,7 @@ class AutoDodge {
             if (G.call("st.skill.BaseSkill", "isRunning", skill) != true) return;
             var stopped = G.call("st.skill.Skill", "requestInterrupt", skill) == true;
             lastInterrupt = haxe.Timer.stamp();
+            if (stopped) { interruptedKind = G.text(G.field(skill, "kind")); interruptedAt = lastInterrupt; }
             DodgeLog.write(haxe.Timer.stamp(), "own skill " + G.text(G.field(skill, "kind")) + (stopped ? " interrupted" : " can't be interrupted"));
         } catch (_:Dynamic) {}
     }
