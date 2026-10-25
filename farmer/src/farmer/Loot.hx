@@ -59,7 +59,11 @@ class Loot {
     /** Called every frame: sends the pick-up requests of the drops in reach. */
     public static function update(hero:Dynamic, now:Float):Void {
         try {
-            if (G.call("ent.GameObject", "isDead", hero) == true || G.call("ent.GameObject", "isUnderAnyCC", hero) == true) return;
+            if (G.call("ent.GameObject", "isDead", hero) == true) return;
+            // (the game's own check throws now and then, a skill without data while it changes: then the hero counts as free)
+            var held = false;
+            try held = G.call("ent.GameObject", "isUnderAnyCC", hero) == true catch (_:Dynamic) {}
+            if (held) return;
             var sent = 0;
             for (e in drops(hero)) {
                 var k = key(e);

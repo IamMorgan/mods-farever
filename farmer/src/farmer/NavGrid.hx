@@ -296,7 +296,7 @@ class NavGrid {
         for (d in 0...4) {
             var nx = ix + DX[d], ny = iy + DY[d];
             var nz = height(nx, ny, z, now);
-            if (!Math.isFinite(nz) || nz - z > JUMP_UP || wet.exists(heightKey(nx, ny, z)) || isBlocked(nx, ny, now) || solid(nx, ny, nz, heightKey(nx, ny, z))) { r = true; break; }
+            if (!Math.isFinite(nz) || nz - z > JUMP_UP || (noCliff && z - nz > SAFE_DROP) || wet.exists(heightKey(nx, ny, z)) || isBlocked(nx, ny, now) || solid(nx, ny, nz, heightKey(nx, ny, z))) { r = true; break; }
         }
         roughMemo.set(k, r);
         return r;

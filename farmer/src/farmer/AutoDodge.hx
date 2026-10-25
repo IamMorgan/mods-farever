@@ -364,6 +364,17 @@ class AutoDodge {
             DodgeLog.write(now, "ground: hero at " + round(hz) + ", surface read " + round(surfaceZ(hx, hy, hz)) + ", bare terrain " + round(terrain)
                 + (physicsHeights ? "" : " (physics failed: " + physicsError + ")"));
         }
+        // The bot's own cast is under way: it is let finish while there is time to spare for the walk out. A cast cut at its start never lands,
+        // and a fight of cut casts deals no damage at all (the hero ran 4..9 m at every swing seen 1.4 s ahead and never struck).
+        if (botDriven && runTarget == null && mode != MODE_TELEPORT && ownSkillRunning()) {
+            unknownSeen = false;
+            relax = 0;
+            var early = plan(hero, threats, hx, hy, hz, speed, false, false);
+            if (early != null && timeLeft - runTime(early.spot.exit + MARGIN, speed, false) > CAST_GRACE) {
+                if (now - castKeptLogged > 1.0) { castKeptLogged = now; DodgeLog.write(now, "cast kept: the hit is " + round(timeLeft) + " s away, the walk out needs " + round(runTime(early.spot.exit + MARGIN, speed, false)) + " s"); }
+                return;
+            }
+        }
         // The way being run is still clean: keep it - turning around mid-run is what loses the time.
         var currentHits = -1;
         var currentOpen = false;
@@ -1366,12 +1377,17 @@ class AutoDodge {
     }
 
     static var lastReposition = -10.0;
+    /** True while the farming bot drives the hero: it picks its own fighting spots (Bot.crowdStep), and a second walker would only make the hero twitch. */
+    public static var botDriven = false;
+    /** A cast of the bot is cut for the dodge only when the walk out would otherwise end less than this many seconds before the hit. */
+    static inline var CAST_GRACE = 0.5;
+    static var castKeptLogged = -10.0;
 
     /** Nothing is about to hit, but the hero stands against a wall or in a corner with monsters
         around: walk (never dash) to open ground now, by a way no attack catches - there is room
         to dodge there, and none in a corner. */
     static function reposition(hero:Dynamic, threats:Array<Threat>, hx:Float, hy:Float, hz:Float, now:Float):Void {
-        if (mode == MODE_TELEPORT || runTarget != null || bodies.length == 0 || now - lastReposition < REPOSITION_EVERY) return;
+        if (botDriven || mode == MODE_TELEPORT || runTarget != null || bodies.length == 0 || now - lastReposition < REPOSITION_EVERY) return;
         ensureMap(hx, hy, hz);
         if (isOpen(hx, hy)) return;
         lastReposition = now;

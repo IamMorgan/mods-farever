@@ -174,6 +174,7 @@ class Nav {
     public function update(hero:Dynamic, now:Float):Void {
         glide(hero);
         watchJump(hero, now);
+        try watchFall(hero, now) catch (_:Dynamic) {}
         if (!active) return;
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         if (distance(hero, tx, ty) <= arrive) { stop(); return; }
@@ -198,7 +199,10 @@ class Nav {
         if (blocked > GIVE_UP) { stop(); gaveUp = true; return; }
         if (blocked > 0.35 && now - jumpedAt > 0.8) {
             // a jump only helps before a rise it clears; against a high wall it is only noise
-            if (ledgeAhead(hero, hx, hy, lastDirX, lastDirY)) { jump(hero); jumpedAt = now; Log.t("nav", "stuck against a low ledge: jump"); trackJump(hero, now); }
+            if (ledgeAhead(hero, hx, hy, lastDirX, lastDirY)) {
+                jumpedAt = now;
+                if (jumpSafe(hero, lastDirX, lastDirY)) { jump(hero); Log.t("nav", "stuck against a low ledge: jump"); trackJump(hero, now); }
+            }
             else if (now - jumpedAt > 3) { jumpedAt = now; Log.t("nav", "stuck, no ledge a jump clears ahead (" + solidsAhead(hx, hy, hz, hx + lastDirX, hy + lastDirY) + "): no jump"); }
         }
         if (blocked > 0.7 && now - plannedAt > 1.0) {
@@ -366,6 +370,23 @@ class Nav {
         } catch (_:Dynamic) return false;
     }
 
+    /**
+     * A jump carries the hero about 4 m forward in 0.75 s (measured): the ground 1..5 m ahead on the heading must be there, no deeper than a
+     * cliff and dry - or the jump is a fall (the heading is the hero's run, (ux, uy) a unit vector).
+     */
+    function jumpSafe(hero:Dynamic, ux:Float, uy:Float):Bool {
+        var gz = groundUnder(hero);
+        var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
+        for (a in [1.0, 2.0, 3.0, 4.0, 5.0]) {
+            var z = NavGrid.fineZ(hx + ux * a, hy + uy * a, gz);
+            if (!Math.isFinite(z) || gz - z > NavGrid.CLIFF || Hazard.wetCell(hx + ux * a, hy + uy * a, z, 0.5)) {
+                Log.t("nav", "jump refused: no safe landing " + a + " m ahead (" + (Math.isFinite(z) ? "a drop of " + Math.round((gz - z) * 10) / 10 + " m or water" : "no ground") + ")");
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static function jump(hero:Dynamic):Void {
         try {
             var ctl = G.current("client.PlayerController", "inst");
@@ -411,7 +432,7 @@ class Nav {
     /** Why the last corridor check said no (for the log). */
     public static var corridorWhy = "";
 
-    public static function corridorClear(hx:Float, hy:Float, hz:Float, wx:Float, wy:Float, cliff:Bool = false):Bool {
+    public static function corridorClear(hx:Float, hy:Float, hz:Float, wx:Float, wy:Float, cliff:Bool = false, solids:Bool = true):Bool {
         var dx = wx - hx, dy = wy - hy;
         var len = Math.sqrt(dx * dx + dy * dy);
         if (len < 0.3) return true;
@@ -430,7 +451,7 @@ class Nav {
             if (Hazard.wetCell(px, py, z, 0.45) || Hazard.trapAt(px, py, z)) { corridorWhy = "water or trap at " + Math.round(px) + "," + Math.round(py); return false; }
             // a prop with a body (bench, post, flower bed) that the heights miss: rays along this half metre, over the rising ground, on the
             // middle line and on both sides of the body
-            if (Solid.works) {
+            if (solids && Solid.works) {
                 var lift = Math.max(z, prev);
                 var ax = hx + ux * Math.max(0, t - FINE_STEP), ay = hy + uy * Math.max(0, t - FINE_STEP);
                 for (line in [0.0, 1.0, -1.0]) {
@@ -444,11 +465,42 @@ class Nav {
                 var q = NavGrid.fineZ(qx, qy, z);
                 if (!Math.isFinite(q)) { corridorWhy = "no ground beside at " + Math.round(qx) + "," + Math.round(qy); return false; }
                 if (q - z > FINE_RISE) { corridorWhy = "wall beside (" + Math.round((q - z) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
+                if (cliff && z - q > NavGrid.CLIFF) { corridorWhy = "cliff edge beside (" + Math.round((z - q) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
                 if (Hazard.wetCell(qx, qy, q, 0.3)) { corridorWhy = "water beside"; return false; }
             }
             prev = z;
         }
         return true;
+    }
+
+    /** True when a cliff (a drop deeper than NavGrid.CLIFF) or no ground at all lies within `r` metres of (hx, hy): a knock or a dodge there would be a fall. */
+    public static function edgeNear(hx:Float, hy:Float, hz:Float, r:Float):Bool {
+        for (i in 0...8) {
+            var a = i * Math.PI / 4;
+            var z = NavGrid.fineZ(hx + Math.cos(a) * r, hy + Math.sin(a) * r, hz);
+            if (!Math.isFinite(z) || hz - z > NavGrid.CLIFF) return true;
+        }
+        return false;
+    }
+
+    var zRing:Array<{t:Float, z:Float}> = [];
+    var lastFellAt = -100.0;
+
+    /**
+     * Diagnostics: the ground under the hero is more than 2.5 m lower than 1.2 s ago (a jump changes the hero's height, not the ground's),
+     * and the hero is not flying to an obelisk: what the bot was doing, so a fall can be explained, not guessed.
+     */
+    function watchFall(hero:Dynamic, now:Float):Void {
+        var z = groundUnder(hero);
+        zRing.push({t: now, z: z});
+        while (zRing.length > 0 && now - zRing[0].t > 1.2) zRing.shift();
+        // (more than 40 m in a second is a teleport - the home stone, a zone change - not a fall)
+        if (zRing.length < 2 || zRing[0].z - z <= 2.5 || zRing[0].z - z > 40 || now - lastFellAt < 3 || flying(hero)) return;
+        lastFellAt = now;
+        Log.t("nav", "FELL " + Math.round((zRing[0].z - z) * 10) / 10 + " m in " + Math.round((now - zRing[0].t) * 10) / 10 + " s at " + Math.round(G.number(G.field(hero, "posx"))) + "," + Math.round(G.number(G.field(hero, "posy")))
+            + " | nav " + (active ? "on" : "off") + " noCliff " + noCliff + " route " + routeIndex + "/" + (route == null ? 0 : route.length) + " heading " + Math.round(lastDirX * 100) / 100 + "," + Math.round(lastDirY * 100) / 100
+            + " | dodge " + AutoDodge.dodging() + " gliding " + (G.field(hero, "gliding") == true) + " jumped " + (now - jumpedAt > 100 ? "long ago" : Std.string(Math.round((now - jumpedAt) * 10) / 10) + " s ago") + " | cc " + (G.call("ent.GameObject", "isUnderAnyCC", hero) == true)
+            + " knocked " + (G.call("ent.GameObject", "isKnocked", hero) == true));
     }
 
     /** In the air the hero must not come down in water: the heading is turned to the nearest direction whose landing ground is dry. */
@@ -552,7 +604,12 @@ class Nav {
             if (atEnd) { aimX = route[last].x; aimY = route[last].y; }
             else { aimX = aimPX; aimY = aimPY; }
             var next = route[pick];
-            if (next.jump && jumpedFor != routeIndex && jumpDue(hero, hx, hy, hz, next)) { jumpedFor = routeIndex; jump(hero); noteJump(hero, hx, hy, next); }
+            if (next.jump && jumpedFor != routeIndex && jumpDue(hero, hx, hy, hz, next)) {
+                jumpedFor = routeIndex;
+                var jd = Math.sqrt((next.x - hx) * (next.x - hx) + (next.y - hy) * (next.y - hy));
+                if (jd < 0.1 || jumpSafe(hero, (next.x - hx) / jd, (next.y - hy) / jd)) { jump(hero); noteJump(hero, hx, hy, next); }
+                else { NavGrid.blockLong(next.x, next.y, now); needPlan = true; } // the ledge cannot be taken safely: another way
+            }
         } else if (distance(hero, tx, ty) > 6) { why = "planning"; return null; }
         var dx = aimX - hx, dy = aimY - hy;
         var d = Math.sqrt(dx * dx + dy * dy);

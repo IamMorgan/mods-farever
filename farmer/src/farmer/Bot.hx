@@ -48,6 +48,7 @@ class Bot {
     var lootWait = 0.0;
     var seekKey = "";
     var seekSince = 0.0;
+    var defendAt = -100.0;
     var lastNoTarget = 0.0;
     var lastNote = 0.0;
     var wasDead = false;
@@ -76,6 +77,15 @@ class Bot {
     static inline var AGGRO_RANGE = 28.0;
     /** Monsters this close to the node that is to be gathered are cleared first. */
     static inline var NODE_GUARD = 8.0;
+    /** A foe in reach that loses no health for this long is let go (hits into the void). */
+    static inline var NO_DAMAGE_TIME = 8.0;
+    /** The most a target may differ in height from the hero to be hit from where the hero stands. */
+    static inline var HIT_HEIGHT = 3.5;
+    /** Monsters this near each other are one group: a lone one is fought before a group (the group's others join the fight). */
+    static inline var GROUP_RANGE = 10.0;
+    static inline var GROUP_COST = 45.0;
+    /** A group counts for at most this many others (past that it is simply a group). */
+    static inline var GROUP_MAX = 4;
 
     public function new() {}
 
@@ -101,8 +111,11 @@ class Bot {
         if (running) Log.t("mod", "BOT STOP (" + message + ")");
         running = false;
         AutoDodge.enabled = false;
+        AutoDodge.botDriven = false;
         nav.stop();
         releaseAttack();
+        kiting = false;
+        engaged = false;
         target = null;
         targetKind = "";
         if (job != null && app != null) job.close(app);
@@ -150,10 +163,12 @@ class Bot {
         this.hero = hero;
         this.plan = plan;
         Probe.app = app;
+        AutoDodge.botDriven = running;
         if (!running) { releaseAttack(); return; }
         try AutoDodge.update(hero, now) catch (error:Dynamic) Log.err("dodge update", error);
         try Hazard.refreshTraps(hero, now) catch (error:Dynamic) Log.err("traps", error);
         nav.update(hero, now);
+        try watchTwitch(now) catch (error:Dynamic) Log.err("twitch", error);
         try heartbeat(now) catch (error:Dynamic) Log.err("heartbeat", error);
         if (now < nextThink) return;
         nextThink = now + 0.1;
@@ -161,6 +176,37 @@ class Bot {
             Log.w("[Farmer] think: " + Std.string(error) + haxe.CallStack.toString(haxe.CallStack.exceptionStack()));
             if (job != null) { try job.close(app) catch (_:Dynamic) {} job = null; jobFailedAt = now; message = "error: " + Std.string(error); }
         }
+    }
+
+    // ---- twitching ----
+
+    var twitchTrail:Array<{t:Float, x:Float, y:Float}> = [];
+    var twitchLogAt = -100.0;
+    var twitchTotal = 0;
+
+    /**
+     * The measure of "the hero twitches": from the hero's real positions (ten a second, the last 4 s) the number of times it turned back on
+     * itself (a step of 12 cm or more, then one that goes against it). Four reversals in 4 s are logged with what was steering.
+     */
+    function watchTwitch(now:Float):Void {
+        var x = G.number(G.field(hero, "posx")), y = G.number(G.field(hero, "posy"));
+        if (twitchTrail.length == 0 || now - twitchTrail[twitchTrail.length - 1].t >= 0.1) twitchTrail.push({t: now, x: x, y: y});
+        while (twitchTrail.length > 0 && now - twitchTrail[0].t > 4.0) twitchTrail.shift();
+        if (now - twitchLogAt < 4.0 || twitchTrail.length < 10) return;
+        var reversals = 0;
+        var px = 0.0, py = 0.0, have = false;
+        for (i in 1...twitchTrail.length) {
+            var vx = twitchTrail[i].x - twitchTrail[i - 1].x, vy = twitchTrail[i].y - twitchTrail[i - 1].y;
+            var len = Math.sqrt(vx * vx + vy * vy);
+            if (len < 0.12) continue;
+            if (have && (vx * px + vy * py) / (len * Math.sqrt(px * px + py * py)) < -0.3) reversals++;
+            px = vx; py = vy; have = true;
+        }
+        if (reversals < 4) return;
+        twitchLogAt = now;
+        twitchTotal++;
+        Log.t("fight", "TWITCH: " + reversals + " reversals in 4 s at " + Math.round(x) + "," + Math.round(y) + " | dodge " + AutoDodge.dodging() + " nav " + nav.active + " kiting " + kiting + " engaged " + engaged
+            + " target " + targetKind + " | total " + twitchTotal);
     }
 
     // ---- the log's status beat ----
@@ -444,6 +490,21 @@ class Bot {
                 nav.stop();
             }
         }
+        if (targetKind == "mob" && target != null && !engaged && now - defendAt > 1.0) {
+            // a far target and an enemy hitting the hero on the way: that one first (walking on past it under fire is what made the dodge
+            // twitch in short runs and the monsters gather into a crowd behind the hero)
+            defendAt = now;
+            var attacker = nearbyThreat(now);
+            if (attacker != null && attacker != target) {
+                var toTarget = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
+                var toAttacker = Nav.distance(hero, G.number(G.field(attacker, "posx")), G.number(G.field(attacker, "posy")));
+                if (toAttacker + 3 < toTarget) {
+                    Log.t("bot", "defending against " + G.s(G.field(G.field(attacker, "inf"), "id")) + " at " + Math.round(toAttacker) + " m instead of the target at " + Math.round(toTarget) + " m");
+                    target = attacker; targetKind = "mob"; lockedFoe = null; targetSince = now;
+                    nav.stop();
+                }
+            }
+        }
         if (target == null) {
             // what lies on the ground is taken first (the pick-up itself is Loot.update's)
             if (seekLoot(now)) return;
@@ -518,9 +579,9 @@ class Bot {
             blacklist.set(key(target), now + 180);
             return false;
         }
-        if (targetKind == "mob" && dNow <= 12 && now - progressAt > 15) {
-            // in reach and fighting, yet the monster has lost no health for 15 s (out of the hits' reach, on a ledge, immune): another one
-            Log.t("bot", "the foe lost no health for 15 s at " + Math.round(dNow * 10) / 10 + " m (dz " + Math.round(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) + "): another one");
+        if (targetKind == "mob" && dNow <= 12 && now - progressAt > NO_DAMAGE_TIME) {
+            // in reach and fighting, yet the monster has lost no health for a while (out of the hits' reach, on a ledge, immune): another one
+            Log.t("bot", "the foe lost no health for " + NO_DAMAGE_TIME + " s at " + Math.round(dNow * 10) / 10 + " m (dz " + Math.round(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) + "): another one");
             blacklist.set(key(target), now + 120);
             return false;
         }
@@ -591,14 +652,18 @@ class Bot {
         var wantHunt = [for (id in plan.active(true)) id];
         if (wantHunt.length == 0 && !leveling) return;
         var seen:Map<Int, Int> = new Map();
+        var foePos:Array<{x:Float, y:Float}> = [];
+        var cands:Array<{e:Dynamic, score:Float, x:Float, y:Float}> = [];
         for (e in G.fastArray(G.field(layer, "units"))) {
-            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true || blacklisted(e, now)) continue;
+            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true) continue;
             if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true) continue;
             if (G.field(e, "summonOwner") != null) continue;
             try if (G.call("ent.GameObject", "isEnemyWith", hero, [e]) != true) continue catch (_:Dynamic) continue;
             var inf = G.field(e, "inf");
             var unitType = G.s(G.field(inf, "type"));
             if (unitType == "Environment" || unitType == "Critter") continue; // training dummies, harmless animals
+            foePos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))}); // (every hostile monster counts for a group, wanted or not)
+            if (blacklisted(e, now)) continue;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             if (unit != null && Catalog.isBoss(unit)) continue;
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
@@ -625,12 +690,21 @@ class Bot {
                 if (!drops) continue;
                 score += Math.max(0, foeLevel - level) * 250;
             }
-            if (score < bestScore) { bestScore = score; best = e; kind = "mob"; }
+            cands.push({e: e, score: score, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
+        }
+        // a lone monster before a group: the group's others would join the fight and press the hero into a corner
+        var groupOfBest = 0;
+        for (c in cands) {
+            var others = -1; // (the monster itself is in the list)
+            for (p in foePos) if ((p.x - c.x) * (p.x - c.x) + (p.y - c.y) * (p.y - c.y) <= GROUP_RANGE * GROUP_RANGE) others++;
+            var counted = Std.int(Math.min(GROUP_MAX, Math.max(0, others)));
+            var s = c.score + counted * GROUP_COST;
+            if (s < bestScore) { bestScore = s; best = c.e; kind = "mob"; groupOfBest = Std.int(Math.max(0, others)); }
         }
         if (best != null) {
             target = best; targetKind = kind; lockedFoe = null;
             Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.field(best, "_level") + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
-                + Math.round(G.number(G.field(best, "posz")) - hz) + ", score " + Math.round(bestScore) + (leveling ? ", leveling" : ", hunting drops"));
+                + Math.round(G.number(G.field(best, "posz")) - hz) + ", score " + Math.round(bestScore) + ", " + groupOfBest + " others within " + GROUP_RANGE + " m" + (leveling ? ", leveling" : ", hunting drops"));
         } else if (haxe.Timer.stamp() - lastSeenLog > 10) {
             lastSeenLog = haxe.Timer.stamp();
             var levels = [for (l => n in seen) l + "x" + n];
@@ -691,9 +765,9 @@ class Bot {
 
     function moveTo(x:Float, y:Float, arrive:Float, now:Float, ?z:Float):Void {
         nav.goalZ = z == null ? Math.NaN : z;
-        // close to a monster (a fight) no cliff is gone down; the long way to one may go down a cliff when walking round is much longer
-        // (the planner makes a drop dear). No water is entered ever.
-        nav.noCliff = targetKind == "mob" && Nav.distance(hero, x, y) < 25;
+        // no cliff is ever gone down (a fall is no way to a monster, a node or a hunting ground: a spot below is reached by the way round,
+        // by obelisk or not at all); only the climb out of a pit (escapePit) may. No water is entered ever.
+        nav.noCliff = escapeBumper == null;
         if (!nav.travel(hero, x, y, now)) nav.go(x, y, arrive, now);
     }
 
@@ -727,18 +801,218 @@ class Bot {
         return type == "Bow" || type == "Staff" || type == "Book" || type == "Halos" || type == "Scepter" || type == "Thrown" || type == "Crescent";
     }
 
+    /** The target's attack spot is held until it is this much farther than the reach (a foe on the edge of the reach would flip "go"/"stop" every think). */
+    static inline var REACH_HOLD = 1.5;
+    var engaged = false;
+    var wrongHeightSince = -1.0;
+    var noSightSince = -1.0;
+    var losAt = -10.0;
+    var losOpen = true;
+
+    /** Lets go of the target for two minutes and says why. */
+    function dropTarget(now:Float, why:String):Void {
+        var id = "";
+        try id = G.s(G.field(G.field(target, "inf"), "id")) catch (_:Dynamic) {}
+        Log.t("fight", "target " + id + " let go: " + why);
+        blacklist.set(key(target), now + 120);
+        target = null;
+        targetKind = "";
+        engaged = false;
+        nav.stop();
+        releaseAttack();
+    }
+
+    /** False when a body of the physics world (a wall, a statue, a bench) stands between the hero's chest and the target's (a spell would hit that). */
+    function lineOpen(tx:Float, ty:Float, tz:Float, now:Float):Bool {
+        if (now - losAt < 0.25) return losOpen;
+        losAt = now;
+        losOpen = true;
+        var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
+        var len = Math.sqrt((tx - hx) * (tx - hx) + (ty - hy) * (ty - hy) + (tz - hz) * (tz - hz));
+        if (len > 2.5) {
+            var r = Solid.ray(hx, hy, hz + 1.0, tx, ty, tz + 1.0);
+            if (r >= 0 && r < len - 2.0) losOpen = false; // (a hit near the target is its own body)
+        }
+        return losOpen;
+    }
+
     function workMob(now:Float, leveling:Bool):Void {
-        var x = G.number(G.field(target, "posx")), y = G.number(G.field(target, "posy"));
+        var x = G.number(G.field(target, "posx")), y = G.number(G.field(target, "posy")), z = G.number(G.field(target, "posz"));
         message = Locale.f(leveling ? "stLevel" : "stHunt");
-        var d = Nav.distance(hero, x, y);
-        var range = rangedWeapon() ? 9.0 : 2.6;
+        // the dodge has the legs and the skills while it runs: nothing is asked of the game meanwhile (a hit queued now would fire the
+        // moment the run ends, and walking back to the foe at once is what made the hero twitch)
+        if (AutoDodge.dodging()) return;
         if (lockedFoe != target) {
             lockedFoe = target;
+            engaged = false;
+            wrongHeightSince = -1;
+            noSightSince = -1;
             try G.call("client.PlayerController", "lockTarget", G.current("client.PlayerController", "inst"), [target]) catch (_:Dynamic) {}
         }
-        if (d > range) { releaseAttack(); moveTo(x, y, range - 0.6, now, G.number(G.field(target, "posz"))); return; }
+        if (crowdStep(now)) return;
+        var d = Nav.distance(hero, x, y);
+        var dz = z - G.number(G.field(hero, "posz"));
+        var range = rangedWeapon() ? 9.0 : 2.6;
+        // a foe on another height (a ledge above, a pit below) is not hit from here, however near it is on the map: closer in on a way up
+        // or down, or let go when none leads there
+        var level = Math.abs(dz) <= HIT_HEIGHT;
+        if (!level && d <= range + 3) {
+            if (wrongHeightSince < 0) wrongHeightSince = now;
+            else if (now - wrongHeightSince > 6) { dropTarget(now, "on another height (dz " + Math.round(dz * 10) / 10 + " m, " + Math.round(d * 10) / 10 + " m away on the map)"); return; }
+        } else wrongHeightSince = -1;
+        // (the line of fire matters only where the hero is about to strike: a far target is simply walked to)
+        var seen = !level || d > range + REACH_HOLD + 1 || lineOpen(x, y, z, now);
+        if (level && !seen) {
+            if (noSightSince < 0) noSightSince = now;
+            else if (now - noSightSince > 8) { dropTarget(now, "a body of the world stands between (no way to see it for 8 s)"); return; }
+        } else noSightSince = -1;
+        if (d > (engaged ? range + REACH_HOLD : range) || !level || !seen) {
+            engaged = false;
+            releaseAttack();
+            moveTo(x, y, level && seen ? range - 0.6 : 1.5, now, z);
+            return;
+        }
+        engaged = true;
         nav.stop();
         attack(now, x, y);
+    }
+
+    // ---- a crowd: the way out of a corner ----
+
+    var kiting = false;
+    var kiteUntil = 0.0;
+    var kiteAt = -100.0;
+    var crowdCheckAt = -100.0;
+    var kiteFailLogAt = -100.0;
+
+    /** Hostile, living, fighting monsters within `radius` m on about the hero's height (a training dummy, a harmless animal, a summon do not count). */
+    function foesAround(radius:Float):Array<{x:Float, y:Float, d:Float, aggro:Bool}> {
+        var hz = G.number(G.field(hero, "posz"));
+        var out = [];
+        for (e in G.fastArray(G.field(G.field(hero, "layer"), "units"))) {
+            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true) continue;
+            if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true || G.field(e, "summonOwner") != null) continue;
+            try if (G.call("ent.GameObject", "isEnemyWith", hero, [e]) != true) continue catch (_:Dynamic) continue;
+            var unitType = G.s(G.field(G.field(e, "inf"), "type"));
+            if (unitType == "Environment" || unitType == "Critter") continue;
+            if (Math.abs(G.number(G.field(e, "posz")) - hz) > 5) continue;
+            var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
+            var d = Nav.distance(hero, ex, ey);
+            if (d > radius) continue;
+            var aggro = false;
+            try aggro = G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) {}
+            out.push({x: ex, y: ey, d: d, aggro: aggro});
+        }
+        return out;
+    }
+
+    /** The distance from the point (px, py) to the segment (ax, ay)-(bx, by). */
+    static function segmentDistance(ax:Float, ay:Float, bx:Float, by:Float, px:Float, py:Float):Float {
+        var dx = bx - ax, dy = by - ay;
+        var len2 = dx * dx + dy * dy;
+        var t = len2 < 0.0001 ? 0.0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+        var cx = ax + dx * t - px, cy = ay + dy * t - py;
+        return Math.sqrt(cx * cx + cy * cy);
+    }
+
+    /** How many of eight directions are free (no wall, no cliff, no water) for `len` metres from (x, y): the fewer, the more the place is a corner. */
+    static function freeDirections(x:Float, y:Float, z:Float, len:Float):Int {
+        var n = 0;
+        for (i in 0...8) {
+            var a = i * Math.PI / 4;
+            if (Nav.corridorClear(x, y, z, x + Math.cos(a) * len, y + Math.sin(a) * len, true, false)) n++;
+        }
+        return n;
+    }
+
+    /** A cast in progress is broken off (a running hero does not move while it goes on). */
+    function cancelCast():Void {
+        try {
+            var s = G.call("ent.GameObject", "getActiveSkill", hero);
+            if (s != null && !isBasic(s)) G.call("st.skill.Skill", "requestInterrupt", s);
+        } catch (_:Dynamic) {}
+        castKind = "";
+        castSkill = null;
+    }
+
+    /**
+     * A crowd (three or more fighting the hero, two when it is hurt), a hurt hero among foes, or a hero in a corner or at a cliff's edge with a foe
+     * on it: the hero walks a few metres to open ground away from the monsters (by a way that does not pass them and has no cliff), then fights on.
+     * True while the walk goes on (the caller asks nothing of the fight then).
+     */
+    function crowdStep(now:Float):Bool {
+        if (kiting) {
+            if (nav.active && now < kiteUntil) return true;
+            kiting = false;
+            nav.stop();
+        }
+        if (now - kiteAt < 3.5 || now - crowdCheckAt < 0.5) return false;
+        crowdCheckAt = now;
+        var foes = foesAround(14);
+        var close = 0;
+        for (f in foes) if (f.d <= 4 || (f.aggro && f.d <= 9)) close++;
+        if (close == 0) return false;
+        var hp = G.number(G.call("ent.Unit", "get_health", hero), -1), max = G.number(G.call("ent.Unit", "get_maxHealth", hero), -1);
+        var frac = max > 0 && hp >= 0 ? hp / max : 1.0;
+        var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
+        var reason = "";
+        if (close >= 3) reason = close + " monsters at the hero";
+        else if (close >= 2 && frac < 0.5) reason = close + " monsters and the hero at " + Math.round(frac * 100) + "% health";
+        else if (frac < 0.25) reason = "hero at " + Math.round(frac * 100) + "% health";
+        else if (Nav.edgeNear(hx, hy, hz, 1.8)) reason = "a cliff's edge under the fight";
+        else if (close >= 2 && freeDirections(hx, hy, hz, 3.0) <= 3) reason = close + " monsters and the hero in a corner";
+        if (reason == "") return false;
+        var spot = retreatSpot(foes, hx, hy, hz);
+        if (spot == null) {
+            if (now - kiteFailLogAt > 5) { kiteFailLogAt = now; Log.t("fight", "CROWD (" + reason + "): no open ground to walk to, the fight goes on here"); }
+            return false;
+        }
+        kiteAt = now;
+        kiting = true;
+        kiteUntil = now + 4.0;
+        cancelCast();
+        releaseAttack();
+        engaged = false;
+        nav.goalZ = Math.NaN;
+        nav.noCliff = true;
+        nav.go(spot.x, spot.y, 1.2, now);
+        Log.t("fight", "CROWD (" + reason + "): retreat to " + Math.round(spot.x) + "," + Math.round(spot.y) + " (" + Math.round(Math.sqrt((spot.x - hx) * (spot.x - hx) + (spot.y - hy) * (spot.y - hy))) + " m), " + foes.length + " monsters within 14 m");
+        return true;
+    }
+
+    /** The best open ground 7 or 11 m away: farthest from the monsters, not through them, no cliff, room around it. Null when none is better than here. */
+    function retreatSpot(foes:Array<{x:Float, y:Float, d:Float, aggro:Bool}>, hx:Float, hy:Float, hz:Float):Null<{x:Float, y:Float}> {
+        var nearest = 1e9;
+        for (f in foes) nearest = Math.min(nearest, f.d);
+        var cands:Array<{x:Float, y:Float, score:Float}> = [];
+        for (i in 0...16) for (len in [7.0, 11.0]) {
+            var a = i * Math.PI / 8;
+            var px = hx + Math.cos(a) * len, py = hy + Math.sin(a) * len;
+            var through = false, endMin = 1e9, sum = 0.0;
+            for (f in foes) {
+                if (segmentDistance(hx, hy, px, py, f.x, f.y) < 2.2) { through = true; break; }
+                var de = Math.sqrt((px - f.x) * (px - f.x) + (py - f.y) * (py - f.y));
+                endMin = Math.min(endMin, de);
+                sum += de;
+            }
+            if (through || endMin < nearest + 2) continue;
+            cands.push({x: px, y: py, score: Math.min(endMin, 14) + 0.3 * sum / Math.max(1, foes.length)});
+        }
+        cands.sort((a, b) -> a.score > b.score ? -1 : a.score < b.score ? 1 : 0);
+        var best:Null<{x:Float, y:Float}> = null;
+        var bestScore = -1e9;
+        var tried = 0;
+        for (c in cands) {
+            if (tried >= 6) break;
+            if (!Nav.corridorClear(hx, hy, hz, c.x, c.y, true, false)) continue;
+            tried++;
+            var ez = NavGrid.fineZ(c.x, c.y, hz);
+            if (!Math.isFinite(ez)) continue;
+            var s = c.score + freeDirections(c.x, c.y, ez, 3.0);
+            for (d in NavGrid.deadEnds) if (Math.abs(d.x - c.x) + Math.abs(d.y - c.y) < 6) s -= 6;
+            if (s > bestScore) { bestScore = s; best = {x: c.x, y: c.y}; }
+        }
+        return best;
     }
 
     // ---- attacking ----
