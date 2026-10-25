@@ -47,7 +47,7 @@ class Bot {
     /** After a node broke: its drops are on their way, nothing else is started before this time. */
     var lootWait = 0.0;
     var bagWarnAt = -100.0;
-    var skipScrap = false; // the recycler found nothing to take while gathering: the bank is next
+    var skipBank = false; // the bank is done (or full) while gathering: recycling is next
     var seekKey = "";
     var seekSince = 0.0;
     var defendAt = -100.0;
@@ -274,12 +274,12 @@ class Bot {
         if (!workLeft) { finish(now); return; }
         finishStage = 0;
 
-        if (Services.freeSlots(hero) > 1) skipScrap = false;
+        if (Services.freeSlots(hero) > 1) skipBank = false;
         if (Services.freeSlots(hero) <= 1 && now - jobFailedAt > 30) {
-            // gathering: recycle the chosen gear first, then empty the bag into the bank; leveling: only recycle, otherwise fight on
-            var gathering = plan.resourcesLeft();
-            if (plan.recycle && anyQuality() && !skipScrap) { startJob("scrap", now); return; }
-            if (gathering) { skipScrap = false; startJob("bank", now); return; }
+            // gathering: first the bank (its window opens from anywhere), then, if the bag is still full, recycle the chosen gear
+            // (the recycler needs a walk to its station: the server only opens it within reach); leveling: only recycle, else fight on
+            if (plan.resourcesLeft() && !skipBank) { startJob("bank", now); return; }
+            if (plan.recycle && anyQuality() && Services.hasScrapGear(hero, plan)) { startJob("scrap", now); return; }
             warnBagFull(now); // a full bag does not stop the run: it keeps fighting (drops are left on the ground)
         }
         farm(now, leveling, level);
@@ -341,18 +341,17 @@ class Bot {
         job = null;
         countsReady = false; // what left the bag is not "lost" progress
         Log.t("svc", "job " + kind + ": " + r);
-        var gathering = plan.resourcesLeft();
         if (r == "done") {
             if (Services.freeSlots(hero) <= 1) {
-                if (kind == "scrap" && gathering) skipScrap = true; // nothing (more) to recycle: the bank is next
+                if (kind == "bank") skipBank = true; // the bank took what it could: recycling is next
                 else jobFailedAt = now;
             }
             return;
         }
         jobFailedAt = now;
         message = r.substr(5);
-        if (kind == "scrap" && gathering) { skipScrap = true; jobFailedAt = -100; return; } // the bank is next
-        if (Services.freeSlots(hero) <= 1) warnBagFull(now);
+        if (kind == "bank") { skipBank = true; jobFailedAt = -100; } // the bank is full or failed: recycling is next
+        if (Services.freeSlots(hero) <= 1 && !(kind == "bank" && plan.recycle && anyQuality() && Services.hasScrapGear(hero, plan))) warnBagFull(now);
     }
 
     /** Tells about the full bag at most once a minute; the bot goes on. */

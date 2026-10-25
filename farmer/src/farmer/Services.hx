@@ -92,6 +92,15 @@ class Services {
         return out;
     }
 
+    /** Is there any gear in the bag the plan wants recycled (so a trip to the recycler is worth it)? */
+    public static function hasScrapGear(hero:Dynamic, plan:FarmPlan):Bool {
+        for (stack in stacks(bag(hero))) {
+            var item = G.field(stack, "item");
+            if (isGear(item) && plan.recyclesRarity(itemRarity(item))) return true;
+        }
+        return false;
+    }
+
     public static function transfer(from:Dynamic, stack:Dynamic, to:Dynamic):Bool {
         var item = G.field(stack, "item");
         var fromIndex = G.integer(G.call("st.Inventory", "getStackIndex", from, [stack]), -1);
