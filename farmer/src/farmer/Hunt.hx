@@ -65,6 +65,13 @@ class Hunt {
         return out;
     }
 
+    /** Is there any ground on the map whose zone level is the hero's own (up to +wide)? When none is, only lower monsters are left to fight. */
+    public static function groundExists(level:Int, wide:Int):Bool {
+        if (!ready()) return true; // (not read yet: nothing is known, so nothing is given up)
+        for (l in levels) if (l >= level && l <= level + wide) return true;
+        return false;
+    }
+
     static var spread = 2;
     static var allow:Map<Int, Bool> = null;
     static var allowZones:Map<String, Bool> = null;

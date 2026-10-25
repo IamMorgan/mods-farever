@@ -583,8 +583,10 @@ class Bot {
             }
             needDescents = false;
             if (target == null && leveling && roam(now, level, 2)) return;
-            // no monster of the hero's own level anywhere to go to: the nearest lower ones (up to 3 below) are better than none
-            if (target == null && leveling) pickTarget(now, leveling, level, needDescents, true);
+            // the map has no ground of the hero's level at all (the top zones are below it): the nearest lower monsters (up to 3 below) are better than none.
+            // While such ground exists the hero keeps going to it, by obelisk or on foot, however long it takes - never settles for low monsters near by
+            if (target == null && leveling && Hunt.onWorld(hero) && !Hunt.groundExists(level, 2)) pickTarget(now, leveling, level, needDescents, true);
+            else if (target == null && leveling && !Hunt.onWorld(hero)) pickTarget(now, leveling, level, needDescents, true); // (a dungeon has no zone map: its monsters are what there is)
             if (target == null && !leveling && wantsGather() && nodeRoam(now)) return;
             if (target == null && !leveling && huntRoam(now, level)) return;
             if (target == null) {
