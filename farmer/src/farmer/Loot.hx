@@ -67,12 +67,13 @@ class Loot {
                 var n = (tries.exists(k) ? tries.get(k) : 0) + 1;
                 tries.set(k, n);
                 retryAt.set(k, now + RETRY_GAP);
-                if (n >= MAX_TRIES) giveUpUntil.set(k, now + GIVE_UP_SECONDS);
+                if (n >= MAX_TRIES) { giveUpUntil.set(k, now + GIVE_UP_SECONDS); Log.t("loot", "drop " + G.typeName(e) + " given up after " + n + " tries"); }
+                Log.t("loot", "pick-up request " + n + " for " + G.typeName(e) + " at d=" + Math.round(Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) * 10) / 10);
                 G.call("ent.Unit", "requestInteractAction", hero, [e]);
                 if (++sent >= PER_FRAME) break;
             }
             if (now >= nextClean) clean(now);
-        } catch (_:Dynamic) {}
+        } catch (error:Dynamic) Log.err("loot", error);
     }
 
     /** Forgets the drops that are gone. */

@@ -42,6 +42,7 @@ class FarmerMod {
     static var planSaved = "";
 
     static function main():Void {
+        Log.t("mod", "Farmer loaded (log: hlx/config/farmer/farmer.log)");
         config.save();
         button.x = config.panelX;
         button.y = config.panelY;
@@ -60,8 +61,9 @@ class FarmerMod {
 
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
-        try Probe.tick(instance) catch (error:Dynamic) Log.w("[Farmer] probe failed: " + Std.string(error));
-        try tick(instance, dt) catch (error:Dynamic) Log.w("[Farmer] tick failed: " + Std.string(error));
+        try Probe.tick(instance) catch (error:Dynamic) Log.t("err", "probe failed: " + Std.string(error));
+        try tick(instance, dt) catch (error:Dynamic) Log.err("tick", error);
+        Log.flush();
         return Continue;
     }
 
@@ -70,7 +72,7 @@ class FarmerMod {
         try localizeSettings(now) catch (_:Dynamic) {}
         var hero = G.field(app, "hero");
         if (hero == null || G.field(app, "me") == null) {
-            if (active) { active = false; button.hide(); window.hide(); bot.reset(); }
+            if (active) { active = false; button.hide(); window.hide(); bot.reset(); Log.t("mod", "hero left the world: Farmer paused"); }
             heroSeenAt = -1;
             return;
         }
@@ -78,6 +80,7 @@ class FarmerMod {
             if (heroSeenAt < 0) heroSeenAt = now;
             if (now - heroSeenAt < ACTIVATE_DELAY) return;
             active = true;
+            Log.t("mod", "hero in the world: Farmer active");
         }
         bot.update(app, hero, plan, now, dt);
         if (config.pickupLoot || bot.running) Loot.update(hero, now);
@@ -145,6 +148,19 @@ class FarmerMod {
         } catch (_:Dynamic) return Continue;
     }
 
+    /**
+     * The game blocks every input while its window is not the focused one (App.allowInputs); the bot works anyway: with the window
+     * in the background the game still answers "inputs allowed" while the bot runs. (The cursor and the sound keep following the
+     * real focus: the user's mouse is never taken.)
+     */
+    @:hlx.prefix(GameApp.allowInputs)
+    static function beforeAllowInputs(instance:Dynamic, flag:hl.Ref<Bool>):HlxPrefixResult<Bool> {
+        if (!active || !bot.running) return Continue;
+        var focused = true;
+        try focused = G.call("hxd.Window", "get_isFocused", G.staticCall("hxd.Window", "getInstance", [])) == true catch (_:Dynamic) {}
+        return focused ? Continue : SkipWith(true);
+    }
+
     @:hlx.prefix(client.PlayerController.updateSkillInputs)
     static function beforeSkillInputs(instance:Dynamic):HlxPrefixResult<Void>
         return active && bot.holdingSkills() ? Skip : Continue;
@@ -193,7 +209,9 @@ class FarmerMod {
             bot.reset();
             button.hide();
             window.hide();
+            Log.t("mod", "game closing");
         } catch (_:Dynamic) {}
+        Log.flush(true);
         return Continue;
     }
 }

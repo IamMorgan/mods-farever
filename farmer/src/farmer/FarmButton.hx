@@ -107,7 +107,7 @@ class FarmButton {
                 G.set(hit, "onPush", (_:Dynamic) -> beginDrag());
             }
         } catch (error:Dynamic) {
-            Log.w("[Farmer] button build failed: " + Std.string(error));
+            Log.t("err", "button build failed: " + Std.string(error));
             hide();
         }
     }

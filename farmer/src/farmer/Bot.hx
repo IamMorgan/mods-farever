@@ -53,12 +53,30 @@ class Bot {
     var lastNoTarget = 0.0;
     var lastNote = 0.0;
     var wasDead = false;
+    var lastBasicSeen = 0.0;
+    var comboSince = 0.0;
+    var lastFightLog = 0.0;
+    var failTimes:Array<Float> = [];
+    var escapeBumper:Dynamic = null;
+    var escapeAt = 0.0;
+    var progressBest = 1e9;
+    var progressAt = 0.0;
+    var progressKey = "";
+    var lastSeenLog = -100.0;
+    var bumperHopAt = -100.0;
     var gotoX:Null<Float> = null;
     var gotoY:Null<Float> = null;
 
     static inline var LOOT_SEEK = 16.0;
     /** A monster this close to the hero is fought before going on with a node. */
     static inline var THREAT_RANGE = 9.0;
+    static inline var BUMPER_RANGE = 90.0;
+    /** A ready skill waits at most this long for the weapon's combo series to end. */
+    static inline var COMBO_WAIT = 2.5;
+    /** A monster that has the hero as its target is fought from this far. */
+    static inline var AGGRO_RANGE = 28.0;
+    /** Monsters this close to the node that is to be gathered are cleared first. */
+    static inline var NODE_GUARD = 8.0;
 
     public function new() {}
 
@@ -75,9 +93,13 @@ class Bot {
         targetKind = "";
         AutoDodge.enabled = true;
         message = Locale.f("stTravel");
+        failTimes = [];
+        escapeBumper = null;
+        Log.t("mod", "BOT START plan " + (plan == null ? "?" : plan.toJson()) + (hero == null ? "" : " hero L" + G.integer(G.field(hero, "_level")) + " glider " + Nav.hasGlider(hero)));
     }
 
     public function stop():Void {
+        if (running) Log.t("mod", "BOT STOP (" + message + ")");
         running = false;
         AutoDodge.enabled = false;
         nav.stop();
@@ -129,8 +151,10 @@ class Bot {
         this.plan = plan;
         Probe.app = app;
         if (!running) { releaseAttack(); return; }
-        try AutoDodge.update(hero, now) catch (_:Dynamic) {}
+        try AutoDodge.update(hero, now) catch (error:Dynamic) Log.err("dodge update", error);
+        try Hazard.refreshTraps(hero, now) catch (error:Dynamic) Log.err("traps", error);
         nav.update(hero, now);
+        try heartbeat(now) catch (error:Dynamic) Log.err("heartbeat", error);
         if (now < nextThink) return;
         nextThink = now + 0.1;
         try think(now) catch (error:Dynamic) {
@@ -139,9 +163,41 @@ class Bot {
         }
     }
 
+    // ---- the log's status beat ----
+
+    var beatAt = 0.0;
+
+    /** Every second (twice a second in a fight): where the hero is and everything the bot is doing, in one line. */
+    function heartbeat(now:Float):Void {
+        var fighting = targetKind == "mob";
+        if (now - beatAt < (fighting ? 0.5 : 1.0)) return;
+        beatAt = now;
+        var hp = G.number(G.call("ent.Unit", "get_health", hero), -1), max = G.number(G.call("ent.Unit", "get_maxHealth", hero), -1);
+        var active = G.call("ent.GameObject", "getActiveSkill", hero);
+        var tgt = "-";
+        if (target != null) {
+            var inf = G.field(target, "inf");
+            tgt = targetKind + " " + G.s(G.field(inf, "id") != null ? G.field(inf, "id") : G.field(G.field(target, "gatherInf"), "id")) + (targetKind == "mob" ? " L" + G.integer(G.call("ent.GameObject", "get_level", target)) : "")
+                + " d=" + Math.round(Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy"))) * 10) / 10
+                + " dz=" + Math.round((G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) * 10) / 10;
+        }
+        Log.t("beat", "pos " + Math.round(G.number(G.field(hero, "posx")) * 10) / 10 + "," + Math.round(G.number(G.field(hero, "posy")) * 10) / 10 + "," + Math.round(G.number(G.field(hero, "posz")) * 10) / 10
+            + " hp " + Math.round(hp) + "/" + Math.round(max) + " L" + G.integer(G.field(hero, "_level")) + " | " + (message == "" ? "-" : message) + " | target " + tgt
+            + " | " + nav.status(hero, now) + " | dodge " + AutoDodge.dodging() + " glide " + (G.field(hero, "gliding") == true)
+            + " | combo " + G.integer(G.field(hero, "attackComboCount")) + " held " + attackDown + " skill " + (active == null ? "-" : G.s(G.field(active, "kind")))
+            + " | free " + Services.freeSlots(hero) + " traps " + Hazard.trapCount() + (job != null ? " job " + job.kind : "") + (escapeBumper != null ? " escaping" : "")
+            + " fails " + failTimes.length + " focus " + windowFocused());
+    }
+
+    static function windowFocused():Bool {
+        try return G.call("hxd.Window", "get_isFocused", G.staticCall("hxd.Window", "getInstance", [])) == true catch (_:Dynamic) return false;
+    }
+
     function think(now:Float):Void {
         if (!Catalog.build()) return; // the data sheets are not loaded yet
         if (G.call("ent.GameObject", "isDead", hero) == true) {
+            if (!wasDead) Log.t("mod", "HERO DIED at " + Math.round(G.number(G.field(hero, "posx"))) + "," + Math.round(G.number(G.field(hero, "posy"))) + "," + Math.round(G.number(G.field(hero, "posz")))
+                + " (target " + targetKind + ", " + nav.status(hero, now) + "): respawning");
             wasDead = true;
             nav.stop();
             target = null;
@@ -209,6 +265,7 @@ class Bot {
         target = null;
         targetKind = "";
         job = new ServiceJob(kind);
+        Log.t("svc", "job " + kind + " started, free slots " + Services.freeSlots(hero));
         message = Locale.f(kind == "scrap" ? "stRecycle" : "stBank");
     }
 
@@ -216,6 +273,13 @@ class Bot {
         if (job.walkTo != null) { // the recycler is out of the server's reach: walk up to it first
             var w = job.walkTo;
             message = Locale.f("stTravel");
+            var foe = nearbyThreat(now);
+            if (foe != null) { // attacked on the way: fight back first
+                if (target != foe) { target = foe; targetKind = "mob"; lockedFoe = null; targetSince = now; nav.stop(); }
+                workMob(now, false);
+                return;
+            } else if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
+            nav.goalZ = Math.NaN;
             if (Nav.distance(hero, w.x, w.y) <= 2.2) { nav.stop(); job.retry(); return; }
             if (!nav.travel(hero, w.x, w.y, now)) nav.go(w.x, w.y, 1.4, now);
             return;
@@ -225,7 +289,7 @@ class Bot {
         var kind = job.kind;
         job = null;
         countsReady = false; // what left the bag is not "lost" progress
-        Log.w("job " + kind + ": " + r);
+        Log.t("svc", "job " + kind + ": " + r);
         if (r == "done") { if (Services.freeSlots(hero) <= 1) jobFailedAt = now; return; }
         jobFailedAt = now;
         message = r.substr(5);
@@ -274,7 +338,65 @@ class Bot {
 
     // ---- choosing and working a target ----
 
+    // ---- out of a pit ----
+
+    /** Three targets in a minute that no way leads to: the hero sits in a place it cannot walk out of (a pit, a gorge). */
+    function trapped():Bool return failTimes.length >= 3;
+
+    /** The nearest bumper (a trampoline of the world) on about the hero's level that is within reach, or null. */
+    function nearestBumper():Dynamic {
+        var hz = G.number(G.field(hero, "posz"));
+        var best:Dynamic = null;
+        var bestD = BUMPER_RANGE;
+        for (e in G.fastArray(G.field(G.field(hero, "layer"), "interactibles"))) {
+            if (e == null || G.field(e, "removed") == true || !G.isA(e, "ent.interactible.Bumper")) continue;
+            var id = G.s(G.field(G.field(e, "inf"), "id"));
+            if (id.indexOf("Flying") >= 0 || id.indexOf("Wall") >= 0) continue; // a bumper in the air, one that bounces off a wall
+            if (G.field(e, "enabled") == false || Math.abs(G.number(G.field(e, "posz")) - hz) > 4) continue;
+            var d = Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")));
+            if (d < bestD) { bestD = d; best = e; }
+        }
+        return best;
+    }
+
+    /** Walks onto a bumper (it throws the hero up, the glider and the way on do the rest); without one the home stone is used. */
+    function escapePit(now:Float):Void {
+        if (escapeBumper == null) {
+            var b = nearestBumper();
+            if (b == null) {
+                Log.w("trapped: no bumper near, the home stone");
+                failTimes = [];
+                if (useHomeStone()) { message = Locale.f("stHome"); nextThink = now + 12; blacklist = new Map(); }
+                return;
+            }
+            Log.w("trapped: walking onto the bumper " + G.s(G.field(G.field(b, "inf"), "id")));
+            escapeBumper = b;
+            escapeAt = now;
+            target = null;
+            targetKind = "";
+            releaseAttack();
+        }
+        var x = G.number(G.field(escapeBumper, "posx")), y = G.number(G.field(escapeBumper, "posy"));
+        nav.goalZ = G.number(G.field(escapeBumper, "posz"));
+        nav.noCliff = false;
+        message = Locale.f("stTravel");
+        if (now - escapeAt > 30 || G.field(escapeBumper, "removed") == true || Nav.distance(hero, x, y) < 0.8) {
+            Log.w("bumper step done (" + Math.round(now - escapeAt) + " s)");
+            escapeBumper = null;
+            failTimes = [];
+            blacklist = new Map();
+            nav.stop();
+            return;
+        }
+        // a monster in the way is fought first
+        var foe = nearbyThreat(now);
+        if (foe != null) { target = foe; targetKind = "mob"; lockedFoe = null; targetSince = now; nav.stop(); workMob(now, false); return; }
+        if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
+        nav.go(x, y, 0.4, now);
+    }
+
     function farm(now:Float, leveling:Bool, level:Int):Void {
+        if (escapeBumper != null || trapped()) { escapePit(now); return; }
         if (target != null && !targetValid(now, leveling)) {
             if (targetKind == "node") lootWait = now + 1.2; // the node broke: what it dropped is on its way
             target = null;
@@ -308,11 +430,17 @@ class Bot {
         if (targetKind == "node") workNode(now); else workMob(now, leveling);
     }
 
-    /** The nearest living enemy within reach of the hero (not a boss, a dummy or a harmless animal), or null. */
+    /**
+     * The enemy the hero must deal with first, or null: one that has taken the hero as its target (within AGGRO_RANGE), one at the
+     * hero's feet, or one standing at the node the hero wants to gather (it would not let the ore be taken). Not a harmless
+     * animal, a dummy or (unless it fights the hero already) a boss.
+     */
     function nearbyThreat(now:Float):Dynamic {
-        var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
+        var hz = G.number(G.field(hero, "posz"));
         var best:Dynamic = null;
-        var bestD = THREAT_RANGE;
+        var bestD = Math.POSITIVE_INFINITY;
+        var nodeX = 0.0, nodeY = 0.0, haveNode = false;
+        if (target != null && targetKind == "node") { nodeX = G.number(G.field(target, "posx")); nodeY = G.number(G.field(target, "posy")); haveNode = true; }
         for (e in G.fastArray(G.field(G.field(hero, "layer"), "units"))) {
             if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true || blacklisted(e, now)) continue;
             if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true || G.field(e, "summonOwner") != null) continue;
@@ -320,10 +448,16 @@ class Bot {
             var inf = G.field(e, "inf");
             var unitType = G.s(G.field(inf, "type"));
             if (unitType == "Environment" || unitType == "Critter") continue;
+            var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
+            if (Math.abs(G.number(G.field(e, "posz")) - hz) > 6) continue;
+            var d = Nav.distance(hero, ex, ey);
+            if (d > AGGRO_RANGE) continue;
+            var aggro = false;
+            try aggro = G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) {}
+            var near = d <= THREAT_RANGE || (haveNode && Math.sqrt((ex - nodeX) * (ex - nodeX) + (ey - nodeY) * (ey - nodeY)) <= NODE_GUARD && d <= 30);
+            if (!aggro && !near) continue;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
-            if (unit != null && Catalog.isBoss(unit)) continue;
-            if (Math.abs(G.number(G.field(e, "posz")) - hz) > 5) continue;
-            var d = Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")));
+            if (unit != null && Catalog.isBoss(unit) && !aggro) continue;
             if (d < bestD) { bestD = d; best = e; }
         }
         return best;
@@ -339,7 +473,33 @@ class Bot {
     function targetValid(now:Float, leveling:Bool):Bool {
         if (G.field(target, "removed") == true) return false;
         if (now - targetSince > 150) { blacklist.set(key(target), now + 120); return false; }
-        if (nav.gaveUp) { blacklist.set(key(target), now + 120); nav.gaveUp = false; return false; }
+        // no nearer after 35 s of trying (a way that does not lead there): another target
+        var dNow = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
+        if (dNow < progressBest - 3 || progressKey != key(target)) { progressBest = dNow; progressAt = now; progressKey = key(target); }
+        if (dNow > 12 && now - progressAt > 35) {
+            Log.w("no progress towards the target for 35 s (still " + Math.round(dNow) + " m): another one");
+            blacklist.set(key(target), now + 180);
+            return false;
+        }
+        if (nav.gaveUp) {
+            var rise = G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"));
+            Log.w("target " + targetKind + " given up by the way-finder (rise " + Math.round(rise) + " m, " + Math.round(dNow) + " m away): blacklisted for 2 min");
+            blacklist.set(key(target), now + 120);
+            nav.gaveUp = false;
+            if (rise > 4 && escapeBumper == null && now - bumperHopAt > 60) {
+                // the target lies on a height no way leads to: a trampoline of the world throws the hero up (the glider and the way on do the rest)
+                var b = nearestBumper();
+                if (b != null) {
+                    bumperHopAt = now;
+                    escapeBumper = b;
+                    escapeAt = now;
+                    Log.w("target is " + Math.round(rise) + " m higher and unreachable on foot: the trampoline " + G.s(G.field(G.field(b, "inf"), "id")) + " is used");
+                }
+            }
+            failTimes.push(now);
+            while (failTimes.length > 0 && now - failTimes[0] > 70) failTimes.shift();
+            return false;
+        }
         if (targetKind == "node") {
             if (G.field(target, "enabled") != true || G.call("ent.Element", "isHidden", target) == true) return false;
             return wantsNode(target);
@@ -364,7 +524,7 @@ class Bot {
         var kind = "";
         function cost(e:Dynamic):Float {
             var dx = G.number(G.field(e, "posx")) - hx, dy = G.number(G.field(e, "posy")) - hy, dz = G.number(G.field(e, "posz")) - hz;
-            return Math.sqrt(dx * dx + dy * dy) + Math.abs(dz) * 0.5;
+            return Math.sqrt(dx * dx + dy * dy) + Math.abs(dz) * 4.0; // another level (a plateau, a gorge) means a long way round
         }
         var wantGather = false;
         for (id in plan.active(false)) { wantGather = true; break; }
@@ -374,6 +534,7 @@ class Bot {
                 if (G.field(e, "enabled") != true || G.call("ent.Element", "isHidden", e) == true || blacklisted(e, now)) continue;
                 if (!wantsNode(e)) continue;
                 if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
+                if (Hazard.trapAt(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")))) continue; // in a trap
                 try if (!Services.isOk(G.call("ent.interactible.Gatherable", "getNoActionReason", e, [player]))) continue catch (_:Dynamic) continue;
                 var c = cost(e);
                 if (c < bestScore) { bestScore = c; best = e; kind = "node"; }
@@ -386,6 +547,7 @@ class Bot {
         }
         var wantHunt = [for (id in plan.active(true)) id];
         if (wantHunt.length == 0 && !leveling) return;
+        var seen:Map<Int, Int> = new Map();
         for (e in G.fastArray(G.field(layer, "units"))) {
             if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true || blacklisted(e, now)) continue;
             if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true) continue;
@@ -404,10 +566,14 @@ class Bot {
                 var items = Catalog.unitItems(unit);
                 for (id in wantHunt) if (items.exists(id)) { drops = true; break; }
             }
+            seen.set(foeLevel, (seen.exists(foeLevel) ? seen.get(foeLevel) : 0) + 1);
+            if (Hazard.trapAt(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")))) continue; // stands in a trap
             if (leveling) {
-                var diff = Math.abs(foeLevel - level);
-                if (diff > (drops ? 6 : 3)) continue; // only monsters of about the hero's own level are worth the time
-                score += diff * (drops ? 100 : 400);
+                // the hero hunts monsters of its OWN level (a little above is fine, below gives next to nothing): lower ones are
+                // not touched, the bot looks for its own level, as far away as that is (the obelisk or the road takes it there)
+                var diff = foeLevel - level;
+                if (drops ? Math.abs(diff) > 6 : (diff < 0 || diff > 2)) continue;
+                score += (diff < 0 ? -diff * 100 : diff * 250);
             } else {
                 if (!drops) continue;
                 score += Math.max(0, foeLevel - level) * 250;
@@ -416,11 +582,19 @@ class Bot {
         }
         if (best != null) {
             target = best; targetKind = kind; lockedFoe = null;
-            Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.call("ent.GameObject", "get_level", best) + " at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m");
+            Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.call("ent.GameObject", "get_level", best) + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
+                + Math.round(G.number(G.field(best, "posz")) - hz) + ", score " + Math.round(bestScore) + (leveling ? ", leveling" : ", hunting drops"));
+        } else if (haxe.Timer.stamp() - lastSeenLog > 10) {
+            lastSeenLog = haxe.Timer.stamp();
+            var levels = [for (l => n in seen) l + "x" + n];
+            levels.sort(Reflect.compare);
+            Log.w("no mob to fight for hero L" + level + (leveling ? " (own level to +2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
         }
     }
 
-    function moveTo(x:Float, y:Float, arrive:Float, now:Float):Void {
+    function moveTo(x:Float, y:Float, arrive:Float, now:Float, ?z:Float):Void {
+        nav.goalZ = z == null ? Math.NaN : z;
+        nav.noCliff = targetKind == "mob"; // in a fight no cliff is gone down (and no water entered: that is never)
         if (!nav.travel(hero, x, y, now)) nav.go(x, y, arrive, now);
     }
 
@@ -433,7 +607,7 @@ class Bot {
         try range = G.number(G.call("ent.Interactible", "getInteractRange", target), 2.0) catch (_:Dynamic) {}
         if (!inReach) {
             if (now - lastNote > 2) { lastNote = now; Log.w("node not in range: d=" + Math.round(Nav.distance(hero, x, y) * 10) / 10 + " range=" + range + " z " + Math.round(G.number(G.field(hero, "posz"))) + "/" + Math.round(G.number(G.field(target, "posz")))); }
-            moveTo(x, y, Math.max(0.6, range * 0.5), now);
+            moveTo(x, y, Math.max(0.6, range * 0.5), now, G.number(G.field(target, "posz")));
             return;
         }
         nav.stop();
@@ -463,7 +637,7 @@ class Bot {
             lockedFoe = target;
             try G.call("client.PlayerController", "lockTarget", G.current("client.PlayerController", "inst"), [target]) catch (_:Dynamic) {}
         }
-        if (d > range) { releaseAttack(); moveTo(x, y, range - 0.6, now); return; }
+        if (d > range) { releaseAttack(); moveTo(x, y, range - 0.6, now, G.number(G.field(target, "posz"))); return; }
         nav.stop();
         attack(now, x, y);
     }
@@ -475,41 +649,122 @@ class Bot {
      * the combo goes on hit after hit (a held key asks for the next hit every frame; a tap per hit would lose the ones in between).
      */
     function attack(now:Float, tx:Float, ty:Float):Void {
-        if (G.call("ent.GameObject", "isUnderAnyCC", hero) == true) return;
-        holdAttack(now);
-        if (now - lastAttack < 0.1) return;
-        var active = G.call("ent.GameObject", "getActiveSkill", hero);
-        if (active != null && !isBasic(active)) return; // a skill is being cast
-        lastAttack = now;
-        var ctl = G.current("client.PlayerController", "inst");
-        for (skill in G.array(G.field(hero, "skills"))) {
-            if (skill == null || G.field(skill, "removed") == true) continue;
-            if (!usable(skill)) continue;
-            var ok = false;
-            try ok = Type.enumConstructor(G.call("st.skill.Skill", "checkUse", skill, [null])) == "Ok" catch (_:Dynamic) {}
-            if (!ok) continue;
-            var kind = G.s(G.field(skill, "kind"));
-            try {
-                releaseAttack(); // the held key would ask for a basic hit over the skill
-                attackResumeAt = now + 0.35;
-                if (isAim(skill)) {
-                    var point = G.enumValue("st.skill.SkillTarget", "Point", [{x: tx, y: ty, z: G.number(G.field(target, "posz"))}]);
-                    G.call("client.UnitController", "tryUseSkill", ctl, [skill, point]);
-                } else G.call("client.UnitController", "requestSkillKind", ctl, ["Skill1", kind]);
-                return;
-            } catch (_:Dynamic) {}
+        if (G.call("ent.GameObject", "isUnderAnyCC", hero) == true) {
+            if (now - lastFightLog > 2) { lastFightLog = now; Log.t("fight", "hero is under crowd control: no attack"); }
+            return;
         }
+        var active = G.call("ent.GameObject", "getActiveSkill", hero);
+        var combo = G.integer(G.field(hero, "attackComboCount"));
+        if (active != null && isBasic(active)) lastBasicSeen = now;
+        if (combo == 0) comboSince = now;
+        if (now - skillDumpAt > 20) { skillDumpAt = now; dumpSkills(); }
+        // Did the last cast take? (a ready skill that never starts would otherwise be tried every tenth of a second, and the
+        // Attack key, let go before each try, would never be held: the series would never run)
+        if (castKind != "") {
+            if (active != null && !isBasic(active)) castSeen = true;
+            if (now - castAt > 0.7) {
+                var fails = castFails.exists(castKind) ? castFails.get(castKind) : 0;
+                if (!castSeen && castSkill != null && skillOk(castSkill)) {
+                    fails++;
+                    castFails.set(castKind, fails);
+                    Log.t("fight", "cast of " + castKind + " did not start (" + fails + " in a row)" + (fails >= 2 ? ": left alone for 6 s" : ""));
+                    if (fails >= 2) { castBan.set(castKind, now + 6); castFails.set(castKind, 0); }
+                } else {
+                    castFails.set(castKind, 0);
+                    Log.t("fight", "cast of " + castKind + " " + (castSeen ? "started" : "went (the game took it, cooling down)"));
+                }
+                castKind = "";
+                castSkill = null;
+            }
+        }
+        if (active != null && !isBasic(active)) return; // a skill is being cast
+        var ctl = G.current("client.PlayerController", "inst");
+        var ready:Dynamic = null;
+        if (now - lastAttack >= 0.1) {
+            lastAttack = now;
+            for (skill in G.array(G.field(hero, "skills"))) {
+                if (skill == null || G.field(skill, "removed") == true || !usable(skill)) continue;
+                var kindName = G.s(G.field(skill, "kind"));
+                if (kindName == castKind) continue;
+                var banned = castBan.get(kindName);
+                if (banned != null && now < banned) continue;
+                if (skillOk(skill)) { ready = skill; break; }
+            }
+        }
+        if (now - lastFightLog > 1.0) {
+            lastFightLog = now;
+            Log.t("fight", "combo " + combo + " active " + (active == null ? "-" : G.s(G.field(active, "kind"))) + " held " + attackDown + " ready " + (ready == null ? "-" : G.s(G.field(ready, "kind")))
+                + " dodge " + AutoDodge.dodging() + " resume in " + Math.max(0, Math.round((attackResumeAt - now) * 100) / 100) + " target d=" + Math.round(Nav.distance(hero, tx, ty) * 10) / 10);
+        }
+        // The weapon's combo series is not cut: a ready skill waits until the running series has been struck (the key is let go
+        // after the second hit so the series ends by itself, then the skill goes off), or for at most COMBO_WAIT seconds.
+        if (ready != null && combo > 0 && now - comboSince < COMBO_WAIT) {
+            if (combo >= 2) releaseAttack(); else holdAttack(now);
+            if (active != null) return;
+            if (combo >= 2 && !attackDown) { /* the series is over: the skill goes now */ } else return;
+        } else holdAttack(now);
+        if (ready == null || active != null) return;
+        var skill = ready;
+        var kind = G.s(G.field(skill, "kind"));
+        castKind = kind;
+        castSkill = skill;
+        castAt = now;
+        castSeen = false;
+        Log.t("fight", "CAST " + kind + " (combo " + combo + ", " + (isAim(skill) ? "aimed at the foe" : "own") + ")");
+        try {
+            releaseAttack(); // the held key would ask for a basic hit over the skill
+            attackResumeAt = now + 0.35;
+            ownCast = true; // the bot's own skill passes the "hold while dodging" hooks: a monster that keeps the hero dodging is still fought
+            if (isAim(skill)) {
+                var point = G.enumValue("st.skill.SkillTarget", "Point", [{x: tx, y: ty, z: G.number(G.field(target, "posz"))}]);
+                G.call("client.UnitController", "tryUseSkill", ctl, [skill, point]);
+            } else G.call("client.UnitController", "requestSkillKind", ctl, ["Skill1", kind]);
+        } catch (error:Dynamic) Log.err("cast " + kind, error);
+        ownCast = false;
+    }
+
+    var castKind = "";
+    var castSkill:Dynamic = null;
+    var castAt = 0.0;
+    var castSeen = false;
+    var castFails:Map<String, Int> = new Map();
+    var castBan:Map<String, Float> = new Map();
+    var skillDumpAt = -100.0;
+
+    function skillOk(skill:Dynamic):Bool {
+        try return Type.enumConstructor(G.call("st.skill.Skill", "checkUse", skill, [null])) == "Ok" catch (_:Dynamic) return false;
+    }
+
+    /** The log gets every skill the hero has, what the bot makes of it and whether the game would let it be used now. */
+    function dumpSkills():Void {
+        var rows = [];
+        try {
+            for (skill in G.array(G.field(hero, "skills"))) {
+                if (skill == null || G.field(skill, "removed") == true) continue;
+                var inf = G.field(skill, "inf");
+                var use = "?";
+                try { var r = G.call("st.skill.Skill", "checkUse", skill, [null]); use = Type.enumConstructor(r) + (Type.enumParameters(r).length > 0 ? Std.string(Type.enumParameters(r)) : ""); } catch (_:Dynamic) {}
+                rows.push(G.s(G.field(skill, "kind")) + "{type " + G.integer(G.field(inf, "type"), -1) + " nature " + G.integer(G.field(inf, "nature"), -1) + (usable(skill) ? " BOT-USES" : " skipped") + " " + use + "}");
+            }
+        } catch (error:Dynamic) Log.err("dumpSkills", error);
+        Log.t("fight", "skills of the hero: " + rows.join(" "));
     }
 
     function isBasic(skill:Dynamic):Bool {
         try return G.call("st.skill.BaseSkill", "isBasicAttack", skill) == true catch (_:Dynamic) return false;
     }
 
-    /** Not a passive, a dash, a block, a mount or a basic attack (that one is the Attack key). */
+    /**
+     * Only the skills of the weapon-skill slots (data type 7: the game's input "WeaponSkill1".."WeaponSkill4") and the signature
+     * skill (17) are cast: what a player has on the bar. Combo steps (type 4), the basic attack (the Attack key), passives, learnt
+     * but unequipped skills of other classes, the dash, the block and the mount are left alone.
+     */
     function usable(skill:Dynamic):Bool {
         try {
-            var nature = G.integer(G.field(G.field(skill, "inf"), "nature"), -1);
-            if (nature == 5) return false;
+            var inf = G.field(skill, "inf");
+            var type = G.integer(G.field(inf, "type"), -1);
+            if (type != 7 && type != 17 && type != 5) return false; // weapon-slot skills, the signature skill, the secondary skill
+            if (G.integer(G.field(inf, "nature"), -1) == 5) return false;
             if (G.isA(skill, "st.skill.Mount") || G.isA(skill, "st.skill.Block")) return false;
             for (check in ["isDash", "isBlock", "isBasicAttack"]) if (G.call("st.skill.BaseSkill", check, skill) == true) return false;
             return true;
@@ -570,6 +825,8 @@ class Bot {
         // a drop that cannot be reached or taken (12 s of trying) is left alone for a minute
         if (nav.gaveUp || now - seekSince > 12) { nav.gaveUp = false; Loot.skip(best, now, 60); seekKey = ""; return false; }
         var x = G.number(G.field(best, "posx")), y = G.number(G.field(best, "posy"));
+        nav.goalZ = G.number(G.field(best, "posz"));
+        nav.noCliff = true;
         if (Nav.distance(hero, x, y) > 1.0) nav.go(x, y, 1.0, now);
         message = Locale.f("stLoot");
         return true;
@@ -604,9 +861,32 @@ class Bot {
                 var rows = [];
                 for (i in 0...Std.int(Reflect.field(cmd, "n"))) {
                     var x = hx + dx * i, y = hy + dy * i;
-                    rows.push(i + ": near " + Math.round(AutoDodge.worldZ(x, y, hz, 2.2) * 10) / 10 + " deep " + Math.round(AutoDodge.worldZ(x, y, hz - 30, 30) * 10) / 10);
+                    rows.push(i + ": near " + Math.round(AutoDodge.worldZ(x, y, hz, 2.2) * 10) / 10 + " deep " + Math.round(AutoDodge.worldZ(x, y, hz - 30, 30) * 10) / 10 + " tall " + Math.round(AutoDodge.worldZ(x, y, hz, 9.0) * 10) / 10);
                 }
                 return {hero: [hx, hy, hz], rows: rows};
+            case "map":
+                // developer: a text map of the planner's view around (x, y) (the hero when missing), r cells either side
+                var mx:Float = Reflect.hasField(cmd, "x") ? Reflect.field(cmd, "x") : G.number(G.field(hero, "posx"));
+                var my:Float = Reflect.hasField(cmd, "y") ? Reflect.field(cmd, "y") : G.number(G.field(hero, "posy"));
+                var rr = Reflect.hasField(cmd, "r") ? Std.int(Reflect.field(cmd, "r")) : 25;
+                var hzz = Reflect.hasField(cmd, "z") ? G.number(Reflect.field(cmd, "z")) : G.number(G.field(hero, "posz"));
+                return {rows: NavGrid.debugMap(mx, my, rr, hzz, nav.debugRoute(), G.number(G.field(hero, "posx")), G.number(G.field(hero, "posy")), nav.goalX(), nav.goalY())};
+            case "obelisks":
+                return [for (o in Nav.obelisks(hero)) o.id + " " + Math.round(o.x) + "," + Math.round(o.y)];
+            case "zones":
+                // developer: trigger elements (traps, bumpers, liquids) within `r` metres of the hero
+                var zr = Reflect.hasField(cmd, "r") ? G.number(Reflect.field(cmd, "r")) : 80.0;
+                var zones = [];
+                for (e in G.fastArray(G.field(G.field(hero, "layer"), "interactibles"))) {
+                    if (e == null || G.field(e, "removed") == true || !G.isA(e, "ent.interactible.TriggerElement")) continue;
+                    var zx = G.number(G.field(e, "posx")), zy = G.number(G.field(e, "posy"));
+                    if (Nav.distance(hero, zx, zy) > zr) continue;
+                    var ti = G.field(e, "triggerInf");
+                    if (Reflect.hasField(cmd, "full")) { zones.push(haxe.Json.stringify(Probe.toJson(G.field(e, "inf"), 4))); continue; }
+                    zones.push(G.typeName(e) + " " + G.s(G.field(ti, "id")) + " kind=" + G.s(G.field(e, "triggerKind")) + " flags=" + G.field(ti, "flags") + " effects=" + G.len(G.field(ti, "effects")) + " at " + Math.round(zx) + "," + Math.round(zy) + "," + Math.round(G.number(G.field(e, "posz")))
+                        + " r=" + G.field(e, "hitRadius") + " sx=" + G.field(e, "scaleX") + " push=" + haxe.Json.stringify(Probe.toJson(G.field(G.field(ti, "props"), "pushForce"), 2)));
+                }
+                return zones;
             case "goto":
                 // developer: walks (by obelisk when far) to x,y without a plan
                 running = true;

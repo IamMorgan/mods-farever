@@ -194,7 +194,7 @@ class AutoDodge {
     static inline var AVOID_TIME = 1.5;        // how long a blocked direction is avoided
     static inline var PARTIAL_RUN = 6.0;       // no fully safe spot in reach: get at least this far away
     static inline var CORNER_LEG = 3.0;        // first leg out of a corner (and twice that)
-    static inline var MAX_DROP = 1.0;          // a drop deeper than this is a cliff: never run off it
+    static inline var MAX_DROP = 1.7;          // a drop deeper than this is a cliff: never run off it
     static inline var GROUND_PROBE = 8.0;      // how far down the ground is looked for
     static final MOVE_INPUTS = ["MoveForward", "MoveBack", "MoveLeft", "MoveRight"];
 
@@ -1478,10 +1478,17 @@ class AutoDodge {
         var here = surfaceZ(hx, hy, hz);
         var trust = Math.isFinite(here) && Math.abs(here - hz) <= HEIGHT_TRUST;
         var roof = tallAt(hx, hy, hz); // under a roof or a tree: tall things overhead say nothing
+        Hazard.budget = 150;
         openMap.build(cx, cy,
             (ix, iy) -> trust ? knownZ(surfaceCache, surfaceFrom, ix, iy, hz) : Math.NaN,
-            (ix, iy) -> isRemembered(ix * OpenMap.CELL, iy * OpenMap.CELL) || (trust && !roof && knownTall(ix, iy, hz)),
+            (ix, iy) -> isRemembered(ix * OpenMap.CELL, iy * OpenMap.CELL) || (trust && !roof && knownTall(ix, iy, hz)) || (trust && wetKnown(ix, iy, hz)) || Hazard.trapAt(ix * OpenMap.CELL, iy * OpenMap.CELL, hz),
             stepHeight());
+    }
+
+    /** Water (or a harmful liquid) on a cell whose height is known: the dodge never runs into it. */
+    static function wetKnown(ix:Int, iy:Int, hz:Float):Bool {
+        var z = knownZ(surfaceCache, surfaceFrom, ix, iy, hz);
+        return Math.isFinite(z) && Hazard.wetCell(ix * OpenMap.CELL, iy * OpenMap.CELL, z, 0.5, true);
     }
 
     static var scanX = 0x7fffffff;
@@ -1548,6 +1555,8 @@ class AutoDodge {
             if (!heights) continue;
             var z = surfaceZ(p.x, p.y, hz);
             if (!Math.isFinite(z)) { unknownSeen = true; return {ok: false, jumpAt: -1}; } // not read yet: next frame
+            if ((p.x - hx) * (p.x - hx) + (p.y - hy) * (p.y - hy) > 2.25 && Hazard.wetCell(p.x, p.y, z, 0.6)) return {ok: false, jumpAt: -1}; // water: death
+            if (Hazard.trapAt(p.x, p.y, z)) return {ok: false, jumpAt: -1};  // a trap
             if (previous - z > MAX_DROP) return {ok: false, jumpAt: -1};    // cliff
             if (z - previous > stepUp) return {ok: false, jumpAt: -1};      // wall, fence, table, rock
             for (side in [1.0, -1.0]) {

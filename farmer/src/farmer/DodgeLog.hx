@@ -1,12 +1,8 @@
 package farmer;
 
-/**
- * Auto-dodge diagnostics, switched off for release: nothing is written anywhere. Kept as empty
- * calls so the diagnostics can be brought back by giving these bodies again (they wrote
- * hlx/teleport-debug.txt: what auto-dodge saw and decided, and every hit the hero took).
- */
+/** Auto-dodge diagnostics: what the dodge saw and decided and every hit the hero took go to the mod's log (tag "dodge"). */
 class DodgeLog {
-    public static inline function write(now:Float, line:String):Void {}
+    public static inline function write(now:Float, line:String):Void Log.t("dodge", line);
     public static inline function tick(now:Float):Void {}
-    public static inline function flush(now:Float):Void {}
+    public static inline function flush(now:Float):Void Log.flush();
 }

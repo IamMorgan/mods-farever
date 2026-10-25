@@ -97,10 +97,10 @@ class Services {
         var fromIndex = G.integer(G.call("st.Inventory", "getStackIndex", from, [stack]), -1);
         var toIndex = G.integer(G.call("st.Inventory", "getNextFreeIndex", to, [item]), -1);
         if (fromIndex < 0 || toIndex < 0 || toIndex >= G.integer(G.call("st.Inventory", "getSize", to))) return false;
-        var reason = G.call("st.Inventory", "requestTransfer", from, [fromIndex, to, toIndex, null, null, (ok:Bool) -> Log.w("transfer result " + ok)]);
+        var reason = G.call("st.Inventory", "requestTransfer", from, [fromIndex, to, toIndex, null, null, (ok:Bool) -> Log.t("svc", "transfer result " + ok)]);
         var check:Dynamic = null;
         try check = G.call("st.Inventory", "getNoTransferReason", from, [item, to, null]) catch (_:Dynamic) {}
-        Log.w("transfer " + itemId(item) + " " + fromIndex + " -> " + toIndex + ": request " + (reason == null ? "null" : Std.string(Type.enumConstructor(reason)) + Std.string(Type.enumParameters(reason)))
+        Log.t("svc", "transfer " + itemId(item) + " " + fromIndex + " -> " + toIndex + ": request " + (reason == null ? "null" : Std.string(Type.enumConstructor(reason)) + Std.string(Type.enumParameters(reason)))
             + ", check " + (check == null ? "null" : Std.string(Type.enumConstructor(check)) + Std.string(Type.enumParameters(check))));
         return isOk(reason);
     }

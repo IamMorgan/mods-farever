@@ -66,7 +66,7 @@ class FarmWindow {
         var changed = false;
         for (c in cells) {
             var picked = plan.isPicked(c.hunting, c.res.id);
-            if (picked != c.shown) { c.shown = picked; N.show(c.frame, picked); N.show(c.input, picked); changed = true; }
+            if (picked != c.shown) { c.shown = picked; N.show(c.frame, picked); N.show(c.box, picked); changed = true; }
             if (!picked) continue;
             var text = G.s(G.field(c.input, "text"));
             if (G.field(c.input, "hasFocus") == true || focusedOn(c.input)) {
@@ -100,9 +100,9 @@ class FarmWindow {
         this.running = running;
         var gui = G.field(Probe.app, "gui");
         if (gui == null) return;
-        if (!Catalog.build()) { Log.w("[Farmer] the item data is not loaded yet"); return; }
+        if (!Catalog.build()) { Log.t("err", "the item data is not loaded yet"); return; }
         try build(gui) catch (error:Dynamic) {
-            Log.w("[Farmer] window failed: " + Std.string(error));
+            Log.t("err", "window failed: " + Std.string(error));
             hide();
         }
     }
@@ -249,7 +249,7 @@ class FarmWindow {
         var gridDom = G.field(grid, "dom");
         var index = 0;
         for (res in list) {
-            try buildCell(gridDom, grid, hunting, res, index++) catch (error:Dynamic) Log.w("[Farmer] cell " + res.id + ": " + Std.string(error));
+            try buildCell(gridDom, grid, hunting, res, index++) catch (error:Dynamic) Log.t("err", "cell " + res.id + ": " + Std.string(error));
         }
     }
 
@@ -274,15 +274,15 @@ class FarmWindow {
         G.call("h2d.Graphics", "endFill", frame);
         N.show(frame, plan.isPicked(hunting, res.id));
         c.frame = frame;
-        // amount still to get
-        var input = G.create("h2d.TextInput", [font, cell]);
-        N.absolute(cell, input);
-        G.call("h2d.Text", "set_textColor", input, [0xFFFFFF]);
+        // amount still to get: the game's own input box (dark field, its own font, focus by a click), under the icon
+        var box = G.field(N.node("input-box", G.field(cell, "dom"), [], "farmerAmount" + (hunting ? "H" : "G") + index), "obj");
+        N.absolute(cell, box);
+        N.size(box, cellW - 2, 28);
+        N.position(box, 1, Math.min(cellW, 56.0) + 4);
+        var input = G.field(box, "input");
         G.call("h2d.TextInput", "set_text", input, [Std.string(plan.count(hunting, res.id))]);
-        G.set(input, "inputWidth", cellW - 6);
-        G.set(input, "canEdit", true);
-        N.position(input, 3, cellH - 24);
-        N.show(input, plan.isPicked(hunting, res.id));
+        N.show(box, plan.isPicked(hunting, res.id));
+        c.box = box;
         c.input = input;
         c.shown = plan.isPicked(hunting, res.id);
         c.lastText = Std.string(plan.count(hunting, res.id));
@@ -320,6 +320,7 @@ private class Cell {
     public var button:Dynamic;
     public var frame:Dynamic;
     public var input:Dynamic;
+    public var box:Dynamic;
     public var shown = false;
     public var lastText = "";
 

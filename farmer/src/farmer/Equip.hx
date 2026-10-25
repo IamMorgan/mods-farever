@@ -88,10 +88,10 @@ class Equip {
             var id = Std.string(G.field(best, "__uid"));
             failed.set(id, now + RETRY_AFTER); // until it is seen worn (then it is no longer in the bag)
             var reason = G.call("st.Loadout", "equipOnSlot", loadout, [best, bestSlot, null, null, null, null]);
-            Log.w("equip " + Services.itemId(best) + " -> " + bestSlot + ": " + (reason == null ? "null" : Type.enumConstructor(reason)));
+            Log.t("gear", "equip " + Services.itemId(best) + " -> " + bestSlot + ": " + (reason == null ? "null" : Type.enumConstructor(reason)));
             nextCheck = now + 1.0;
         } catch (e:Dynamic) {
-            Log.w("[Farmer] equip: " + Std.string(e));
+            Log.t("err", "equip: " + Std.string(e));
         }
     }
 }
