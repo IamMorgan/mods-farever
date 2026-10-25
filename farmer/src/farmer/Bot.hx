@@ -714,9 +714,13 @@ class Bot {
                 if (Hazard.trapAt(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")))) continue; // in a trap
                 try if (!Services.isOk(G.call("ent.interactible.Gatherable", "getNoActionReason", e, [player]))) continue catch (_:Dynamic) continue;
                 var c = cost(e);
+                // a trip to a far spot is under way: a node that has just come into view takes the hero off it only when it is clearly nearer than
+                // what is left of the trip (else the hero turns round for every node that loads on the way, to run to the next one)
+                if (nodeKey >= 0 && c > Nav.distance(hero, nodeX, nodeY) * 0.7) continue;
                 if (c < bestScore) { bestScore = c; best = e; kind = "node"; }
             }
             if (best != null) {
+                nodeKey = -1; // (the trip is over: the node in view is gathered)
                 targetDescent = descents && nav.canReach(G.number(G.field(best, "posx")), G.number(G.field(best, "posy")), G.number(G.field(best, "posz")), false) != 1;
                 lastCut = cut;
                 target = best; targetKind = kind;
@@ -957,7 +961,7 @@ class Bot {
             var stuckWay = !arrived && !nav.walkingToObelisk() && noProgress(nodeX, nodeY, now);
             if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - nodeSince > 300 || stuckWay) {
                 Log.t("hunt", "node spot " + Math.round(nodeX) + "," + Math.round(nodeY) + " " + (arrived ? "reached, no node to gather in sight" : nav.gaveUp ? "cannot be reached" : stuckWay ? "no nearer in 50 s (the way runs in circles)" : "took too long") + ": the outcrop is left alone for 6 min");
-                for (s in Nodes.near(nodeX, nodeY, 70)) nodeVisited.set(s.key, now + 360);
+                for (s in Nodes.near(nodeX, nodeY, 70, nodeZ)) nodeVisited.set(s.key, now + 360); // (the outcrop on the hero's own tier: the nodes above and below are another way)
                 nodeKey = -1;
                 nav.gaveUp = false;
                 nav.stop();
@@ -971,7 +975,7 @@ class Bot {
         }
         if (nodeKey < 0) {
             if (Nodes.scanning()) { nav.stop(); message = Locale.f("stTravel"); Nodes.scanStep(); return true; } // (the map's chunk files are read first: every node of the world is known before the first step)
-            var g = Nodes.find(hero, plan, nodeVisited, now, Nav.obelisks(hero), (x, y, z) -> footOrFlight(x, y, z));
+            var g = Nodes.find(hero, plan, nodeVisited, now, Nav.obelisks(hero), (x, y, z) -> footOrFlight(x, y, z), (x, y, z) -> nav.canReach(x, y, z) == 1 ? 0.0 : 60.0);
             if (g == null) {
                 if (nodeVisited.keys().hasNext()) {
                     Log.t("hunt", "every known node of the wanted resources was visited lately: the memory is wiped");

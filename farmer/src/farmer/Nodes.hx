@@ -232,7 +232,7 @@ class Nodes {
     }
 
     /** The nodes of the wanted resources, nearest first by the cost of getting there (a walk, or by obelisk), not in `visited` (key -> time until which it is left alone). */
-    public static function find(hero:Dynamic, plan:FarmPlan, visited:Map<Int, Float>, now:Float, obelisks:Array<Nav.ObeliskInfo>, ?ok:(Float, Float, Float) -> Bool):Null<{spot:NodeSpot, away:Float, count:Int}> {
+    public static function find(hero:Dynamic, plan:FarmPlan, visited:Map<Int, Float>, now:Float, obelisks:Array<Nav.ObeliskInfo>, ?ok:(Float, Float, Float) -> Bool, ?extra:(Float, Float, Float) -> Float):Null<{spot:NodeSpot, away:Float, count:Int}> {
         build();
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         var toHero = Math.POSITIVE_INFINITY;
@@ -257,6 +257,7 @@ class Nodes {
                 for (o in obelisks) fromSpot = Math.min(fromSpot, Math.sqrt((s.x - o.x) * (s.x - o.x) + (s.y - o.y) * (s.y - o.y)));
                 cost = Math.min(direct, toHero + fromSpot + 150);
             }
+            if (extra != null) cost += extra(s.x, s.y, s.z); // (what the caller knows of the way there: the reach map's yes costs nothing, an unknown way costs a detour)
             if (Math.isFinite(s.z) && Math.abs(s.z - hz) > 8) cost += Math.abs(s.z - hz) * 5; // another tier: the way there is a guess, the nodes of the hero's own tier come first
             if (cost < bestCost) { bestCost = cost; best = s; bestDirect = direct; }
         }
@@ -290,7 +291,7 @@ class Nodes {
     }
 
     /** The spots within `r` metres of (x, y) (the nodes of one outcrop are visited together). */
-    public static function near(x:Float, y:Float, r:Float):Array<NodeSpot> {
-        return [for (s in all()) if ((s.x - x) * (s.x - x) + (s.y - y) * (s.y - y) <= r * r) s];
+    public static function near(x:Float, y:Float, r:Float, ?z:Float):Array<NodeSpot> {
+        return [for (s in all()) if ((s.x - x) * (s.x - x) + (s.y - y) * (s.y - y) <= r * r && (z == null || !Math.isFinite(z) || !Math.isFinite(s.z) || Math.abs(s.z - z) < 12)) s];
     }
 }
