@@ -29,6 +29,8 @@ class FarmPlan {
     public var recycle = false;
     public var recycleQualities:Array<Bool> = [false, false, false, false];
     public var clearBag = false;
+    /** While leveling, out of combat, the better gear of the bag is put on (Equip). */
+    public var replaceGear = false;
     /** 0: no leveling. */
     public var targetLevel = 0;
 
@@ -104,7 +106,7 @@ class FarmPlan {
         var g:Dynamic = {}, h:Dynamic = {};
         for (k => v in gather) Reflect.setField(g, k, v);
         for (k => v in hunt) Reflect.setField(h, k, v);
-        return haxe.Json.stringify({gather: g, hunt: h, recycle: recycle, qualities: recycleQualities, clearBag: clearBag, targetLevel: targetLevel}, null, "  ");
+        return haxe.Json.stringify({gather: g, hunt: h, recycle: recycle, qualities: recycleQualities, clearBag: clearBag, replaceGear: replaceGear, targetLevel: targetLevel}, null, "  ");
     }
 
     public static function fromJson(text:String):FarmPlan {
@@ -118,6 +120,7 @@ class FarmPlan {
             var q:Array<Dynamic> = Reflect.field(d, "qualities");
             if (q != null) for (i in 0...Std.int(Math.min(q.length, 4))) plan.recycleQualities[i] = q[i] == true;
             plan.clearBag = Reflect.field(d, "clearBag") == true;
+            plan.replaceGear = Reflect.field(d, "replaceGear") == true;
             var level = Reflect.field(d, "targetLevel");
             plan.targetLevel = level == null ? 0 : Std.int(level);
         } catch (_:Dynamic) {}

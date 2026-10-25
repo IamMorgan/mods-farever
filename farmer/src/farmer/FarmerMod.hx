@@ -84,7 +84,7 @@ class FarmerMod {
         }
         bot.update(app, hero, plan, now, dt);
         if (config.pickupLoot || bot.running) Loot.update(hero, now);
-        if (config.replaceGear) Equip.update(hero, now);
+        if (config.replaceGear || (bot.running && plan.replaceGear && bot.calm(now))) Equip.update(hero, now);
         var scale = Math.max(0.5, Math.min(2.0, config.buttonScalePercent / 100));
         button.update(config.showButton, scale, Locale.f("button"), bot.running ? 1 : (bot.finished ? 2 : 0), config.unpinned, now);
         if (button.dragEnded) {

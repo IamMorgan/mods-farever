@@ -54,16 +54,34 @@ class Hunt {
         }
     }
 
+    /** The grid cells within `r` cells of `key` (itself included). */
+    public static function around(key:Int, r:Int):Array<Int> {
+        var out = [];
+        var ix = key % NX, iy = Std.int(key / NX);
+        for (dy in -r...r + 1) for (dx in -r...r + 1) {
+            var jx = ix + dx, jy = iy + dy;
+            if (jx >= 0 && jy >= 0 && jx < NX && jy < NY) out.push(jy * NX + jx);
+        }
+        return out;
+    }
+
+    static var spread = 2;
+    static var allow:Map<Int, Bool> = null;
+
     static function wanted(index:Int, level:Int):Bool {
         var l = levels[index];
-        return l >= level && l <= level + 2;
+        if (allow != null) return allow.exists(l);
+        return l >= level && l <= level + spread;
     }
 
     /**
      * The best hunting ground for a hero of `level`, not in `visited` (cell -> time until which it is left alone): a spot in the
      * middle of a zone of the right level, near the hero or near an opened obelisk (the flight costs little).
      */
-    public static function find(hero:Dynamic, level:Int, visited:Map<Int, Float>, now:Float, obelisks:Array<Nav.ObeliskInfo>):Null<{key:Int, x:Float, y:Float, zone:String, level:Int, away:Float}> {
+    public static function find(hero:Dynamic, level:Int, visited:Map<Int, Float>, now:Float, obelisks:Array<Nav.ObeliskInfo>, ?wide:Int, ?zoneLevels:Array<Int>):Null<{key:Int, x:Float, y:Float, zone:String, level:Int, away:Float}> {
+        spread = wide == null ? 2 : wide;
+        allow = null;
+        if (zoneLevels != null) { allow = new Map(); for (l in zoneLevels) for (d in 0...spread + 1) allow.set(l + d, true); }
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
         var best = null;
         var bestCost = Math.POSITIVE_INFINITY;
@@ -84,7 +102,7 @@ class Hunt {
             var direct = Math.sqrt((x - hx) * (x - hx) + (y - hy) * (y - hy));
             var viaObelisk = Math.POSITIVE_INFINITY;
             for (o in obelisks) viaObelisk = Math.min(viaObelisk, Math.sqrt((x - o.x) * (x - o.x) + (y - o.y) * (y - o.y)) + 120);
-            var cost = Math.min(direct, viaObelisk) + (levels[index] - level) * 40;
+            var cost = Math.min(direct, viaObelisk) + (allow != null ? 0 : (levels[index] - level) * 40);
             if (cost < bestCost) { bestCost = cost; best = {key: index, x: x, y: y, zone: ids[index], level: levels[index], away: direct}; }
         }
         return best;

@@ -20,6 +20,7 @@ class FarmWindow {
     static inline var BAR = 22;
     static inline var GRID_ROWS = 5;
     static inline var GAP = 14;
+    static inline var ICON = 56; // the item button's own size
 
     public var onStart:Void -> Void;
     public var onStop:Void -> Void;
@@ -34,6 +35,7 @@ class FarmWindow {
     var actionButton:Dynamic;
     var recycleBox:Dynamic;
     var clearBox:Dynamic;
+    var gearBox:Dynamic;
     var qualityBoxes:Array<Dynamic> = [];
     var levelInput:Dynamic;
     var running = false;
@@ -118,8 +120,8 @@ class FarmWindow {
         var scene = G.field(gui, "s2d");
         var scale = Math.max(0.01, G.number(G.field(root, "scaleX"), 1));
         var sceneW = G.number(G.field(scene, "width"), 1920) / scale, sceneH = G.number(G.field(scene, "height"), 1080) / scale;
-        cellW = Std.int(Math.max(40, Math.min(60, (sceneW - 2 * SIDE - GAP - 2 * BAR - 24) / 2 / COLUMNS)));
-        cellH = cellW + 28;
+        cellW = Std.int(Math.max(ICON + 2, Math.min(60, (sceneW - 2 * SIDE - GAP - 2 * BAR - 24) / 2 / COLUMNS)));
+        cellH = ICON + 4 + 30 + 8; // icon, its amount box under it, a gap: the next row never reaches the box
         var gridW = COLUMNS * cellW + BAR;
         var width = 2 * gridW + GAP + 2 * SIDE;
         var rows = Std.int(Math.max(3, Math.min(GRID_ROWS, Math.floor((sceneH - 420) / cellH))));
@@ -198,6 +200,7 @@ class FarmWindow {
             qx += 150;
         }
         clearBox = checkBox(windowDom, content, Locale.f("clear"), "farmerClear", 0, oy + 34, plan.clearBag, (v) -> { plan.clearBag = v; changed(); });
+        gearBox = checkBox(windowDom, content, Locale.f("bestGear"), "farmerBestGear", 330, oy + 34, plan.replaceGear, (v) -> { plan.replaceGear = v; changed(); });
         var levelCaption = N.label(windowDom, Locale.f("leveling") + ":  " + Locale.f("level"), "farmerLevelText");
         place(levelCaption, content, 0, oy + 72);
         levelInput = N.node("input-box", windowDom, [], "farmerLevel");
@@ -265,7 +268,7 @@ class FarmWindow {
         // gold frame around the icon
         var frame = G.create("h2d.Graphics", [cell]);
         N.absolute(cell, frame);
-        var bw = Math.min(cellW, 56.0);
+        var bw = ICON;
         G.call("h2d.Graphics", "beginFill", frame, [0xFFC93C, 1.0]);
         G.call("h2d.Graphics", "drawRect", frame, [0, 0, bw, 3]);
         G.call("h2d.Graphics", "drawRect", frame, [0, bw - 3, bw, 3]);
@@ -277,8 +280,8 @@ class FarmWindow {
         // amount still to get: the game's own input box (dark field, its own font, focus by a click), under the icon
         var box = G.field(N.node("input-box", G.field(cell, "dom"), [], "farmerAmount" + (hunting ? "H" : "G") + index), "obj");
         N.absolute(cell, box);
-        N.size(box, cellW - 2, 28);
-        N.position(box, 1, Math.min(cellW, 56.0) + 4);
+        N.size(box, Std.int(Math.max(cellW - 2, ICON - 2)), 30);
+        N.position(box, 1, ICON + 4);
         var input = G.field(box, "input");
         G.call("h2d.TextInput", "set_text", input, [Std.string(plan.count(hunting, res.id))]);
         N.show(box, plan.isPicked(hunting, res.id));

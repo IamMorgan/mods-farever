@@ -70,6 +70,8 @@ class Bot {
     var gotoY:Null<Float> = null;
 
     static inline var LOOT_SEEK = 16.0;
+    /** A monster this much above or below the hero is on another tier (a plateau, a gorge): the way there is long or none, and the walk along the edge circles. */
+    static inline var MAX_DZ = 8.0;
     /** A monster this close to the hero is fought before going on with a node. */
     static inline var THREAT_RANGE = 9.0;
     static inline var BUMPER_RANGE = 90.0;
@@ -285,6 +287,12 @@ class Bot {
         farm(now, leveling, level);
     }
 
+    /** Out of combat (nothing fought, nothing hitting the hero, no bag job): the time to change gear. */
+    public function calm(now:Float):Bool {
+        if (hero == null || job != null || engaged || (targetKind == "mob" && target != null)) return false;
+        return nearbyThreat(now) == null;
+    }
+
     function anyQuality():Bool {
         for (q in plan.recycleQualities) if (q) return true;
         return false;
@@ -406,7 +414,11 @@ class Bot {
     // ---- out of a pit ----
 
     /** Three targets in a minute that no way leads to: the hero sits in a place it cannot walk out of (a pit, a gorge). */
-    function trapped():Bool return failTimes.length >= 3;
+    var trapRefX = 0.0;
+    var trapRefY = 0.0;
+
+    /** (and the hero has stayed within 40 m of where the first of them happened: giving up targets while travelling is no trap) */
+    function trapped():Bool return failTimes.length >= 3 && Nav.distance(hero, trapRefX, trapRefY) < 40;
 
     /** The nearest bumper (a trampoline of the world) on about the hero's level that is within reach, or null. */
     function nearestBumper():Dynamic {
@@ -526,7 +538,8 @@ class Bot {
             if (seekLoot(now)) return;
             if (now < lootWait) { nav.stop(); message = Locale.f("stLoot"); return; }
             pickTarget(now, leveling, level);
-            if (target == null && leveling && roam(now, level)) return;
+            if (target == null && leveling && roam(now, level, 2)) return;
+            if (target == null && !leveling && huntRoam(now, level)) return;
             if (target == null) {
                 // nothing to do right now: wait for nodes to respawn
                 nav.stop();
@@ -590,8 +603,8 @@ class Bot {
             if (thp >= 0 && thp < progressHp - 1) progressAt = now;
             progressHp = thp;
         }
-        if (dNow > 12 && now - progressAt > 35) {
-            Log.w("no progress towards the target for 35 s (still " + Math.round(dNow) + " m): another one");
+        if (dNow > 12 && now - progressAt > 22) {
+            Log.w("no progress towards the target for 22 s (still " + Math.round(dNow) + " m): another one");
             blacklist.set(key(target), now + 180);
             return false;
         }
@@ -616,6 +629,7 @@ class Bot {
                     Log.w("target is " + Math.round(rise) + " m higher and unreachable on foot: the trampoline " + G.s(G.field(G.field(b, "inf"), "id")) + " is used");
                 }
             }
+            if (failTimes.length == 0) { trapRefX = G.number(G.field(hero, "posx")); trapRefY = G.number(G.field(hero, "posy")); }
             failTimes.push(now);
             while (failTimes.length > 0 && now - failTimes[0] > 70) failTimes.shift();
             return false;
@@ -685,7 +699,8 @@ class Bot {
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
             var foeLevel = G.integer(G.field(e, "_level"));
             // another height (a plateau, a gorge, an upper storey) is a long way round or none: such monsters are not chosen
-            if (Math.abs(G.number(G.field(e, "posz")) - hz) > 14) continue;
+            var dzFoe = Math.abs(G.number(G.field(e, "posz")) - hz);
+            if (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25)) continue;
             var score = cost(e);
             var drops = false;
             if (wantHunt.length > 0 && unit != null) {
@@ -739,7 +754,20 @@ class Bot {
     var roamVisited:Map<Int, Float> = new Map();
 
     /** No monster of the hero's level is loaded: walks (or flies by obelisk) to the nearest zone of that level. True while it does. */
-    function roam(now:Float, level:Int):Bool {
+    var huntKey = "";
+    var huntLevels:Array<Int> = [];
+
+    /** Hunting drops and none of the wanted monsters is loaded: goes to a zone where monsters that drop them live. */
+    function huntRoam(now:Float, level:Int):Bool {
+        var wanted = [for (id in plan.active(true)) id];
+        if (wanted.length == 0) return false;
+        var k = wanted.join(",");
+        if (k != huntKey) { huntKey = k; huntLevels = Catalog.dropLevels(wanted); Log.t("hunt", "monsters that drop the wanted items have levels " + huntLevels.join(" ")); }
+        if (huntLevels.length == 0) return false;
+        return roam(now, level, 3, huntLevels);
+    }
+
+    function roam(now:Float, level:Int, wide:Int = 2, ?zoneLevels:Array<Int>):Bool {
         if (!Hunt.onWorld(hero)) return false;
         if (!Hunt.ready()) { Hunt.scan(250); message = Locale.f("stTravel"); return true; }
         if (now < roamWaitUntil) { nav.stop(); message = Locale.f("noTargets"); return true; } // just arrived: the monsters are loading
@@ -747,7 +775,7 @@ class Bot {
             var arrived = Nav.distance(hero, roamX, roamY) < 30;
             if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > 300) {
                 Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 5 min");
-                roamVisited.set(roamKey, now + 300);
+                for (c in Hunt.around(roamKey, 3)) roamVisited.set(c, now + 300); // (the cells next to it are the same ground)
                 roamKey = -1;
                 nav.gaveUp = false;
                 nav.stop();
@@ -755,7 +783,7 @@ class Bot {
             }
         }
         if (roamKey < 0) {
-            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero));
+            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels);
             if (g == null) { Log.t("hunt", "no hunting ground of level " + level + ".." + (level + 2) + " on the map"); return false; }
             roamKey = g.key;
             roamX = g.x;
@@ -1398,7 +1426,7 @@ class Bot {
             case "plan":
                 var p = FarmPlan.fromJson(Std.string(Reflect.field(cmd, "json")));
                 plan.gather = p.gather; plan.hunt = p.hunt; plan.recycle = p.recycle; plan.recycleQualities = p.recycleQualities;
-                plan.clearBag = p.clearBag; plan.targetLevel = p.targetLevel;
+                plan.clearBag = p.clearBag; plan.replaceGear = p.replaceGear; plan.targetLevel = p.targetLevel;
                 return plan.toJson();
             case "start":
                 start();
@@ -1407,7 +1435,7 @@ class Bot {
                 return {running: running, phase: phase, target: targetKind, nav: nav.active, free: hero == null ? -1 : Services.freeSlots(hero),
                     message: message, counts: [for (k => v in counts) k + "=" + v]};
             case "catalog":
-                return {ready: Catalog.build(), gather: [for (r in Catalog.gather) r.id], hunt: [for (r in Catalog.hunt) r.id]};
+                return {ready: Catalog.build(), gather: [for (r in Catalog.gather) G.s(r.id)].join(","), hunt: [for (r in Catalog.hunt) G.s(r.id)].join(",")};
             case "candidates":
                 var inv = Services.bag(hero);
                 var station = Services.scrapStation(hero);

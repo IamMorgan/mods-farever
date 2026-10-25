@@ -210,6 +210,24 @@ class Catalog {
         return out;
     }
 
+    /** The levels of the (non-boss) monsters that can drop any of `wanted`, sorted. */
+    public static function dropLevels(wanted:Array<String>):Array<Int> {
+        var seen:Map<Int, Bool> = new Map();
+        for (rec in G.sheet("unit")) {
+            if (isBoss(rec)) continue;
+            var items = unitItems(rec);
+            var hit = false;
+            for (id in wanted) if (items.exists(id)) { hit = true; break; }
+            if (!hit) continue;
+            var l = optional(rec, "lvl");
+            if (l == null) l = optional(rec, "maxLvl");
+            if (l != null) seen.set(Std.int(l), true);
+        }
+        var out = [for (l in seen.keys()) l];
+        out.sort((a, b) -> a - b);
+        return out;
+    }
+
     static var unitRecords:Map<String, Dynamic>;
 
     public static function unitRecord(id:String):Dynamic {
