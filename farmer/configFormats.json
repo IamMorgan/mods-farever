@@ -1,0 +1,34 @@
+{
+  "configs": [
+    {
+      "type": "checkbox",
+      "label": "Show the Farm button",
+      "key": "showButton"
+    },
+    {
+      "type": "checkbox",
+      "label": "Unpin (drag the Farm button with the left mouse button)",
+      "key": "unpinned"
+    },
+    {
+      "min": 50,
+      "max": 200,
+      "step": 10,
+      "type": "slider",
+      "label": "Button size %",
+      "key": "buttonScalePercent"
+    },
+    {
+      "type": "checkbox",
+      "label": "Pick up loot",
+      "key": "pickupLoot"
+    },
+    {
+      "type": "checkbox",
+      "label": "Replace gear",
+      "key": "replaceGear"
+    }
+  ],
+  "schemaVersion": 1,
+  "displayName": "Farmer"
+}
