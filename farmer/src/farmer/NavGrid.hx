@@ -32,7 +32,8 @@ class NavGrid {
     static inline var CELL = 1.0;
     static inline var RADIUS = 120;
     static inline var MAX_NODES = 45000;
-    static inline var JUMP_UP = 1.1;
+    /** The highest rise a jump clears (set from the jump the hero was measured to make, see Nav.measureJump). */
+    public static var JUMP_UP = 1.1;
     static inline var STEP_UP = 0.5;
     /** A drop deeper than this is a cliff (the user's rule: 1.7 m). */
     public static inline var CLIFF = 1.7;
@@ -65,6 +66,8 @@ class NavGrid {
     static var wet:Map<Int, Bool> = new Map();
     /** Cells with water right on the ground (without the margin of `wet`). */
     static var drowned:Map<Int, Bool> = new Map();
+    /** Cells with a body of the physics world standing in them (a bench, a post, a flower bed: see Solid). */
+    static var solids:Map<Int, Bool> = new Map();
     static var heightsSince = 0.0;
     static var blocked:Map<Int, Float> = new Map();
     /** False when the hero has no glider equipped: high drops are closed. */
@@ -152,7 +155,7 @@ class NavGrid {
 
     /** Ground height of a cell seen from `refZ` (NaN: no ground). */
     static function height(ix:Int, iy:Int, refZ:Float, now:Float):Float {
-        if (now - heightsSince > CACHE_TIME || cached > CACHE_MAX) { heights = new Map(); wet = new Map(); drowned = new Map(); heightsSince = now; cached = 0; }
+        if (now - heightsSince > CACHE_TIME || cached > CACHE_MAX) { heights = new Map(); wet = new Map(); drowned = new Map(); solids = new Map(); heightsSince = now; cached = 0; }
         var k = heightKey(ix, iy, refZ);
         var known = heights.get(k);
         if (known != null) return known;
@@ -173,6 +176,14 @@ class NavGrid {
 
     static var cached = 0;
 
+    static function solid(ix:Int, iy:Int, z:Float, k:Int):Bool {
+        var known = solids.get(k);
+        if (known != null) return known;
+        var v = Solid.blocksCell(ix * CELL, iy * CELL, z);
+        solids.set(k, v);
+        return v;
+    }
+
     /** The height of a cell for the path, NaN when it is no place to stand (no ground, water, a harmful liquid). */
     function open(ix:Int, iy:Int, refZ:Float, now:Float):Float {
         var z = height(ix, iy, refZ, now);
@@ -180,6 +191,8 @@ class NavGrid {
         // a trap closes its area (the hero's own surroundings at the start stay open: it may stand in one and must get out)
         if (Hazard.trapCount() > 0 && Hazard.trapAt(ix * CELL, iy * CELL, z) && !(Math.abs(ix - sx) <= START_BANK && Math.abs(iy - sy) <= START_BANK)) return Math.NaN;
         var k = heightKey(ix, iy, refZ);
+        // a prop with a body closes its cell (the hero's own surroundings at the start stay open, it may stand next to one)
+        if (strict && !(ix == sx && iy == sy) && solid(ix, iy, z, k)) return Math.NaN; // (the soft search passes them at a price, see `step`)
         if (wet.exists(k)) {
             var near = Math.abs(ix - sx) <= ESCAPE && Math.abs(iy - sy) <= ESCAPE;
             if (!(escape && near)) {
@@ -283,7 +296,7 @@ class NavGrid {
         for (d in 0...4) {
             var nx = ix + DX[d], ny = iy + DY[d];
             var nz = height(nx, ny, z, now);
-            if (!Math.isFinite(nz) || nz - z > JUMP_UP || wet.exists(heightKey(nx, ny, z)) || isBlocked(nx, ny, now)) { r = true; break; }
+            if (!Math.isFinite(nz) || nz - z > JUMP_UP || wet.exists(heightKey(nx, ny, z)) || isBlocked(nx, ny, now) || solid(nx, ny, nz, heightKey(nx, ny, z))) { r = true; break; }
         }
         roughMemo.set(k, r);
         return r;
@@ -344,7 +357,7 @@ class NavGrid {
                 var extra = 0.0;
                 var jump = false;
                 if (dz > JUMP_UP) continue;
-                if (dz > STEP_UP) { jump = true; extra = 2; }
+                if (dz > STEP_UP) { jump = true; extra = 5; } // a jump costs: a way round a bench is better
                 if (dz < -SAFE_DROP) {
                     if (noCliff) continue; // in a fight a cliff is never gone down
                     if (!hasGlider && -dz > NO_GLIDER_DROP) continue; // no glider: too high to fall
@@ -352,6 +365,7 @@ class NavGrid {
                     if (Math.isFinite(goalZ) && z < goalZ - 4) continue;
                     extra = Math.min(70, 8 + -dz * 1.5); // a drop is a one-way road: dearer than a long walk round; above GLIDE_DROP the glider is opened in the air
                 }
+                if (!strict && !(nx == sx && ny == sy) && solid(nx, ny, z, heightKey(nx, ny, n.z))) extra += 10;
                 if (!nearEnds(nx, ny) && rough(nx, ny, z, now)) {
                     if (strict) continue;
                     extra += 3;
@@ -388,7 +402,7 @@ class NavGrid {
 
     function finish(end:Node, now:Float):Void {
         var ex0 = end.ix * CELL - goalX, ey0 = end.iy * CELL - goalY;
-        if (strict && !softTried && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && Math.abs(goalX - startX) < RADIUS - 20 && Math.abs(goalY - startY) < RADIUS - 20) {
+        if (strict && !softTried && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && ((Math.abs(goalX - startX) < RADIUS - 20 && Math.abs(goalY - startY) < RADIUS - 20) || count < 150)) {
             // no clean way: the same search again, now allowed to pass close to walls
             Log.t("nav", "strict path failed (short by " + Math.round(Math.sqrt(ex0 * ex0 + ey0 * ey0)) + " m): soft search");
             softTried = true;

@@ -18,7 +18,7 @@ class Nav {
     static inline var GIVE_UP = 9.0;
     static inline var OBELISK_GAIN = 50.0;  // an obelisk trip must save at least this many metres
     static inline var OBELISK_FROM = 110.0; // ... and is only thought of for spots this far away
-    static inline var BODY_SIDE = 0.45;
+    static inline var BODY_SIDE = 0.42;
     static inline var FINE_STEP = 0.5;
     /** A rise of more than this between two samples half a metre apart is something the hero cannot walk over. */
     static inline var FINE_RISE = 0.75;
@@ -76,6 +76,13 @@ class Nav {
     var badAhead = 0;
     var deadTries = 0;
     var glideAskedAt = -10.0;
+    /** How far ahead on the way the hero aims (m). */
+    static inline var LOOK = 3.0;
+    var atEnd = false;
+    var lastFlipAt = -10.0;
+    var goalHeading = false;
+    var aimPX = 0.0;
+    var aimPY = 0.0;
 
     public function new() {}
 
@@ -166,6 +173,7 @@ class Nav {
     /** Every frame: the path search, stuck handling, jumping, gliding. */
     public function update(hero:Dynamic, now:Float):Void {
         glide(hero);
+        watchJump(hero, now);
         if (!active) return;
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         if (distance(hero, tx, ty) <= arrive) { stop(); return; }
@@ -188,7 +196,11 @@ class Nav {
         if (blockedSince < 0) blockedSince = now;
         var blocked = now - blockedSince;
         if (blocked > GIVE_UP) { stop(); gaveUp = true; return; }
-        if (blocked > 0.35 && now - jumpedAt > 0.8) { jump(hero); jumpedAt = now; }
+        if (blocked > 0.35 && now - jumpedAt > 0.8) {
+            // a jump only helps before a rise it clears; against a high wall it is only noise
+            if (ledgeAhead(hero, hx, hy, lastDirX, lastDirY)) { jump(hero); jumpedAt = now; Log.t("nav", "stuck against a low ledge: jump"); trackJump(hero, now); }
+            else if (now - jumpedAt > 3) { jumpedAt = now; Log.t("nav", "stuck, no ledge a jump clears ahead (" + solidsAhead(hx, hy, hz, hx + lastDirX, hy + lastDirY) + "): no jump"); }
+        }
         if (blocked > 0.7 && now - plannedAt > 1.0) {
             // ran into something the heights did not show: close the cells ahead (the path's own next cells and the line of
             // the run) and plan again; stuck at the same place again, the closed area grows, so the new path must differ
@@ -280,6 +292,16 @@ class Nav {
                 }
             }
             Log.t("nav", "near objects: " + near.join(" | "));
+            var rays = [];
+            for (h in [0.3, 1.0]) {
+                var row = [];
+                for (i in 0...16) {
+                    var a = i * Math.PI / 8;
+                    row.push(Std.string(Math.round(Solid.ray(hx, hy, hz + h, hx + Math.cos(a) * 3, hy + Math.sin(a) * 3, hz + h) * 10) / 10));
+                }
+                rays.push("h" + h + ": " + row.join(" "));
+            }
+            Log.t("nav", "physics rays (3 m, 16 directions from east, counter-clockwise; -1 free): " + rays.join(" | "));
         } catch (e:Dynamic) Log.t("nav", "dumpStuck failed: " + Std.string(e));
     }
 
@@ -313,6 +335,9 @@ class Nav {
             route = grid.path;
             routeShort = grid.shortBy;
             routeIndex = 0;
+            atEnd = false;
+            goalHeading = false;
+            aimFrom = -1;
             jumpedFor = -1;
             grid.state = 0;
         } else if (grid.state == 3) {
@@ -383,6 +408,9 @@ class Nav {
      * The way the hero can run from (hx, hy) to (wx, wy) as a body: the ground rises no more than a step half a metre on, on the
      * middle line and on both sides, and no water lies on it. Thin things (posts, bushes) that the cells' centres miss show here.
      */
+    /** Why the last corridor check said no (for the log). */
+    public static var corridorWhy = "";
+
     public static function corridorClear(hx:Float, hy:Float, hz:Float, wx:Float, wy:Float, cliff:Bool = false):Bool {
         var dx = wx - hx, dy = wy - hy;
         var len = Math.sqrt(dx * dx + dy * dy);
@@ -396,16 +424,27 @@ class Nav {
             var t = Math.min(len, i * FINE_STEP);
             var px = hx + ux * t, py = hy + uy * t;
             var z = NavGrid.fineZ(px, py, prev);
-            if (!Math.isFinite(z)) return false;
-            if (z - prev > FINE_RISE) return false;
-            if (cliff && prev - z > NavGrid.CLIFF) return false;
-            if (Hazard.wetCell(px, py, z, 0.45) || Hazard.trapAt(px, py, z)) return false;
+            if (!Math.isFinite(z)) { corridorWhy = "no ground at " + Math.round(px) + "," + Math.round(py); return false; }
+            if (z - prev > FINE_RISE) { corridorWhy = "rise " + Math.round((z - prev) * 100) / 100 + " m at " + Math.round(px * 10) / 10 + "," + Math.round(py * 10) / 10; return false; }
+            if (cliff && prev - z > NavGrid.CLIFF) { corridorWhy = "drop " + Math.round((prev - z) * 100) / 100 + " m at " + Math.round(px) + "," + Math.round(py); return false; }
+            if (Hazard.wetCell(px, py, z, 0.45) || Hazard.trapAt(px, py, z)) { corridorWhy = "water or trap at " + Math.round(px) + "," + Math.round(py); return false; }
+            // a prop with a body (bench, post, flower bed) that the heights miss: rays along this half metre, over the rising ground, on the
+            // middle line and on both sides of the body
+            if (Solid.works) {
+                var lift = Math.max(z, prev);
+                var ax = hx + ux * Math.max(0, t - FINE_STEP), ay = hy + uy * Math.max(0, t - FINE_STEP);
+                for (line in [0.0, 1.0, -1.0]) {
+                    for (h in [0.45, 1.0]) {
+                        if (Solid.ray(ax + sx * line, ay + sy * line, lift + h, px + sx * line, py + sy * line, lift + h) >= 0) { corridorWhy = "body on line " + line + " h " + h + " at " + Math.round(px * 10) / 10 + "," + Math.round(py * 10) / 10; return false; }
+                    }
+                }
+            }
             for (side in [1.0, -1.0]) {
                 var qx = px + sx * side, qy = py + sy * side;
                 var q = NavGrid.fineZ(qx, qy, z);
-                if (!Math.isFinite(q)) return false;
-                if (q - z > FINE_RISE) return false;
-                if (Hazard.wetCell(qx, qy, q, 0.3)) return false;
+                if (!Math.isFinite(q)) { corridorWhy = "no ground beside at " + Math.round(qx) + "," + Math.round(qy); return false; }
+                if (q - z > FINE_RISE) { corridorWhy = "wall beside (" + Math.round((q - z) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
+                if (Hazard.wetCell(qx, qy, q, 0.3)) { corridorWhy = "water beside"; return false; }
             }
             prev = z;
         }
@@ -442,8 +481,14 @@ class Nav {
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         var aimX = tx, aimY = ty;
         if (route != null && route.length > 0) {
-            while (routeIndex < route.length - 1 && Math.abs(route[routeIndex].x - hx) + Math.abs(route[routeIndex].y - hy) < 1.1) routeIndex++;
             var last = route.length - 1;
+            // progress along the way: a waypoint is passed when the hero is at it, or (not a jump) beyond it along its segment
+            while (routeIndex < last) {
+                var from = route[routeIndex], to = route[routeIndex + 1];
+                var near = Math.abs(to.x - hx) + Math.abs(to.y - hy) < 1.1;
+                var beyond = !to.jump && (hx - to.x) * (to.x - from.x) + (hy - to.y) * (to.y - from.y) >= 0 && Math.abs(to.x - hx) + Math.abs(to.y - hy) < 2.5;
+                if (near || beyond) routeIndex++; else break;
+            }
             if (routeIndex >= last && routeShort > 3 && !needPlan) {
                 // the path only led part of the way: plan again from here, away from the dead ends found so far
                 if (Math.abs(hx - lastPlanX) + Math.abs(hy - lastPlanY) < 4) {
@@ -454,66 +499,82 @@ class Nav {
             }
             if (routeIndex >= last && routeShort <= 3 && !needPlan && distance(hero, tx, ty) > arrive + 1.5 && now - plannedAt > 0.6) needPlan = true; // the goal moved on: a new way from here
             var pick = Std.int(Math.min(routeIndex + 1, last));
-            if (aimFrom != routeIndex || now - aimAt > 0.12) {
-                // aim at the farthest of the next waypoints that the body can really run to (corners are not cut across walls or
-                // water); never past a jump
+            if (routeIndex >= last) atEnd = true;
+            if (!atEnd && (aimFrom != routeIndex || now - aimAt > 0.12)) {
                 aimAt = now;
                 aimFrom = routeIndex;
-                var far = Std.int(Math.min(routeIndex + 4, last));
-                for (j in pick...far + 1) if (route[j].jump) { far = j; break; }
-                var chosen = pick;
-                // never cut across a bend the path was routed round: a far waypoint counts only when the way to it is nearly straight
-                var lens:Array<Float> = [];
-                var acc = Math.sqrt((route[pick].x - hx) * (route[pick].x - hx) + (route[pick].y - hy) * (route[pick].y - hy));
-                for (j in pick...far + 1) {
-                    if (j > pick) acc += Math.sqrt((route[j].x - route[j - 1].x) * (route[j].x - route[j - 1].x) + (route[j].y - route[j - 1].y) * (route[j].y - route[j - 1].y));
-                    lens.push(acc);
-                }
-                var k = far;
-                while (k > pick) {
-                    // a waypoint right at the hero (the path curls back on itself) is no aim: the heading would be noise
-                    var straight = Math.sqrt((route[k].x - hx) * (route[k].x - hx) + (route[k].y - hy) * (route[k].y - hy));
-                    // ... and never turns the heading by more than 60 degrees away from the next waypoint's (no aim back across the hero)
+                // pure pursuit: the aim is the point on the way LOOK metres ahead of the hero (never past a jump), so it always lies
+                // ahead and the heading cannot flip; when the body cannot run straight to it, a nearer point is tried
+                var chosenX = route[pick].x, chosenY = route[pick].y, chosenIdx = pick;
+                var found = false;
+                for (look in [LOOK, LOOK * 0.6, 1.2]) {
+                    var acc = 0.0, cx = hx, cy = hy, px = route[pick].x, py = route[pick].y, pi = pick;
+                    var j = pick;
+                    while (j <= last) {
+                        var seg = Math.sqrt((route[j].x - cx) * (route[j].x - cx) + (route[j].y - cy) * (route[j].y - cy));
+                        if (acc + seg >= look && seg > 0.001) {
+                            var t = (look - acc) / seg;
+                            px = cx + (route[j].x - cx) * t;
+                            py = cy + (route[j].y - cy) * t;
+                            pi = j;
+                            break;
+                        }
+                        acc += seg;
+                        cx = route[j].x;
+                        cy = route[j].y;
+                        px = cx;
+                        py = cy;
+                        pi = j;
+                        if (route[j].jump) break;
+                        j++;
+                    }
+                    // not across a hairpin of the way: the aim stays within 60 degrees of the next waypoint's direction
                     var toPick = Math.sqrt((route[pick].x - hx) * (route[pick].x - hx) + (route[pick].y - hy) * (route[pick].y - hy));
-                    var cosTurn = toPick < 0.05 ? 1.0 : ((route[pick].x - hx) * (route[k].x - hx) + (route[pick].y - hy) * (route[k].y - hy)) / (toPick * Math.max(0.01, straight));
-                    if (straight > 1.6 && cosTurn > 0.5 && lens[k - pick] <= straight * 1.3 + 1.0 && corridorClear(hx, hy, hz, route[k].x, route[k].y, noCliff)) { chosen = k; break; }
-                    k--;
+                    var toAim = Math.sqrt((px - hx) * (px - hx) + (py - hy) * (py - hy));
+                    var cosTurn = toPick < 0.3 || toAim < 0.3 ? 1.0 : ((route[pick].x - hx) * (px - hx) + (route[pick].y - hy) * (py - hy)) / (toPick * toAim);
+                    if (look <= 1.2 || (cosTurn > 0.5 && corridorClear(hx, hy, hz, px, py, noCliff))) { chosenX = px; chosenY = py; chosenIdx = pi; found = true; break; }
                 }
-                aimIdx = chosen;
-                if (chosen == pick && !route[pick].jump && distance(hero, route[pick].x, route[pick].y) > 1.0 && !airborne(hero)) {
+                aimIdx = chosenIdx;
+                aimPX = chosenX;
+                aimPY = chosenY;
+                if (found && chosenIdx == pick && !route[pick].jump && distance(hero, route[pick].x, route[pick].y) > 1.0 && !airborne(hero)) {
                     if (!corridorClear(hx, hy, hz, route[pick].x, route[pick].y, noCliff)) {
                         if (++badAhead >= 3 && now - plannedAt > 0.8) {
                             // the next cell is not passable for a body (a post, a bush the cells' centres missed): closed, a new path
                             NavGrid.blockLong(route[pick].x, route[pick].y, now);
-                            Log.t("nav", "blocked ahead at " + Math.round(route[pick].x) + "," + Math.round(route[pick].y) + ": replanning");
+                            Log.t("nav", "blocked ahead at " + Math.round(route[pick].x) + "," + Math.round(route[pick].y) + ": replanning, reason: " + corridorWhy + " (" + solidsAhead(hx, hy, hz, route[pick].x, route[pick].y) + ")");
                             needPlan = true;
                             badAhead = 0;
                         }
                     } else badAhead = 0;
                 } else badAhead = 0;
             }
-            var wp = route[Std.int(Math.min(aimIdx, last))];
-            aimX = wp.x;
-            aimY = wp.y;
+            if (atEnd) { aimX = route[last].x; aimY = route[last].y; }
+            else { aimX = aimPX; aimY = aimPY; }
             var next = route[pick];
-            if (next.jump && jumpedFor != routeIndex && Math.abs(next.x - hx) + Math.abs(next.y - hy) < 2.2) { jumpedFor = routeIndex; jump(hero); }
+            if (next.jump && jumpedFor != routeIndex && jumpDue(hero, hx, hy, hz, next)) { jumpedFor = routeIndex; jump(hero); noteJump(hero, hx, hy, next); }
         } else if (distance(hero, tx, ty) > 6) { why = "planning"; return null; }
         var dx = aimX - hx, dy = aimY - hy;
         var d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 0.6) {
-            // right at the aim (the end of the path, or a jump over it): a heading from so near is noise that flips with every step
+        if (d < 0.6 || (atEnd && goalHeading)) {
+            // right at the end of the way: on to the spot itself (and once on it, only that: a heading from so near flips between the two)
             if (distance(hero, tx, ty) <= arrive) { why = "at aim"; return null; }
             dx = tx - hx;
             dy = ty - hy;
             d = Math.sqrt(dx * dx + dy * dy);
             if (d < 0.6) { why = "at aim"; return null; }
-            if (route != null && !needPlan && now - plannedAt > 0.6) needPlan = true;
+            goalHeading = true;
+            if (route != null && !needPlan && now - plannedAt > 0.6 && distance(hero, tx, ty) > 3) needPlan = true;
         }
         dx /= d;
         dy /= d;
         if (airborne(hero)) { var h = airHeading(hx, hy, hz, dx, dy); dx = h.x; dy = h.y; }
         // jitter: the heading turning back on itself again and again
-        if (dx * lastDirX + dy * lastDirY < -0.17) flips++;
+        if (dx * lastDirX + dy * lastDirY < -0.17) {
+            // a second turn-around within 0.7 s is not followed (a hero that reverses again and again goes nowhere): the last heading holds
+            if (now - lastFlipAt < 0.7 && !goalHeading) { dx = lastDirX; dy = lastDirY; }
+            else { flips++; lastFlipAt = now; }
+        }
         if (now - flipFrom > 5) {
             if (flips >= 6) Log.t("nav", "JITTER: the heading flipped " + flips + " times in 5 s at " + Math.round(hx) + "," + Math.round(hy) + " (last headings: " + dirRing.join(" | ") + "; aim " + Math.round(aimX) + "," + Math.round(aimY) + ", route " + routeIndex + "/" + (route == null ? 0 : route.length) + ")");
             flips = 0;
@@ -525,6 +586,151 @@ class Nav {
         lastDirY = dy;
         hasDirection = true;
         return {x: lastDirX, y: lastDirY};
+    }
+
+    // ---- jumps ----
+
+    /** The jump height the hero was measured to make (0: not yet), the seconds it takes to climb to each tenth of a metre (-1: never). */
+    public static var jumpPeak = 0.0;
+    static var jumpClimb:Array<Float> = [];
+    var jumpTrack = false;
+    var jumpBase = 0.0;
+    var jumpMax = 0.0;
+    var jumpT0 = 0.0;
+    var jumpX0 = 0.0;
+    var jumpY0 = 0.0;
+    var jumpProfile:Array<String> = [];
+    var profT:Array<Float> = [];
+    var profZ:Array<Float> = [];
+    /** The measured climb of the standing jump: seconds to reach each height (see timeToReach). */
+    static var climbT:Array<Float> = [];
+    static var climbZ:Array<Float> = [];
+    var jumpWantRise = Math.NaN;
+    var jumpWantX = 0.0;
+    var jumpWantY = 0.0;
+    var jumpCalibrating = false;
+    var jumpTries = 0;
+    var calibNoteAt = -10.0;
+    var calibSeen = false;
+
+    /** Starts watching a jump: the highest point and the time up are measured (and logged, so the planner's jump height is known). */
+    function trackJump(hero:Dynamic, now:Float):Void {
+        jumpTrack = true;
+        jumpWantRise = Math.NaN;
+        jumpBase = G.number(G.field(hero, "posz"));
+        jumpMax = 0;
+        jumpT0 = now;
+        jumpX0 = G.number(G.field(hero, "posx"));
+        jumpY0 = G.number(G.field(hero, "posy"));
+        jumpProfile = [];
+        profT = [];
+        profZ = [];
+    }
+
+    function watchJump(hero:Dynamic, now:Float):Void {
+        if (!jumpTrack) return;
+        var z = G.number(G.field(hero, "posz")) - jumpBase;
+        var t = now - jumpT0;
+        if (z > jumpMax) jumpMax = z;
+        if (t < 2.0) { jumpProfile.push(Math.round(t * 100) / 100 + ":" + Math.round(z * 100) / 100); profT.push(t); profZ.push(z); }
+        var grounded = G.number(G.field(hero, "posz")) - groundUnder(hero) < 0.1;
+        if (t > 0.25 && grounded || t > 3) {
+            jumpTrack = false;
+            var fwd = Math.sqrt(Math.pow(G.number(G.field(hero, "posx")) - jumpX0, 2) + Math.pow(G.number(G.field(hero, "posy")) - jumpY0, 2));
+            var level = Math.abs(G.number(G.field(hero, "posz")) - groundUnder(hero) - 0) < 0.5;
+            Log.t("nav", "JUMP measured: peak " + Math.round(jumpMax * 100) / 100 + " m above the takeoff, air time " + Math.round(t * 100) / 100 + " s, " + Math.round(fwd * 10) / 10 + " m along, profile " + jumpProfile.slice(0, 40).join(" "));
+            if (jumpCalibrating && jumpMax > 0.3) {
+                jumpPeak = jumpMax;
+                climbT = profT;
+                climbZ = profZ;
+                // the planner sees rises up to 2.2 m (the height probe, see NavGrid.height): jumps are planned up to the lower of that and the peak less a margin
+                NavGrid.JUMP_UP = Math.max(0.8, Math.min(2.0, jumpMax - 0.3));
+                Log.t("nav", "jump height learnt: peak " + Math.round(jumpMax * 100) / 100 + " m, the planner jumps up to " + Math.round(NavGrid.JUMP_UP * 100) / 100 + " m");
+            }
+            if (Math.isFinite(jumpWantRise)) {
+                var got = G.number(G.field(hero, "posz")) - jumpBase;
+                var ok = got >= jumpWantRise - 0.35;
+                Log.t("nav", "JUMP result: wanted a rise of " + Math.round(jumpWantRise * 100) / 100 + " m, got " + Math.round(got * 100) / 100 + " m (peak " + Math.round(jumpMax * 100) / 100 + "): " + (ok ? "ON the ledge" : "FAILED, the ledge is closed"));
+                if (!ok) NavGrid.blockLong(jumpWantX, jumpWantY, haxe.Timer.stamp());
+                jumpWantRise = Math.NaN;
+            }
+            jumpCalibrating = false;
+        }
+    }
+
+    /** Standing still on the flat, one jump to learn how high the hero jumps; true while the measurement is going on or just started. */
+    public function calibrateJump(hero:Dynamic, now:Float):Bool {
+        if (!calibSeen) { calibSeen = true; Log.t("nav", "jump calibration check: peak " + jumpPeak + " tries " + jumpTries); }
+        if (jumpPeak > 0 || jumpTries >= 3) return false;
+        if (jumpCalibrating) return true;
+        var onGround = G.number(G.field(hero, "posz")) - groundUnder(hero) < 0.15;
+        if (isHeld(hero) || flying(hero) || airborne(hero) || !onGround) {
+            if (now - calibNoteAt > 5) { calibNoteAt = now; Log.t("nav", "jump calibration waits: held " + isHeld(hero) + " flying " + flying(hero) + " airborne " + airborne(hero) + " onGround " + onGround); }
+            return false;
+        }
+        jumpCalibrating = true;
+        jumpTries++;
+        trackJump(hero, now);
+        jump(hero);
+        Log.t("nav", "jump calibration started");
+        return true;
+    }
+
+    /** Seconds the standing jump takes to climb `h` metres (measured; before the measurement a fit of it). */
+    static function timeToReach(h:Float):Float {
+        for (i in 0...climbT.length) if (climbZ[i] >= h) return climbT[i];
+        return climbT.length > 0 ? climbT[climbT.length - 1] : 0.07 * h;
+    }
+
+    /** The hero's running speed (m/s). */
+    function runSpeed(hero:Dynamic):Float {
+        try return Math.max(4.0, G.number(G.call("ent.Unit", "getMoveSpeed", hero, [null]), SPEED)) catch (_:Dynamic) return SPEED;
+    }
+
+    /**
+     * The takeoff of a jump onto the next waypoint: the hero must be above the ledge when it reaches the ledge's face, so the jump
+     * starts as many metres before the face as it runs while climbing the rise (and a margin) - from the measured climb.
+     */
+    function jumpDue(hero:Dynamic, hx:Float, hy:Float, hz:Float, next:Waypoint):Bool {
+        var d = Math.sqrt((next.x - hx) * (next.x - hx) + (next.y - hy) * (next.y - hy));
+        var gz = groundUnder(hero);
+        var top = NavGrid.fineZ(next.x, next.y, gz);
+        var rise = Math.isFinite(top) ? top - gz : 1.0;
+        if (rise < 0.45) return false; // the cells' heights differ, the ground at the waypoint is no higher: walk on, no jump
+        var run = Math.max(0.3, Math.min(3.5, runSpeed(hero) * timeToReach(rise + 0.4)));
+        return d <= run + 0.5; // the waypoint's centre is half a cell behind the face
+    }
+
+    function noteJump(hero:Dynamic, hx:Float, hy:Float, next:Waypoint):Void {
+        var rise = NavGrid.fineZ(next.x, next.y, G.number(G.field(hero, "posz"))) - G.number(G.field(hero, "posz"));
+        Log.t("nav", "JUMP onto the waypoint " + Math.round(next.x) + "," + Math.round(next.y) + " (rise " + Math.round(rise * 100) / 100 + " m, " + Math.round(Math.sqrt((next.x - hx) * (next.x - hx) + (next.y - hy) * (next.y - hy)) * 10) / 10 + " m away, jump height " + NavGrid.JUMP_UP + ")");
+        trackJump(hero, haxe.Timer.stamp());
+        jumpWantRise = Math.isFinite(rise) ? rise : Math.NaN;
+        jumpWantX = next.x;
+        jumpWantY = next.y;
+    }
+
+    /** What stands in the way (for the log): the distance of the first body at three heights straight ahead. */
+    function solidsAhead(hx:Float, hy:Float, hz:Float, wx:Float, wy:Float):String {
+        var dx = wx - hx, dy = wy - hy;
+        var len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 0.1) return "";
+        var parts = [];
+        for (h in [0.3, 0.6, 1.0, 1.6]) parts.push("h" + h + "=" + Math.round(Solid.ray(hx, hy, hz + h, hx + dx / len * 3, hy + dy / len * 3, hz + h) * 10) / 10);
+        return "rays to the body ahead: " + parts.join(" ");
+    }
+
+    /** A rise ahead that a jump clears (not a wall): the ground 0.8..1.5 m ahead on the heading is higher than the hero's by a step to the jump height. */
+    function ledgeAhead(hero:Dynamic, hx:Float, hy:Float, ux:Float, uy:Float):Bool {
+        var gz = groundUnder(hero);
+        var top = Math.NEGATIVE_INFINITY;
+        for (a in [0.6, 0.9, 1.2, 1.5]) {
+            var z = NavGrid.fineZ(hx + ux * a, hy + uy * a, gz);
+            if (Math.isFinite(z) && z > top) top = z;
+        }
+        if (!Math.isFinite(top)) return false;
+        var rise = top - gz;
+        return rise > 0.3 && rise <= NavGrid.JUMP_UP;
     }
 
     // ---- obelisks ----

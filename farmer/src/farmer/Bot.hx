@@ -43,8 +43,6 @@ class Bot {
     var lastAttack = 0.0;
     /** The Attack key is held down while a monster is in reach: the game chains the combo hits itself from a held key. */
     var attackDown = false;
-    var attackCode = -1;
-    var attackResendAt = 0.0;
     var attackResumeAt = 0.0;
     /** After a node broke: its drops are on their way, nothing else is started before this time. */
     var lootWait = 0.0;
@@ -213,6 +211,8 @@ class Bot {
         if (G.field(hero, "inCutscene") == true) return;
 
         updateCounts();
+        // once, at the start: a jump on the spot, to learn how high the hero jumps (the planner's jump height)
+        if (target == null && gotoX == null && nav.calibrateJump(hero, now)) return;
 
         if (gotoX != null) {
             if (Nav.distance(hero, gotoX, gotoY) < 3) { gotoX = null; nav.stop(); message = "arrived"; return; }
@@ -427,7 +427,7 @@ class Bot {
         if (target != null && !targetValid(now, leveling)) {
             var lostId = "";
             try lostId = G.s(G.field(G.field(target, "inf"), "id")) catch (_:Dynamic) {}
-            var why = G.field(target, "removed") == true ? "removed" : (G.call("ent.GameObject", "isDead", target) == true || G.field(target, "dying") == true) ? "dead (killed)" : nav.gaveUp ? "unreachable" : "no longer wanted/timeout";
+            var why = G.field(target, "removed") == true ? "removed (killed or gone)" : (G.call("ent.GameObject", "isDead", target) == true || G.field(target, "dying") == true) ? "dead (killed)" : nav.gaveUp ? "unreachable" : "no longer wanted/timeout";
             Log.t("bot", "target " + targetKind + " " + lostId + " lost: " + why + " after " + Math.round(now - targetSince) + " s");
             if (targetKind == "node") lootWait = now + 1.2; // the node broke: what it dropped is on its way
             target = null;
@@ -685,7 +685,9 @@ class Bot {
 
     function moveTo(x:Float, y:Float, arrive:Float, now:Float, ?z:Float):Void {
         nav.goalZ = z == null ? Math.NaN : z;
-        nav.noCliff = targetKind == "mob"; // in a fight no cliff is gone down (and no water entered: that is never)
+        // close to a monster (a fight) no cliff is gone down; the long way to one may go down a cliff when walking round is much longer
+        // (the planner makes a drop dear). No water is entered ever.
+        nav.noCliff = targetKind == "mob" && Nav.distance(hero, x, y) < 25;
         if (!nav.travel(hero, x, y, now)) nav.go(x, y, arrive, now);
     }
 
@@ -753,7 +755,8 @@ class Bot {
         // Attack key, let go before each try, would never be held: the series would never run)
         if (castKind != "") {
             if (active != null && !isBasic(active)) castSeen = true;
-            if (now - castAt > 0.7) {
+            // the cast is judged when it ran and is over, or when 0.7 s went by without it starting
+            if ((castSeen && active == null) || now - castAt > 0.7) {
                 var fails = castFails.exists(castKind) ? castFails.get(castKind) : 0;
                 if (!castSeen && castSkill != null && skillOk(castSkill)) {
                     fails++;
@@ -769,6 +772,7 @@ class Bot {
             }
         }
         if (active != null && !isBasic(active)) return; // a skill is being cast
+        if (castKind != "") return; // a cast was just asked for: no other skill (it would cancel this one) and no basic hit until it started or failed
         var ctl = G.current("client.PlayerController", "inst");
         var ready:Dynamic = null;
         if (now - lastAttack >= 0.1) {
@@ -784,7 +788,7 @@ class Bot {
         }
         if (now - lastFightLog > 1.0) {
             lastFightLog = now;
-            Log.t("fight", "combo " + combo + " active " + (active == null ? "-" : G.s(G.field(active, "kind"))) + " held " + attackDown + " ready " + (ready == null ? "-" : G.s(G.field(ready, "kind")))
+            Log.t("fight", "combo " + combo + " active " + (active == null ? "-" : G.s(G.field(active, "kind"))) + " asked " + attackDown + " basic requests " + basicRequests + " ready " + (ready == null ? "-" : G.s(G.field(ready, "kind")))
                 + " dodge " + AutoDodge.dodging() + " resume in " + Math.max(0, Math.round((attackResumeAt - now) * 100) / 100) + " target d=" + Math.round(Nav.distance(hero, tx, ty) * 10) / 10);
         }
         // The weapon's combo series is not cut: a ready skill waits until the running series has been struck (the key is let go
@@ -878,36 +882,24 @@ class Bot {
         } catch (_:Dynamic) return false;
     }
 
-    /** Presses the Attack key (the keyboard's own binding) and keeps it down. */
+    /**
+     * The weapon's basic attack (the Attack input, skill type 0), asked of the game's own skill queue as its input handler does
+     * (UnitController.updateSkillInput -> requestSkillType). A faked mouse key does not reach the game's Input when its window
+     * is not in front, the queued request does; it is renewed on every think, the queue keeps it for Const.Controls.SkillQueueTime.
+     */
     function holdAttack(now:Float):Void {
         if (now < attackResumeAt) return;
         try {
-            var binding = G.staticCall("lib.Input", "getBinding", ["Attack"]);
-            var code = G.integer(G.field(binding, "code"), -1);
-            if (code < 0) return;
-            if (attackDown && attackCode == code && (now < attackResendAt || G.staticCall("hxd.Key", "isDown", [code]) == true)) return;
-            attackCode = code;
+            G.call("client.UnitController", "requestSkillType", G.current("client.PlayerController", "inst"), ["Attack", 0, 0]);
             attackDown = true;
-            attackResendAt = now + 0.3; // the game reads a key-down only on the frame after the event
-            sendKey(code, true);
-        } catch (_:Dynamic) {}
+            basicRequests++;
+        } catch (error:Dynamic) { if (now - lastNote > 5) { lastNote = now; Log.err("basic attack request", error); } }
     }
+
+    var basicRequests = 0;
 
     function releaseAttack():Void {
-        if (attackDown && attackCode >= 0) sendKey(attackCode, false);
         attackDown = false;
-    }
-
-    function sendKey(code:Int, down:Bool):Void {
-        try {
-            var keyType = HlxRuntime.resolveType("hxd.Key");
-            var eventType = HlxRuntime.resolveType("hxd.Event");
-            var kindType = HlxRuntime.resolveType("hxd.EventKind");
-            var kind = HlxRuntime.resolveStaticField(kindType, down ? "EKeyDown" : "EKeyUp");
-            var event = HlxRuntime.constructInstanceByName(eventType, 3, [kind, 0.0, 0.0]);
-            HlxRuntime.setField(event, "keyCode", code);
-            HlxRuntime.callResolved(HlxRuntime.resolveStaticMember(keyType, "onEvent"), [event]);
-        } catch (_:Dynamic) {}
     }
 
     // ---- loot ----
@@ -967,6 +959,80 @@ class Bot {
                 var rr = Reflect.hasField(cmd, "r") ? Std.int(Reflect.field(cmd, "r")) : 25;
                 var hzz = Reflect.hasField(cmd, "z") ? G.number(Reflect.field(cmd, "z")) : G.number(G.field(hero, "posz"));
                 return {rows: NavGrid.debugMap(mx, my, rr, hzz, nav.debugRoute(), G.number(G.field(hero, "posx")), G.number(G.field(hero, "posy")), nav.goalX(), nav.goalY())};
+            case "ray":
+                // developer: horizontal rays of the physics cast around the hero (16 directions, three heights), raw results
+                var rx:Float = Reflect.hasField(cmd, "x") ? Reflect.field(cmd, "x") : G.number(G.field(hero, "posx"));
+                var ry:Float = Reflect.hasField(cmd, "y") ? Reflect.field(cmd, "y") : G.number(G.field(hero, "posy"));
+                var rz:Float = Reflect.hasField(cmd, "z") ? Reflect.field(cmd, "z") : G.number(G.field(hero, "posz"));
+                var rlen:Float = Reflect.hasField(cmd, "len") ? Reflect.field(cmd, "len") : 6.0;
+                var rmask = Reflect.hasField(cmd, "mask") ? Std.int(Reflect.field(cmd, "mask")) : 4;
+                var rl = ["works " + Solid.works + " " + Solid.error];
+                for (hh in [0.3, 0.9, 1.5]) {
+                    var parts = [];
+                    for (i in 0...16) {
+                        var a = i * Math.PI / 8;
+                        parts.push(Std.string(Math.round(Solid.ray(rx, ry, rz + hh, rx + Math.cos(a) * rlen, ry + Math.sin(a) * rlen, rz + hh, rmask) * 100) / 100));
+                    }
+                    rl.push("h " + hh + ": " + parts.join(" "));
+                }
+                return rl;
+            case "solidbench":
+                // developer: what the body tests cost (microseconds each) and how many cells of a 41 x 41 block the broad phase flags
+                var bx = Math.round(G.number(G.field(hero, "posx"))), by = Math.round(G.number(G.field(hero, "posy"))), bz = G.number(G.field(hero, "posz"));
+                var t0 = haxe.Timer.stamp();
+                var flagged = 0, blockedCells = 0, cellsSeen = 0;
+                for (ix in -20...21) for (iy in -20...21) {
+                    var gzz = NavGrid.fineZ(bx + ix, by + iy, bz);
+                    if (!Math.isFinite(gzz)) continue;
+                    cellsSeen++;
+                    if (Solid.anyBox(bx + ix - 0.45, by + iy - 0.45, gzz + 0.4, bx + ix + 0.45, by + iy + 0.45, gzz + 1.4)) flagged++;
+                }
+                var t1 = haxe.Timer.stamp();
+                for (ix in -20...21) for (iy in -20...21) {
+                    var gzz = NavGrid.fineZ(bx + ix, by + iy, bz);
+                    if (Math.isFinite(gzz) && Solid.blocksCell(bx + ix, by + iy, gzz)) blockedCells++;
+                }
+                var t2 = haxe.Timer.stamp();
+                var t3 = haxe.Timer.stamp();
+                for (i in 0...1000) Solid.ray(bx, by, bz + 1, bx + 1, by, bz + 1);
+                var t4 = haxe.Timer.stamp();
+                return ["cells with ground " + cellsSeen + ", flagged by the broad phase " + flagged + ", blocked after rays " + blockedCells,
+                    "heights + broad phase: " + Math.round((t1 - t0) * 1000) + " ms, heights + blocksCell: " + Math.round((t2 - t1) * 1000) + " ms, 1000 rays: " + Math.round((t4 - t3) * 1000) + " ms"];
+            case "rayfull":
+                // developer: the full hit record of one ray (dir in degrees, h height above the feet, len)
+                var fx = G.number(G.field(hero, "posx")), fy = G.number(G.field(hero, "posy")), fz = G.number(G.field(hero, "posz"));
+                var fa = (Reflect.hasField(cmd, "dir") ? G.number(Reflect.field(cmd, "dir")) : 0.0) * Math.PI / 180;
+                var fh = Reflect.hasField(cmd, "h") ? G.number(Reflect.field(cmd, "h")) : 0.9;
+                var fln = Reflect.hasField(cmd, "len") ? G.number(Reflect.field(cmd, "len")) : 6.0;
+                var fromV = G.create("h3d.VectorImpl", [fx, fy, fz + fh]);
+                var toV = G.create("h3d.VectorImpl", [fx + Math.cos(fa) * fln, fy + Math.sin(fa) * fln, fz + fh]);
+                var hit = G.call("world.World", "raycastFull", G.current("world.World", "inst"), [fromV, toV, 4]);
+                return Probe.toJson(hit, Reflect.hasField(cmd, "depth") ? Std.int(Reflect.field(cmd, "depth")) : 4);
+            case "solidmap":
+                // developer: a text map around the hero: '#' a physics body in the way at waist height (a 1 m cross of rays), '.' free, '~' no ground
+                var sr = Reflect.hasField(cmd, "r") ? Std.int(Reflect.field(cmd, "r")) : 20;
+                var sx0 = G.number(G.field(hero, "posx")), sy0 = G.number(G.field(hero, "posy")), sz0 = G.number(G.field(hero, "posz"));
+                var srows = [];
+                var siy = sr;
+                while (siy >= -sr) {
+                    var line = "";
+                    for (six in -sr...sr + 1) {
+                        var px = Math.round(sx0) + six, py = Math.round(sy0) + siy;
+                        var gz = NavGrid.fineZ(px, py, sz0);
+                        var ch = "~";
+                        if (Math.isFinite(gz)) {
+                            ch = ".";
+                            var hit = Solid.blocksCell(px, py, gz);
+                            if (Solid.anyBox(px - 0.45, py - 0.45, gz + 0.4, px + 0.45, py + 0.45, gz + 1.4)) ch = hit ? "#" : "o";
+                            if (ch == "." && gz - sz0 > 1.1) ch = "^";
+                        }
+                        if (six == 0 && siy == 0) ch = "@";
+                        line += ch;
+                    }
+                    srows.push(line);
+                    siy--;
+                }
+                return srows;
             case "foes":
                 // developer: the monsters within r metres with every level the game can tell
                 var fr = Reflect.hasField(cmd, "r") ? G.number(Reflect.field(cmd, "r")) : 40.0;
