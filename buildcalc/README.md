@@ -45,6 +45,9 @@ For manual installation:
 
 ### Changelog
 
+**2026-10-25**
+- Ranged combat no longer ends with a melee main weapon: when the worn main weapon was of the other kind and the same weapon already sat in the arsenal, the search kept the worn melee weapon (with its shield) as the start and never left it; the arsenal weapon now gives way and the old main weapon takes its place, and the result is checked once more at the end.
+
 **2026-10-24**
 - A High priority now weighs three times a Medium one (it used to be outweighed: with High damage and Medium healing the infusions went to healing).
 - Infusions are chosen by the effects of their sets, not by item factions: the bonus attribute that works only on items of the infusion's faction adds nothing to the value.

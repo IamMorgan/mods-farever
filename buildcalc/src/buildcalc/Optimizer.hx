@@ -808,13 +808,29 @@ class Optimizer {
         for (c in pool) {
             if (c.ranged != settings.ranged) continue;
             var trial = copy(b);
-            place(trial, 0, c);
+            // the same weapon in the arsenal gives way (place refuses a weapon that is already on the other hand), the
+            // old main weapon takes the arsenal; a refused placement left the worn build as it was, and its value (a melee
+            // weapon with a shield) won over every weapon of the kind asked
+            var ars = trial.items.get(1);
+            if (ars != null && ars.id == c.id) {
+                place(trial, 1, null);
+                trial.arsenal = [];
+                place(trial, 0, c);
+                if (trial.items.get(0) == c) place(trial, 1, w);
+            } else place(trial, 0, c);
+            if (trial.items.get(0) != c) continue;
             refillOffhand(trial);
             var v = value(trial);
             if (v > bestV) { bestV = v; best = c; }
         }
         if (best != null) {
-            place(b, 0, best);
+            var ars = b.items.get(1);
+            if (ars != null && ars.id == best.id) {
+                place(b, 1, null);
+                b.arsenal = [];
+                place(b, 0, best);
+                if (b.items.get(0) == best) place(b, 1, w);
+            } else place(b, 0, best);
             refillOffhand(b);
             DebugLog.line("search: the worn main weapon " + w.id + " is " + (w.ranged ? "ranged" : "melee") + ", the search starts with " + best.id);
         } else DebugLog.line("search: no " + (settings.ranged ? "ranged" : "melee") + " main weapon among the candidates: the worn one is kept");
@@ -1241,6 +1257,8 @@ class Optimizer {
     function finish():Void {
         var b = finalBuild;
         stage = "done";
+        // a main weapon of the other kind than asked never ends in the result (the start of the search is the only way it could)
+        startWeapon(b);
         var rep = [];
         model.report = rep;
         // an item in a slot the game does not allow: taken out (it would be counted as worn)
