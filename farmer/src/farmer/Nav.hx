@@ -180,6 +180,8 @@ class Nav {
         }
         cliffRetried = false;
         cliffOverride = false;
+        wadeGoal = false;
+        wadeTried = false;
         noGain = 0;
         Log.t("nav", "go to " + Math.round(x) + "," + Math.round(y) + " (z " + (Math.isFinite(goalZ) ? Std.string(Math.round(goalZ)) : "?") + ", arrive " + arrive + ", noCliff " + noCliff + ")");
         trail = [];
@@ -252,6 +254,10 @@ class Nav {
         checkLanding(hero, now);
         watchJump(hero, now);
         try watchFall(hero, now) catch (_:Dynamic) {}
+        var wasWading = wade;
+        wade = wadeGoal || Hazard.heroInLiquid(hero);
+        NavGrid.wade = wade;
+        if (wade != wasWading && active) { Log.t("nav", "wading " + (wade ? "on (" + (wadeGoal ? "the only way leads through water" : "the hero is in the water") + ")" : "off")); needPlan = true; planBlock = 0; }
         if (!active) return;
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         if (distance(hero, tx, ty) <= arrive) { stop(); return; }
@@ -422,6 +428,18 @@ class Nav {
             return;
         }
         if (grid.state == 2) {
+            if (grid.unreachable && distance(hero, tx, ty) > 6 && !wade && !wadeTried) {
+                // no dry way: a stretch of water on the way is walked through (a swim of a few metres is cheaper than never getting there)
+                wadeTried = true;
+                wadeGoal = true;
+                wade = true;
+                NavGrid.wade = true;
+                grid.state = 0;
+                needPlan = true;
+                planBlock = 0;
+                Log.t("nav", "no dry way to " + Math.round(tx) + "," + Math.round(ty) + ": wading through water allowed for this goal");
+                return;
+            }
             if (grid.unreachable && distance(hero, tx, ty) > 6) {
                 Log.t("nav", "spot " + Math.round(tx) + "," + Math.round(ty) + " cannot be reached from here (the ground around runs out " + Math.round(grid.shortBy) + " m short): given up");
                 grid.state = 0;
@@ -598,6 +616,10 @@ class Nav {
      */
     /** Why the last corridor check said no (for the log). */
     public static var corridorWhy = "";
+    /** Water may be walked through (the hero is in it, or no dry way leads to the goal): the corridor test and the planner let it pass. */
+    public static var wade = false;
+    var wadeGoal = false;
+    var wadeTried = false;
 
     public static function corridorClear(hx:Float, hy:Float, hz:Float, wx:Float, wy:Float, cliff:Bool = false, solids:Bool = true):Bool {
         var dx = wx - hx, dy = wy - hy;
@@ -615,7 +637,7 @@ class Nav {
             if (!Math.isFinite(z)) { corridorWhy = "no ground at " + Math.round(px) + "," + Math.round(py); return false; }
             if (z - prev > FINE_RISE) { corridorWhy = "rise " + Math.round((z - prev) * 100) / 100 + " m at " + Math.round(px * 10) / 10 + "," + Math.round(py * 10) / 10; return false; }
             if (cliff && prev - z > NavGrid.safeDrop()) { corridorWhy = "drop " + Math.round((prev - z) * 100) / 100 + " m at " + Math.round(px) + "," + Math.round(py); return false; }
-            if (Hazard.wetCell(px, py, z, 0.45) || Hazard.trapAt(px, py, z)) { corridorWhy = "water or trap at " + Math.round(px) + "," + Math.round(py); return false; }
+            if ((!wade && Hazard.wetCell(px, py, z, 0.45)) || Hazard.trapAt(px, py, z)) { corridorWhy = "water or trap at " + Math.round(px) + "," + Math.round(py); return false; }
             // a prop with a body (bench, post, flower bed) that the heights miss: rays along this half metre, over the rising ground, on the
             // middle line and on both sides of the body
             if (solids && Solid.works) {
@@ -633,7 +655,7 @@ class Nav {
                 if (!Math.isFinite(q)) { corridorWhy = "no ground beside at " + Math.round(qx) + "," + Math.round(qy); return false; }
                 if (q - z > FINE_RISE) { corridorWhy = "wall beside (" + Math.round((q - z) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
                 if (cliff && z - q > NavGrid.safeDrop()) { corridorWhy = "cliff edge beside (" + Math.round((z - q) * 100) / 100 + " m) at " + Math.round(qx * 10) / 10 + "," + Math.round(qy * 10) / 10; return false; }
-                if (Hazard.wetCell(qx, qy, q, 0.3)) { corridorWhy = "water beside"; return false; }
+                if (!wade && Hazard.wetCell(qx, qy, q, 0.3)) { corridorWhy = "water beside"; return false; }
             }
             prev = z;
         }

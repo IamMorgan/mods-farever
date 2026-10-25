@@ -255,6 +255,9 @@ class NavGrid {
     }
 
     /** The height of a cell for the path, NaN when it is no place to stand (no ground, water, a harmful liquid). */
+    /** Wading: water is passable (at a price) - the hero stands in it already, or the only way on leads through a little of it. */
+    public static var wade = false;
+
     function open(ix:Int, iy:Int, refZ:Float, now:Float):Float {
         var z = height(ix, iy, refZ, now);
         if (!Math.isFinite(z)) return z;
@@ -264,6 +267,7 @@ class NavGrid {
         // a prop with a body closes its cell (the hero's own surroundings at the start stay open, it may stand next to one)
         if (strict && !(ix == sx && iy == sy) && !padCell(ix, iy) && solid(ix, iy, z, k)) return Math.NaN; // (the soft search passes them at a price, see `step`)
         if (wet.exists(k)) {
+            if (wade) return z;
             var near = Math.abs(ix - sx) <= ESCAPE && Math.abs(iy - sy) <= ESCAPE;
             if (!(escape && near)) {
                 // right at the start only the water on the ground itself closes a cell (a dock or a shore path has water within the margin)
@@ -485,6 +489,7 @@ class NavGrid {
                     var z1 = open(n.ix + dx, n.iy, n.z, now), z2 = open(n.ix, n.iy + dy, n.z, now);
                     if (!Math.isFinite(z1) || !Math.isFinite(z2) || z1 - n.z > JUMP_UP || z2 - n.z > JUMP_UP) continue;
                 }
+                if (wade) { var wk = heightKey(nx, ny, n.z); if (drowned.exists(wk)) extra += 6; else if (wet.exists(wk)) extra += 1; } // (the shortest swim, the driest way)
                 var g = n.g + (dx != 0 && dy != 0 ? 1.4142 : 1.0) + extra;
                 if (existing == null) {
                     existing = new Node(nx, ny, z);

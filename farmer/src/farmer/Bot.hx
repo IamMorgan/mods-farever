@@ -274,6 +274,7 @@ class Bot {
         if (G.field(hero, "inCutscene") == true) return;
 
         updateCounts();
+        if (job == null && leaveWater(now)) return;
         Nodes.remember(hero, now);
         if (Nodes.scanning() && wantsGather() && Hunt.onWorld(hero)) Nodes.scanStep(15); // (the whole map's nodes are read from the chunk files in the background)
         // once, at the start: a jump on the spot, to learn how high the hero jumps (the planner's jump height)
@@ -414,6 +415,42 @@ class Bot {
             AutoDodge.enabled = false;
             if (message != Locale.f("noStone")) message = Locale.f("stDone");
         }
+    }
+
+    var wetSince = -1.0;
+    var leaveAt = -100.0;
+
+    /**
+     * The hero stands in water and no way is being walked: it makes for the nearest dry ground at once (breath runs out under water; the 26.10 log has it
+     * standing in a pool for a minute after the way on was given up). True while it is on its way out.
+     */
+    function leaveWater(now:Float):Bool {
+        if (!Hazard.heroInLiquid(hero)) { wetSince = -1; return false; }
+        if (wetSince < 0) wetSince = now;
+        if (nav.active && !nav.gaveUp) { message = Locale.f("stTravel"); return true; } // the way out (or on) is walked first, nothing else is started in the water: a fight there is lost to the breath
+        if (now - leaveAt < 1.5) return true;
+        leaveAt = now;
+        var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
+        var tx = target != null ? G.number(G.field(target, "posx")) : hx, ty = target != null ? G.number(G.field(target, "posy")) : hy;
+        var best:Null<{x:Float, y:Float}> = null;
+        var bestScore = Math.POSITIVE_INFINITY;
+        for (r in [3.0, 5.0, 8.0, 12.0, 17.0, 24.0]) {
+            for (i in 0...16) {
+                var a = i * Math.PI / 8;
+                var px = hx + Math.cos(a) * r, py = hy + Math.sin(a) * r;
+                var z = NavGrid.fineZ(px, py, hz + 6);
+                if (!Math.isFinite(z) || z - hz > 16 || Hazard.wetCell(px, py, z, 0.8)) continue; // (the bank of a pool stands well above its floor)
+                var score = r * 3 + Nav.distance(hero, px, py) * 0 + Math.sqrt((px - tx) * (px - tx) + (py - ty) * (py - ty)) * 0.05;
+                if (score < bestScore) { bestScore = score; best = {x: px, y: py}; }
+            }
+            if (best != null) break;
+        }
+        if (best == null) { Log.t("nav", "in the water for " + Math.round(now - wetSince) + " s and no dry ground within 24 m"); return false; }
+        Log.t("nav", "in the water (" + Math.round(now - wetSince) + " s): out to the dry ground at " + Math.round(best.x) + "," + Math.round(best.y));
+        nav.goalZ = Math.NaN;
+        nav.noCliff = false;
+        nav.go(best.x, best.y, 1.5, now);
+        return true;
     }
 
     function useHomeStone():Bool {
@@ -674,7 +711,7 @@ class Bot {
             return false;
         }
         // (a foe the hero has hurt is never given up while it stands in reach: only one that took no damage at all for a long time, out of the hits' reach)
-        if (targetKind == "mob" && dNow <= 12 && now - progressAt > (hurt(target) ? NO_DAMAGE_TIME * 6 : NO_DAMAGE_TIME)) {
+        if (targetKind == "mob" && dNow <= 12 && !aggroOnHero(target) && now - progressAt > (hurt(target) ? NO_DAMAGE_TIME * 6 : NO_DAMAGE_TIME)) {
             // in reach and fighting, yet the monster has lost no health for a while (out of the hits' reach, on a ledge, immune): another one
             Log.t("bot", "the foe lost no health for " + NO_DAMAGE_TIME + " s at " + Math.round(dNow * 10) / 10 + " m (dz " + Math.round(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) + "): another one");
             blacklist.set(key(target), now + 120);
@@ -1435,6 +1472,8 @@ class Bot {
                 if (kindName == castKind) continue;
                 var banned = castBan.get(kindName);
                 if (banned != null && now < banned) continue;
+                var skillRange = G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), 0);
+                if (skillRange > 0 && skillRange < Nav.distance(hero, tx, ty) - 0.5) continue; // (a skill that does not reach the foe from here is not cast: the basic attack does)
                 if (crowded(now) && castTime(skill) > LONG_CAST) continue; // (surrounded, a long cast is cut by the dodge before it lands: the quick ones strike)
                 if (skillOk(skill)) { ready = skill; break; }
             }

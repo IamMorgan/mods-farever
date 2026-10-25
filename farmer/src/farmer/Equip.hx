@@ -88,7 +88,7 @@ class Equip {
                     var worn = G.call("st.Equipment", "getSlot", equipment, [slot]);
                     var gain = mine;
                     if (worn != null) {
-                        if (G.s(G.field(G.field(worn, "inf"), "type")) != type) { explain(id, item, slot + " holds another type (" + G.s(G.field(G.field(worn, "inf"), "type")) + ")"); continue; } // never swaps a bow for a sword
+                        // (any weapon the hero may wield counts, whatever its type: a better book, staff or halo is the player's own choice too; the game refuses what the class cannot use)
                         gain = mine - score(worn);
                         if (gain <= bestGain) explain(id, item, slot + " is not beaten by it (worn " + Services.itemId(worn) + ", score " + Math.round(score(worn)) + ")");
                     }
