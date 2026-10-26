@@ -28,6 +28,7 @@ class Bot {
     var countsReady = false;
     var job:ServiceJob = null;
     var jobFailedAt = -100.0;
+    var scrapFailedAt = -1000.0;
     var phase = "";
     var finishStage = 0;
     var finishAt = 0.0;
@@ -53,6 +54,14 @@ class Bot {
     var seekKey = "";
     var seekSince = 0.0;
     var defendAt = -100.0;
+    var defendKey = "";
+    var idleTick = -100.0;
+    var idleSince = -1.0;
+    var retargetAt = -100.0;
+    var lastPickScore = 0.0;
+    var fightKey = "";
+    var fightAx = Math.NaN;
+    var fightAy = Math.NaN;
     var unfinished:Dynamic = null;
     var lenientTarget = false;
     var lastNoTarget = 0.0;
@@ -81,6 +90,12 @@ class Bot {
     var gotoZ = Math.NaN;
 
     static inline var LOOT_SEEK = 16.0;
+    /** The most levels below the hero a monster may be to be hunted (while leveling), and what each level below costs in score metres: a monster of the hero's own
+        level is preferred to a lower one that is nearer by this much, but the hero does not run the map over for the last few levels of difference. */
+    static inline var MIN_DIFF = -1;
+    static inline var LOWER_COST = 450.0;
+    /** A fight starts inside this radius around where the hero first struck: farther from that spot (a dodge, a fleeing foe) the foe is let go. */
+    static inline var LEASH = 80.0;
     /** A monster this much above or below the hero is on another tier (a plateau, a gorge): the way there is long or none, and the walk along the edge circles. */
     static inline var MAX_DZ = 8.0;
     /** A monster farther than this (score metres) is not picked while hunting drops: the roaming goes there first. */
@@ -274,6 +289,7 @@ class Bot {
         if (G.field(hero, "inCutscene") == true) return;
 
         updateCounts();
+        Services.noteStation(hero, now);
         if (job == null && leaveWater(now)) return;
         Nodes.remember(hero, now);
         if (Nodes.scanning() && wantsGather() && Hunt.onWorld(hero)) Nodes.scanStep(15); // (the whole map's nodes are read from the chunk files in the background)
@@ -294,7 +310,7 @@ class Bot {
         finishStage = 0;
 
         if (Services.freeSlots(hero) > 1) skipBank = false;
-        if (Services.freeSlots(hero) <= 1 && now - jobFailedAt > 30) {
+        if (Services.freeSlots(hero) <= 1 && now - jobFailedAt > 30 && now - scrapFailedAt > 240) {
             // gathering: first the bank (its window opens from anywhere), then, if the bag is still full, recycle the chosen gear
             // (the recycler needs a walk to its station: the server only opens it within reach); leveling: only recycle, else fight on
             if (plan.resourcesLeft() && !skipBank) { startJob("bank", now); return; }
@@ -357,7 +373,17 @@ class Bot {
                 return;
             } else if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
             nav.goalZ = Math.NaN;
-            if (Nav.distance(hero, w.x, w.y) <= 2.2) { nav.stop(); job.retry(); return; }
+            if (Nav.distance(hero, w.x, w.y) <= job.walkArrive) { nav.stop(); job.retry(); return; }
+            if (nav.gaveUp && !nav.walkingToObelisk()) { // no way to the recycler from here: the trip is dropped for a while
+                nav.gaveUp = false;
+                nav.stop();
+                Log.t("svc", "job " + job.kind + ": no way to the recycler");
+                job.close(app);
+                job = null;
+                jobFailedAt = now;
+                scrapFailedAt = now;
+                return;
+            }
             if (!nav.travel(hero, w.x, w.y, now)) nav.go(w.x, w.y, 1.4, now);
             return;
         }
@@ -375,6 +401,7 @@ class Bot {
             return;
         }
         jobFailedAt = now;
+        if (kind == "scrap") scrapFailedAt = now; // (the recycler is in the city: a failed trip is not made again at once)
         message = r.substr(5);
         if (kind == "bank") { skipBank = true; jobFailedAt = -100; } // the bank is full or failed: recycling is next
         if (Services.freeSlots(hero) <= 1 && !(kind == "bank" && plan.recycle && anyQuality() && Services.hasScrapGear(hero, plan))) warnBagFull(now);
@@ -528,6 +555,61 @@ class Bot {
 
     var stoneAt = -1000.0;
 
+    /** The hero sits where nothing can be done (a closed gorge, an island): the home stone takes it to the city, from where the obelisks lead on. True when it was used. */
+    function idleStone(now:Float, why:String):Bool {
+        if (now - stoneAt < 150) return false;
+        stoneAt = now;
+        var used = useHomeStone();
+        Log.t("bot", "STUCK (" + why + "): home stone " + (used ? "used" : "not in the bag"));
+        if (!used) return false;
+        message = Locale.f("stHome");
+        nav.stop();
+        nav.forgetObeliskTrouble();
+        target = null;
+        targetKind = "";
+        roamKey = -1;
+        roamVisited = new Map();
+        blacklist = new Map(); deadAreas = [];
+        idleSince = -1;
+        nextThink = now + 14;
+        return true;
+    }
+
+    var levelZoneLevel = -1;
+    var levelZoneSet:Map<String, Bool> = null;
+
+    /** The zones where monsters of the hero's level (up to +2) live, from the game's unit sheet and spawner tables: the whole map is searched with them, not just the zones the map calls that level. */
+    function levelZones(level:Int):Map<String, Bool> {
+        if (levelZoneLevel != level || levelZoneSet == null) {
+            levelZoneLevel = level;
+            var units = Catalog.unitsOfLevels(level + MIN_DIFF, level + 2);
+            levelZoneSet = Hunt.zonesOf(units);
+            var names = [for (z in levelZoneSet.keys()) z];
+            names.sort(Reflect.compare);
+            Log.t("hunt", "monsters of level " + (level + MIN_DIFF) + ".." + (level + 2) + ": " + units.length + " kinds, living in " + names.length + " zones: " + names.slice(0, 40).join(" "));
+        }
+        return levelZoneSet;
+    }
+
+    /** See `farm`: a nearer monster of a better level than the one walked to (the new target is kept only when it is clearly better). */
+    function retarget(now:Float, level:Int):Void {
+        if (hurt(target) || aggroOnHero(target) || key(target) == defendKey) return;
+        var dT = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
+        if (dT < 35) return;
+        var diff = G.integer(G.field(target, "_level")) - level;
+        var current = dT + Math.abs(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) * 4.0 + (diff < 0 ? -diff * LOWER_COST : diff * 250);
+        var old = target, oldSince = targetSince, oldDescent = targetDescent, oldLocked = lockedFoe;
+        pickTarget(now, true, level, needDescents, false, true);
+        if (target != null && target != old && targetKind == "mob" && lastPickScore < current - 150 && lastPickScore < current * 0.65) {
+            Log.t("bot", "a better foe came into view (score " + Math.round(lastPickScore) + " against " + Math.round(current) + "): " + G.s(G.field(G.field(target, "inf"), "id")) + " lvl " + G.field(target, "_level") + " (hero " + level + ")");
+            targetSince = now;
+            engaged = false;
+            nav.stop();
+        } else {
+            target = old; targetKind = "mob"; targetSince = oldSince; targetDescent = oldDescent; lockedFoe = oldLocked;
+        }
+    }
+
     /** Every opened obelisk is out of reach on foot (the hero sits in a gorge or on a ledge): the home stone takes the hero to its city. */
     function strandedStone(now:Float):Bool {
         if (!nav.stranded) return false;
@@ -568,7 +650,7 @@ class Bot {
             var threat = nearbyThreat(now);
             if (threat != null) {
                 Log.w("defending against " + G.s(G.field(G.field(threat, "inf"), "id")) + " at " + Math.round(Nav.distance(hero, G.number(G.field(threat, "posx")), G.number(G.field(threat, "posy")))) + " m");
-                target = threat; targetKind = "mob"; lockedFoe = null; targetSince = now;
+                target = threat; targetKind = "mob"; lockedFoe = null; targetSince = now; defendKey = key(threat);
                 nav.stop();
             }
         }
@@ -588,11 +670,17 @@ class Bot {
                 if (!finishing && (toAttacker + margin < toTarget || unnoticed)) {
                     Log.t("bot", "defending against " + G.s(G.field(G.field(attacker, "inf"), "id")) + " at " + Math.round(toAttacker) + " m instead of the target at " + Math.round(toTarget) + " m" + (unnoticed ? " (the target has not noticed the hero)" : ""));
                     if (hurt(target)) unfinished = target; // (it is gone back to once the attacker is down)
-                    target = attacker; targetKind = "mob"; lockedFoe = null; targetSince = now;
+                    target = attacker; targetKind = "mob"; lockedFoe = null; targetSince = now; defendKey = key(attacker);
                     engaged = false;
                     nav.stop();
                 }
             }
+        }
+        // a foe far off is the target, and a nearer one of a better level has come into view on the way: that one (the old target is kept unless
+        // the new one is clearly better, else the hero would turn round for every monster that loads)
+        if (target != null && targetKind == "mob" && leveling && !engaged && !lenientTarget && !wantsGather() && now - targetSince > 5 && now - retargetAt > 3) {
+            retargetAt = now;
+            retarget(now, level);
         }
         if (target == null && unfinished != null) {
             var back = unfinished;
@@ -619,7 +707,7 @@ class Bot {
                 return;
             }
             needDescents = false;
-            if (target == null && leveling && roam(now, level, 2)) return;
+            if (target == null && leveling && roam(now, level, 2, null, levelZones(level))) return;
             // the map has no ground of the hero's level at all (the top zones are below it): the nearest lower monsters (up to 3 below) are better than none.
             // While such ground exists the hero keeps going to it, by obelisk or on foot, however long it takes - never settles for low monsters near by
             if (target == null && leveling && Hunt.onWorld(hero) && !Hunt.groundExists(level, 2)) pickTarget(now, leveling, level, needDescents, true);
@@ -627,7 +715,10 @@ class Bot {
             if (target == null && !leveling && wantsGather() && nodeRoam(now)) return;
             if (target == null && !leveling && huntRoam(now, level)) return;
             if (target == null) {
-                // nothing to do right now: wait for nodes to respawn
+                // nothing to do right now: wait for nodes to respawn. A minute of it and the hero is stuck somewhere (a gorge, an island): the home stone
+                if (now - idleTick > 1.5) idleSince = now;
+                idleTick = now;
+                if (leveling && now - idleSince > 45 && idleStone(now, "no target for " + Math.round(now - idleSince) + " s")) return;
                 nav.stop();
                 message = Locale.f("noTargets");
                 lastNoTarget = now;
@@ -745,7 +836,9 @@ class Bot {
         if (G.call("ent.GameObject", "isDead", target) == true || G.field(target, "dying") == true) return false;
         // the hero has grown past the monster on the way to it (a level gained in the last fight): one of its own level is looked for, unless this one
         // fights the hero or is hurt already
-        if (leveling && !lenientTarget && !hurt(target) && !aggroOnHero(target) && G.integer(G.field(target, "_level")) < G.integer(G.field(hero, "_level"))) {
+        // (a foe that is being defended against, or already near, is fought out: dropping it and picking it up again as a threat made the bot stop and
+        // start ten times a second, the 26.10 log)
+        if (leveling && !lenientTarget && !hurt(target) && !aggroOnHero(target) && key(target) != defendKey && dNow > 14 && G.integer(G.field(target, "_level")) < G.integer(G.field(hero, "_level")) + MIN_DIFF) {
             Log.t("bot", "the target is below the hero's level now: another one");
             return false;
         }
@@ -766,7 +859,7 @@ class Bot {
         return false;
     }
 
-    function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false):Void {
+    function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false, quiet:Bool = false):Void {
         lenientTarget = lenient;
         targetDescent = false;
         lastCut = 0;
@@ -862,8 +955,8 @@ class Bot {
                 var diff = foeLevel - level;
                 // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
                 // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
-                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : 0) || diff > 2)) continue;
-                score += (diff < 0 ? -diff * 600 : diff * 250);
+                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : MIN_DIFF) || diff > 2)) continue;
+                score += (diff < 0 ? -diff * (lenient ? 600 : LOWER_COST) : diff * 250);
             } else {
                 if (!drops) continue;
                 score += Math.max(0, foeLevel - level) * 250;
@@ -883,13 +976,14 @@ class Bot {
         if (best != null) {
             targetDescent = descents && nav.canReach(G.number(G.field(best, "posx")), G.number(G.field(best, "posy")), G.number(G.field(best, "posz")), false) != 1;
             target = best; targetKind = kind; lockedFoe = null;
-            Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.field(best, "_level") + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
+            lastPickScore = bestScore;
+            if (!quiet) Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.field(best, "_level") + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
                 + Math.round(G.number(G.field(best, "posz")) - hz) + ", score " + Math.round(bestScore) + ", " + groupOfBest + " others within " + GROUP_RANGE + " m" + (leveling ? ", leveling" : ", hunting drops"));
-        } else if (haxe.Timer.stamp() - lastSeenLog > 10) {
+        } else if (!quiet && haxe.Timer.stamp() - lastSeenLog > 10) {
             lastSeenLog = haxe.Timer.stamp();
             var levels = [for (l => n in seen) l + "x" + n];
             levels.sort(Reflect.compare);
-            Log.w((cut > 0 ? cut + " candidates cut as unreachable; " : "") + "no mob to fight for hero L" + level + (leveling ? " (own level -3..+2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
+            Log.w((cut > 0 ? cut + " candidates cut as unreachable; " : "") + "no mob to fight for hero L" + level + (leveling ? " (own level " + MIN_DIFF + "..+2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
         }
     }
 
@@ -946,8 +1040,11 @@ class Bot {
             var useZones = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
             var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN));
             if (g == null) {
-                Log.t("hunt", "no hunting ground left that was not visited lately (" + Lambda.count({iterator: () -> roamVisited.keys()}) + " cells remembered): the memory is wiped, the sweep starts over");
+                var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
+                Log.t("hunt", "no hunting ground left that was not visited lately (" + remembered + " cells remembered): the memory is wiped, the sweep starts over");
                 roamVisited = new Map();
+                // none even with an empty memory: the map has such ground but no way leads there from here (a gorge, a closed island) - the home stone
+                if (remembered == 0 && Hunt.groundExists(level, wide) && idleStone(now, "ground of the hero's level exists but no way leads to it")) return true;
                 roamWaitUntil = now + 6; // (look again in a few seconds: the reach map may be made by then)
                 return false;
             }
@@ -1249,6 +1346,28 @@ class Bot {
         var d = Nav.distance(hero, x, y);
         var dz = z - G.number(G.field(hero, "posz"));
         var range = combatRange();
+        // the fight stays within LEASH of where it began: a foe the dodge has been run away from (or one that flees) is let go before it resets and
+        // the hero is led in circles (the same foe, struck again and again from a farther place each time)
+        if (fightKey != key(target)) { fightKey = key(target); fightAx = Math.NaN; fightAy = Math.NaN; }
+        if (Math.isNaN(fightAx)) {
+            if (d <= range + 12) { fightAx = G.number(G.field(hero, "posx")); fightAy = G.number(G.field(hero, "posy")); }
+        } else if (Nav.distance(hero, fightAx, fightAy) > LEASH) {
+            if (aggroOnHero(target)) { // it follows and hits: the fight goes on where it is, from a new centre
+                fightAx = G.number(G.field(hero, "posx")); fightAy = G.number(G.field(hero, "posy"));
+            } else {
+                Log.t("fight", "the fight led " + Math.round(Nav.distance(hero, fightAx, fightAy)) + " m from where it began (the foe is " + Math.round(d) + " m away): let go for 5 min");
+                blacklist.set(key(target), now + 300);
+                deadAreas = [for (a in deadAreas) if (now < a.until) a];
+                deadAreas.push({x: x, y: y, until: now + 150});
+                fightKey = "";
+                target = null;
+                targetKind = "";
+                engaged = false;
+                nav.stop();
+                releaseAttack();
+                return;
+            }
+        }
         // a foe on another height (a ledge above, a pit below) is not hit from here, however near it is on the map: closer in on a way up
         // or down, or let go when none leads there
         var level = Math.abs(dz) <= HIT_HEIGHT;
@@ -1425,6 +1544,15 @@ class Bot {
         var active = G.call("ent.GameObject", "getActiveSkill", hero);
         var combo = G.integer(G.field(hero, "attackComboCount"));
         if (active != null && isBasic(active)) lastBasicSeen = now;
+        // how long each skill's cast really runs (the data's figure is 0 for a channel or a totem): a cast the dodge did not cut, timed from start to end
+        var runKind = active != null && !isBasic(active) ? G.s(G.field(active, "kind")) : "";
+        if (runKind != "") { if (trackKind != runKind) { trackKind = runKind; trackAt = now; } }
+        else if (trackKind != "") {
+            var took = now - trackAt;
+            if (!(AutoDodge.interruptedKind == trackKind && AutoDodge.interruptedAt >= trackAt - 0.1) && took > 0.15 && took < 8)
+                runTimes.set(trackKind, runTimes.exists(trackKind) ? runTimes.get(trackKind) * 0.6 + took * 0.4 : took);
+            trackKind = "";
+        }
         if (combo == 0) comboSince = now;
         if (now - skillDumpAt > 20) { skillDumpAt = now; dumpSkills(); }
         // Did the last cast take? (a ready skill that never starts would otherwise be tried every tenth of a second, and the
@@ -1435,17 +1563,34 @@ class Bot {
             if ((castSeen && active == null) || now - castAt > 0.7) {
                 // a cast the dodge cut: twice in 20 s and the skill is left alone for 15 s (the hero strikes with the quick ones and the basic attack
                 // meanwhile); a long cast in a crowd of hits is a cast that never lands, and the fight of it never ends
-                if (AutoDodge.interruptedKind == castKind && AutoDodge.interruptedAt >= castAt - 0.1) {
+                var wasCut = AutoDodge.interruptedKind == castKind && AutoDodge.interruptedAt >= castAt - 0.1;
+                if (wasCut) {
                     var times = cutCasts.exists(castKind) ? cutCasts.get(castKind) : [];
                     times = [for (t in times) if (now - t < 20) t];
                     times.push(now);
                     cutCasts.set(castKind, times);
+                    var hist = cutHistory.exists(castKind) ? cutHistory.get(castKind) : [];
+                    hist = [for (t in hist) if (now - t < 120) t];
+                    hist.push(now);
+                    cutHistory.set(castKind, hist);
                     if (times.length >= 2) {
-                        castBan.set(castKind, now + 15);
+                        // the ban grows while the skill keeps being cut (15, 30, 60, 120 s) and covers every other skill the dodge has cut lately
+                        var bans = banHistory.exists(castKind) ? banHistory.get(castKind) : [];
+                        bans = [for (t in bans) if (now - t < 150) t];
+                        var span = Math.min(120.0, 15.0 * Math.pow(2, bans.length));
+                        bans.push(now);
+                        banHistory.set(castKind, bans);
+                        castBan.set(castKind, now + span);
                         cutCasts.set(castKind, []);
-                        Log.t("fight", castKind + " is cut by the dodge again and again: left alone for 15 s, the quick skills and the basic attack strike instead");
+                        var also = [];
+                        for (other => stamps in cutHistory) {
+                            if (other == castKind) continue;
+                            if (Lambda.exists(stamps, t -> now - t < 60)) { castBan.set(other, Math.max(castBan.exists(other) ? castBan.get(other) : 0.0, now + span)); also.push(other); }
+                        }
+                        Log.t("fight", castKind + " is cut by the dodge again and again: left alone for " + Math.round(span) + " s" + (also.length > 0 ? " (with " + also.join(", ") + ")" : "") + ", the quick skills and the basic attack strike instead");
                     }
                 }
+
                 var fails = castFails.exists(castKind) ? castFails.get(castKind) : 0;
                 if (!castSeen && castSkill != null && skillOk(castSkill)) {
                     fails++;
@@ -1536,11 +1681,19 @@ class Bot {
             var t = G.number(G.field(inf, "duration"), 0);
             var anim = G.field(inf, "anim");
             if (anim != null) t = Math.max(t, G.number(G.field(anim, "duration"), 0));
+            var learnt = runTimes.get(G.s(G.field(skill, "kind")));
+            if (learnt != null) t = Math.max(t, learnt);
             return Math.isFinite(t) ? t : 0;
         } catch (_:Dynamic) return 0;
     }
 
     var castKind = "";
+    var trackKind = "";
+    var trackAt = 0.0;
+    /** When the dodge cut a skill (per kind, the last 2 minutes), when bans were laid on it, and how long its casts really run (seconds, learnt). */
+    var cutHistory:Map<String, Array<Float>> = new Map();
+    var banHistory:Map<String, Array<Float>> = new Map();
+    var runTimes:Map<String, Float> = new Map();
     var castSkill:Dynamic = null;
     var castAt = 0.0;
     var castSeen = false;

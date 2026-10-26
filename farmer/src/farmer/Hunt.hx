@@ -147,6 +147,7 @@ class Hunt {
                 viaObelisk = toHero + fromGround + 150;
             }
             var cost = Math.min(direct, viaObelisk) + (allow != null || allowZones != null ? 0 : (levels[index] - level) * 40);
+            if (allowZones != null && allow == null && levels[index] < level) cost += (level - levels[index]) * 60; // (a zone the map calls lower has fewer monsters of the hero's level)
             if (cost < bestCost) { bestCost = cost; best = {key: index, x: x, y: y, zone: ids[index], level: levels[index], away: direct}; }
         }
         return best;

@@ -63,6 +63,44 @@ class Services {
 
     // ---- the recycler ----
 
+    static inline var STATION_FILE = "hlx/config/farmer/stations.json";
+    /** Where a recycler was seen (the layer holds only the loaded chunks' stations, so a far hero finds none): kept between sessions. The home city's one is the first guess. */
+    static var stationAt:Null<{x:Float, y:Float}> = null;
+    static var stationRead = false;
+    static var stationScanAt = -100.0;
+
+    /** The recycler's place, remembered from an earlier sighting (or the home city's), null when none is known. */
+    public static function stationSpot():Null<{x:Float, y:Float}> {
+        if (!stationRead) {
+            stationRead = true;
+            stationAt = {x: -340.0, y: 1430.0}; // (the home city's recycler, seen in the 25.10 log)
+            try {
+                if (sys.FileSystem.exists(STATION_FILE)) {
+                    var d:Dynamic = haxe.Json.parse(sys.io.File.getContent(STATION_FILE));
+                    if (Reflect.field(d, "x") != null && Reflect.field(d, "y") != null) stationAt = {x: Reflect.field(d, "x"), y: Reflect.field(d, "y")};
+                }
+            } catch (_:Dynamic) {}
+        }
+        return stationAt;
+    }
+
+    /** Every few seconds: a recycler in the loaded world is remembered (and written down when its place is new). */
+    public static function noteStation(hero:Dynamic, now:Float):Void {
+        if (now - stationScanAt < 5) return;
+        stationScanAt = now;
+        try {
+            var st = scrapStation(hero);
+            if (st == null) return;
+            var x = G.number(G.field(st, "posx")), y = G.number(G.field(st, "posy"));
+            var known = stationSpot();
+            if (known != null && Math.abs(known.x - x) < 3 && Math.abs(known.y - y) < 3) return;
+            stationAt = {x: x, y: y};
+            Log.t("svc", "recycler seen at " + Math.round(x) + "," + Math.round(y) + ": remembered");
+            sys.io.File.saveContent(STATION_FILE, haxe.Json.stringify({x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10}));
+        } catch (_:Dynamic) {}
+    }
+
+    /** The recycler of the hero's layer, or null when none is loaded (it stands in the city, far from the hunting grounds). */
     public static function scrapStation(hero:Dynamic):Dynamic {
         var layer = G.field(hero, "layer");
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
@@ -177,18 +215,21 @@ class ServiceJob {
 
     public function step(app:Dynamic, hero:Dynamic, plan:FarmPlan, now:Float):String {
         if (startedAt == 0) startedAt = now;
-        if (now - startedAt > (walkTo != null ? 240 : 90)) { close(app); return "fail:timeout"; }
+        if (now - startedAt > (walkTo != null ? 600 : 90)) { close(app); return "fail:timeout"; }
         if (now < nextAt || (stage >= 1 && now < hold)) return "run";
         return kind == "scrap" ? stepScrap(app, hero, plan, now) : stepBank(app, hero, plan, now);
     }
 
     /** Set while the recycler is too far for the server to open it: where the bot has to walk first. */
     public var walkTo:Null<{x:Float, y:Float}> = null;
+    /** How near the walk to the recycler has to come (the station itself: a few metres; its remembered place: near enough for it to load). */
+    public var walkArrive = 2.2;
     var requestedAt = 0.0;
     var attempts = 0;
 
     public function retry():Void {
         walkTo = null;
+        walkArrive = 2.2;
         stage = 0;
         attempts = 1;
     }
@@ -207,7 +248,13 @@ class ServiceJob {
     function stepScrap(app:Dynamic, hero:Dynamic, plan:FarmPlan, now:Float):String {
         if (stage == 0) {
             station = Services.scrapStation(hero);
-            if (station == null) return "fail:no recycler in this zone";
+            if (station == null) {
+                // not loaded here: the remembered place is walked (or flown) to, the station loads as the hero comes near
+                var spot = Services.stationSpot();
+                if (spot == null || attempts > 0 || !Hunt.onWorld(hero)) return "fail:no recycler in this zone";
+                if (Nav.distance(hero, spot.x, spot.y) > 25) { walkTo = {x: spot.x, y: spot.y}; walkArrive = 20; return "run"; }
+                return "fail:no recycler at the remembered place";
+            }
             var existing = openedScrapWindow(app);
             if (existing != null) { window = existing; stationInv = G.call("ui.win.Scrap", "get_inventory", window); stage = 2; return "run"; }
             // The server makes the player's recycler inventory when the station is first used within reach; once it exists

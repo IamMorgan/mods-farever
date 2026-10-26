@@ -247,6 +247,21 @@ class Catalog {
         return out;
     }
 
+    /** The ids of the (non-boss) fighting monsters whose level range reaches into lo..hi (a spawn's level is drawn from lvl..maxLvl). */
+    public static function unitsOfLevels(lo:Int, hi:Int):Array<String> {
+        var out = [];
+        for (rec in G.sheet("unit")) {
+            if (isBoss(rec)) continue;
+            var type = G.s(G.field(rec, "type"));
+            if (type == "Environment" || type == "Critter") continue;
+            var l = optional(rec, "lvl"), m = optional(rec, "maxLvl");
+            if (l == null && m == null) continue;
+            var from = l != null ? l : m, to = m != null ? m : l;
+            if (to >= lo && from <= hi) out.push(G.s(G.field(rec, "id")));
+        }
+        return out;
+    }
+
     static var unitRecords:Map<String, Dynamic>;
 
     public static function unitRecord(id:String):Dynamic {
