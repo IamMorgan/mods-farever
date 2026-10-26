@@ -985,7 +985,7 @@ class Bot {
         message = Locale.f("stTravel");
         if (G.call("ent.Hero", "isFlyingToObelisk", hero) == true) { leaveWaitUntil = now + 3; return true; }
         if (now < leaveWaitUntil) return true;
-        if (nav.flyElsewhere(hero, now, spots != null && spots.length > 0 ? spots : [{x: roamX, y: roamY}])) { roamVisited = new Map(); leaveWaitUntil = now + 3; return true; }
+        if (nav.flyElsewhere(hero, now, spots != null && spots.length > 0 ? spots : [{x: roamX, y: roamY}])) { roamVisited = new Map(); leaveWaitUntil = now + 3; leaving = false; return true; } // (one flight: the hunt goes on where the hero lands)
         var best = null, bestD = 350.0;
         for (o in Nav.obelisks(hero)) {
             var d = Nav.distance(hero, o.x, o.y);
@@ -1101,6 +1101,7 @@ class Bot {
     /** The spot lies beyond HUNT_UNKNOWN and the reach maps neither hold it nor close it off: no way to it is known. */
     function farUnknown(x:Float, y:Float):Bool {
         if (Nav.distance(hero, x, y) <= HUNT_UNKNOWN) return false;
+        for (o in Nav.obelisks(hero)) if (Math.sqrt((o.x - x) * (o.x - x) + (o.y - y) * (o.y - y)) <= 150) return false; // (reached by a flight, the walk from the obelisk is short)
         var a = nav.canReach(x, y, Math.NaN), b = nav.canReach(x, y, Math.NaN, true);
         return a != 1 && b != 1 && (a < 0 || b < 0);
     }
