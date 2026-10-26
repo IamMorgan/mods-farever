@@ -66,8 +66,6 @@ class Bot {
     }
     var idleTick = -100.0;
     var idleSince = -1.0;
-    var retargetAt = -100.0;
-    var lastPickScore = 0.0;
     var fightKey = "";
     var leashSince = -1.0;
     var leashLogAt = -100.0;
@@ -82,20 +80,16 @@ class Bot {
     var lastBasicSeen = 0.0;
     var comboSince = 0.0;
     var lastFightLog = 0.0;
-    var failTimes:Array<Float> = [];
-    var escapeBumper:Dynamic = null;
     /** The reach map with the glider's descents is asked for (nothing was left to go to on foot), and a target that needs one. */
     var needDescents = false;
     var descentNoteAt = -100.0;
     var targetDescent = false;
     var lastCut = 0;
-    var escapeAt = 0.0;
     var progressBest = 1e9;
     var progressAt = 0.0;
     var progressKey = "";
     var progressHp = 1e12;
     var lastSeenLog = -100.0;
-    var bumperHopAt = -100.0;
     var gotoX:Null<Float> = null;
     var gotoY:Null<Float> = null;
     var gotoArrive = 2.0;
@@ -108,18 +102,17 @@ class Bot {
     static inline var LOWER_COST = 450.0;
     static inline var MAX_DIFF = 1;
     /** A fight starts inside this radius around where the hero first struck: farther from that spot (a dodge, a fleeing foe) the foe is let go. */
-    static inline var LEASH = 50.0;
+    static inline var LEASH = 40.0;
     /** A monster this much above or below the hero is on another tier (a plateau, a gorge): the way there is long or none, and the walk along the edge circles. */
     static inline var MAX_DZ = 8.0;
     /** A monster farther than this (score metres) is not picked while hunting drops: the roaming goes there first. */
     static inline var FAR_TARGET = 300.0;
     /** A monster this close to the hero is fought before going on with a node. */
     static inline var THREAT_RANGE = 9.0;
-    static inline var BUMPER_RANGE = 90.0;
     /** A ready skill waits at most this long for the weapon's combo series to end. */
     static inline var COMBO_WAIT = 2.5;
     /** A monster that has the hero as its target is fought from this far. */
-    static inline var AGGRO_RANGE = 28.0;
+    static inline var AGGRO_RANGE = 15.0;
     /** Monsters this close to the node that is to be gathered are cleared first. */
     static inline var NODE_GUARD = 8.0;
     /** A foe in reach that loses no health for this long is let go (hits into the void). */
@@ -148,8 +141,6 @@ class Bot {
         targetKind = "";
         AutoDodge.enabled = true;
         message = Locale.f("stTravel");
-        failTimes = [];
-        escapeBumper = null;
         Log.t("mod", "BOT START plan " + (plan == null ? "?" : plan.toJson()) + (hero == null ? "" : " hero L" + G.integer(G.field(hero, "_level")) + " glider " + Nav.hasGlider(hero)));
     }
 
@@ -211,7 +202,7 @@ class Bot {
         Probe.app = app;
         AutoDodge.botDriven = running;
         // the fight zone binds the dodge too (see LEASH)
-        if (running && targetKind == "mob" && target != null && !Math.isNaN(fightAx) && fightKey == key(target)) { AutoDodge.zoneX = fightAx; AutoDodge.zoneY = fightAy; AutoDodge.zoneR = LEASH - 1; }
+        if (running && targetKind == "mob" && target != null && !Math.isNaN(fightAx) && now - lastFightAt < 20) { AutoDodge.zoneX = fightAx; AutoDodge.zoneY = fightAy; AutoDodge.zoneR = LEASH - 1; }
         else AutoDodge.zoneR = -1;
         if (!running) { releaseAttack(); return; }
         try AutoDodge.update(hero, now) catch (error:Dynamic) Log.err("dodge update", error);
@@ -281,8 +272,8 @@ class Bot {
             + " hp " + Math.round(hp) + "/" + Math.round(max) + " L" + G.integer(G.field(hero, "_level")) + " | " + (message == "" ? "-" : message) + " | target " + tgt
             + " | " + nav.status(hero, now) + " | dodge " + AutoDodge.dodging() + " glide " + (G.field(hero, "gliding") == true)
             + " | combo " + G.integer(G.field(hero, "attackComboCount")) + " held " + attackDown + " skill " + (active == null ? "-" : G.s(G.field(active, "kind")))
-            + " | free " + Services.freeSlots(hero) + " traps " + Hazard.trapCount() + (job != null ? " job " + job.kind : "") + (escapeBumper != null ? " escaping" : "")
-            + " fails " + failTimes.length + " focus " + windowFocused());
+            + " | free " + Services.freeSlots(hero) + " traps " + Hazard.trapCount() + (job != null ? " job " + job.kind : "")
+            + " focus " + windowFocused());
     }
 
     static function windowFocused():Bool {
@@ -513,67 +504,6 @@ class Bot {
 
     // ---- choosing and working a target ----
 
-    // ---- out of a pit ----
-
-    /** Three targets in a minute that no way leads to: the hero sits in a place it cannot walk out of (a pit, a gorge). */
-    var trapRefX = 0.0;
-    var trapRefY = 0.0;
-
-    /** (and the hero has stayed within 40 m of where the first of them happened: giving up targets while travelling is no trap) */
-    function trapped():Bool return failTimes.length >= 3 && Nav.distance(hero, trapRefX, trapRefY) < 40;
-
-    /** The nearest bumper (a trampoline of the world) on about the hero's level that is within reach, or null. */
-    function nearestBumper():Dynamic {
-        var hz = G.number(G.field(hero, "posz"));
-        var best:Dynamic = null;
-        var bestD = BUMPER_RANGE;
-        for (e in G.fastArray(G.field(G.field(hero, "layer"), "interactibles"))) {
-            if (e == null || G.field(e, "removed") == true || !G.isA(e, "ent.interactible.Bumper")) continue;
-            var id = G.s(G.field(G.field(e, "inf"), "id"));
-            if (id.indexOf("Flying") >= 0 || id.indexOf("Wall") >= 0) continue; // a bumper in the air, one that bounces off a wall
-            if (G.field(e, "enabled") == false || Math.abs(G.number(G.field(e, "posz")) - hz) > 4) continue;
-            var d = Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")));
-            if (d < bestD) { bestD = d; best = e; }
-        }
-        return best;
-    }
-
-    /** Walks onto a bumper (it throws the hero up, the glider and the way on do the rest); without one the home stone is used. */
-    function escapePit(now:Float):Void {
-        if (escapeBumper == null) {
-            var b = nearestBumper();
-            if (b == null) {
-                Log.w("trapped: no bumper near, the home stone");
-                failTimes = [];
-                if (useHomeStone()) { message = Locale.f("stHome"); nextThink = now + 12; blacklist = new Map(); deadAreas = []; }
-                return;
-            }
-            Log.w("trapped: walking onto the bumper " + G.s(G.field(G.field(b, "inf"), "id")));
-            escapeBumper = b;
-            escapeAt = now;
-            target = null;
-            targetKind = "";
-            releaseAttack();
-        }
-        var x = G.number(G.field(escapeBumper, "posx")), y = G.number(G.field(escapeBumper, "posy"));
-        nav.goalZ = G.number(G.field(escapeBumper, "posz"));
-        nav.noCliff = false;
-        message = Locale.f("stTravel");
-        if (now - escapeAt > 30 || G.field(escapeBumper, "removed") == true || Nav.distance(hero, x, y) < 0.8) {
-            Log.w("bumper step done (" + Math.round(now - escapeAt) + " s)");
-            escapeBumper = null;
-            failTimes = [];
-            blacklist = new Map(); deadAreas = [];
-            nav.stop();
-            return;
-        }
-        // a monster in the way is fought first
-        var foe = nearbyThreat(now);
-        if (foe != null) { target = foe; targetKind = "mob"; lockedFoe = null; targetSince = now; nav.stop(); workMob(now, false); return; }
-        if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
-        nav.go(x, y, 0.4, now);
-    }
-
     var stoneAt = -1000.0;
 
     /** The hero sits where nothing can be done (a closed gorge, an island): the home stone takes it to the city, from where the obelisks lead on. True when it was used. */
@@ -596,8 +526,6 @@ class Bot {
         return true;
     }
 
-    /** Kinds of monster seen to be far tougher than the hero: left out of the hunting grounds of leveling. */
-    var toughIds:Map<String, Bool> = new Map();
     var levelZoneLevel = -1;
     var levelZoneSet:Map<String, Bool> = null;
 
@@ -605,34 +533,13 @@ class Bot {
     function levelZones(level:Int):Map<String, Bool> {
         if (levelZoneLevel != level || levelZoneSet == null) {
             levelZoneLevel = level;
-            var units = [for (u in Catalog.unitsOfLevels(level + MIN_DIFF, level + MAX_DIFF)) if (!toughIds.exists(u)) u];
+            var units = [for (u in Catalog.unitsOfLevels(level + MIN_DIFF, level + MAX_DIFF)) u];
             levelZoneSet = Hunt.zonesOf(units);
             var names = [for (z in levelZoneSet.keys()) z];
             names.sort(Reflect.compare);
             Log.t("hunt", "monsters of level " + (level + MIN_DIFF) + ".." + (level + MAX_DIFF) + ": " + units.length + " kinds, living in " + names.length + " zones: " + names.slice(0, 40).join(" "));
         }
         return levelZoneSet;
-    }
-
-    /** See `farm`: a nearer monster of a better level than the one walked to (the new target is kept only when it is clearly better). */
-    function retarget(now:Float, level:Int):Void {
-        if (hurt(target) || aggroOnHero(target) || key(target) == defendKey) return;
-        var dT = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
-        if (dT < 35) return;
-        var diff = G.integer(G.field(target, "_level")) - level;
-        var current = dT + Math.abs(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) * 4.0 + (diff < 0 ? -diff * LOWER_COST : diff * 250);
-        var curWay = nav.pathCost(G.number(G.field(target, "posx")), G.number(G.field(target, "posy")), G.number(G.field(target, "posz")), needDescents);
-        if (!Math.isNaN(curWay) && curWay > dT) current += curWay - dT;
-        var old = target, oldSince = targetSince, oldDescent = targetDescent, oldLocked = lockedFoe;
-        pickTarget(now, true, level, needDescents, false, true);
-        if (target != null && target != old && targetKind == "mob" && lastPickScore < current - 150 && lastPickScore < current * 0.65) {
-            Log.t("bot", "a better foe came into view (score " + Math.round(lastPickScore) + " against " + Math.round(current) + "): " + G.s(G.field(G.field(target, "inf"), "id")) + " lvl " + G.field(target, "_level") + " (hero " + level + ")");
-            targetSince = now;
-            engaged = false;
-            nav.stop();
-        } else {
-            target = old; targetKind = "mob"; targetSince = oldSince; targetDescent = oldDescent; lockedFoe = oldLocked;
-        }
     }
 
     /** Every opened obelisk is out of reach on foot (the hero sits in a gorge or on a ledge): the home stone takes the hero to its city. */
@@ -658,7 +565,6 @@ class Bot {
 
     function farm(now:Float, leveling:Bool, level:Int):Void {
         if (strandedStone(now)) return;
-        if (escapeBumper != null || trapped()) { escapePit(now); return; }
         if (target != null && !targetValid(now, leveling)) {
             var lostId = "";
             try lostId = G.s(G.field(G.field(target, "inf"), "id")) catch (_:Dynamic) {}
@@ -705,12 +611,6 @@ class Bot {
         }
         // a long time in a pit (a closed region) with no fight: the home stone, not a wander
         if (leveling && now - lastFightAt > 60 && now - stoneAt > 150 && nav.inClosedRegion(hero, now) && idleStone(now, "a minute in a closed region (pit) with no fight")) return;
-        // a foe far off is the target, and a nearer one of a better level has come into view on the way: that one (the old target is kept unless
-        // the new one is clearly better, else the hero would turn round for every monster that loads)
-        if (target != null && targetKind == "mob" && leveling && !engaged && !lenientTarget && !wantsGather() && now - targetSince > 5 && now - retargetAt > 3) {
-            retargetAt = now;
-            retarget(now, level);
-        }
         if (target == null && unfinished != null) {
             var back = unfinished;
             unfinished = null;
@@ -849,10 +749,6 @@ class Bot {
                 deadAreas.push({x: G.number(G.field(target, "posx")), y: G.number(G.field(target, "posy")), until: now + 120});
             }
             nav.gaveUp = false;
-            // (a target higher than the hero that is out of reach is out of reach by bumper too: the planner (NavGrid) already counts the pads)
-            if (failTimes.length == 0) { trapRefX = G.number(G.field(hero, "posx")); trapRefY = G.number(G.field(hero, "posy")); }
-            failTimes.push(now);
-            while (failTimes.length > 0 && now - failTimes[0] > 70) failTimes.shift();
             return false;
         }
         if (targetKind == "node") {
@@ -891,12 +787,10 @@ class Bot {
         return false;
     }
 
+    /** While leveling a monster this near a pack leader, an elite or a boss is left alone (its pack joins the fight). */
+    static inline var DANGER_RANGE = 25.0;
     /** While leveling a monster beyond the reach map is a target only this near. */
-    static inline var FAR_UNKNOWN = 130.0;
-    /** While leveling a monster this near a pack leader, an elite or a boss is left alone. */
-    static inline var DANGER_RANGE = 45.0;
-    /** While leveling a monster with more than this many times the hero's life is left alone. */
-    static inline var STRONG_RATIO = 2.3;
+    static inline var FAR_UNKNOWN = 120.0;
 
     function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false, quiet:Bool = false):Void {
         lenientTarget = lenient;
@@ -950,7 +844,6 @@ class Bot {
             if (pad.id.indexOf("Flying") >= 0 || pad.id.indexOf("Wall") >= 0 || Math.abs(pad.z - hz) > 3 || Nav.distance(hero, pad.x, pad.y) > 110) continue;
             padRise = Math.max(padRise, Pads.expectedRise(pad));
         }
-        var heroMax = G.number(G.call("ent.Unit", "get_maxHealth", hero), 0);
         var seen:Map<Int, Int> = new Map();
         var foePos:Array<{x:Float, y:Float}> = [];
         var dangerPos:Array<{x:Float, y:Float}> = [];
@@ -983,12 +876,7 @@ class Bot {
             if (reach == 0) { cut++; continue; } // the reach map says no way leads there (another tier, behind a cliff)
             // beyond the reach map the way is a guess: a monster far off is the hunting grounds' business (the obelisk or the road takes the hero there), not a
             // target (the 26.10 runs walked 800-1200 m towards a slime the way-finder never found a way to, in circles)
-            // a monster far tougher than the hero is not fought while leveling (a level-11 wolf, 339 life, took a 138-life mage's all in 12 s and killed it, 26.10)
-            if (leveling && heroMax > 0 && G.number(G.call("ent.Unit", "get_maxHealth", e), 0) > STRONG_RATIO * heroMax) {
-                var tid = G.s(G.field(inf, "id"));
-                if (!toughIds.exists(tid)) { toughIds.set(tid, true); levelZoneSet = null; Log.t("hunt", tid + " is too strong for the hero (" + Math.round(G.number(G.call("ent.Unit", "get_maxHealth", e), 0)) + " life against " + Math.round(heroMax) + "): its zones are not hunting grounds"); }
-                continue;
-            }
+            // beyond the reach map the way is a guess: such a monster is the hunting grounds' business (they walk the hero there), not a target
             if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) continue;
             if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
                 var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
@@ -1033,7 +921,6 @@ class Bot {
         for (c in cands) {
             var others = -1; // (the monster itself is in the list)
             for (p in foePos) if ((p.x - c.x) * (p.x - c.x) + (p.y - c.y) * (p.y - c.y) <= GROUP_RANGE * GROUP_RANGE) others++;
-            if (leveling && others >= 3) continue; // (a herd of four or more: the hero is pressed into a corner and falls, 26.10)
             var counted = Std.int(Math.min(GROUP_MAX, Math.max(0, others)));
             var s = c.score + counted * GROUP_COST;
             if (s < bestScore) { bestScore = s; best = c.e; kind = "mob"; groupOfBest = Std.int(Math.max(0, others)); }
@@ -1042,7 +929,6 @@ class Bot {
         if (best != null) {
             targetDescent = descents && nav.canReach(G.number(G.field(best, "posx")), G.number(G.field(best, "posy")), G.number(G.field(best, "posz")), false) != 1;
             target = best; targetKind = kind; lockedFoe = null;
-            lastPickScore = bestScore;
             if (!quiet) Log.w("target mob " + G.s(G.field(G.field(best, "inf"), "id")) + " lvl " + G.field(best, "_level") + " (hero " + level + ") at " + Math.round(Nav.distance(hero, G.number(G.field(best, "posx")), G.number(G.field(best, "posy")))) + " m, dz "
                 + Math.round(G.number(G.field(best, "posz")) - hz) + ", score " + Math.round(bestScore) + ", " + groupOfBest + " others within " + GROUP_RANGE + " m" + (leveling ? ", leveling" : ", hunting drops"));
         } else if (!quiet && haxe.Timer.stamp() - lastSeenLog > 10) {
@@ -1085,6 +971,29 @@ class Bot {
         return roam(now, level, 3, huntLevels, huntZones);
     }
 
+    var roamFails:Array<Float> = [];
+    var leaving = false;
+    var leaveFailed = false;
+    var leaveWaitUntil = 0.0;
+
+    /** Walks to the nearest opened obelisk and flies from it to another one. True while that goes on, false when it cannot be done. */
+    function leaveByObelisk(now:Float):Bool {
+        message = Locale.f("stTravel");
+        if (G.call("ent.Hero", "isFlyingToObelisk", hero) == true) { leaveWaitUntil = now + 3; return true; }
+        if (now < leaveWaitUntil) return true;
+        if (nav.flyElsewhere(hero, now, [{x: roamX, y: roamY}])) { roamVisited = new Map(); leaveWaitUntil = now + 3; return true; }
+        var best = null, bestD = 350.0;
+        for (o in Nav.obelisks(hero)) {
+            var d = Nav.distance(hero, o.x, o.y);
+            if (d < bestD) { bestD = d; best = o; }
+        }
+        if (best == null || bestD < 2.5 || (nav.gaveUp && !nav.walkingToObelisk())) { nav.gaveUp = false; nav.stop(); return false; }
+        nav.goalZ = Math.isFinite(best.z) ? best.z : Math.NaN;
+        nav.noCliff = true;
+        nav.go(best.x, best.y, 1.5, now);
+        return true;
+    }
+
     function roam(now:Float, level:Int, wide:Int = 2, ?zoneLevels:Array<Int>, ?zoneIds:Map<String, Bool>):Bool {
         if (!Hunt.onWorld(hero)) return false;
         if (!Hunt.ready()) { Hunt.scan(250); message = Locale.f("stTravel"); return true; }
@@ -1098,8 +1007,16 @@ class Bot {
                 roamKey = -1;
                 nav.gaveUp = false;
                 nav.stop();
-                if (arrived) { roamWaitUntil = now + 4; return true; }
+                if (arrived) { roamFails = []; roamWaitUntil = now + 4; return true; }
+                // three grounds in two minutes that no way leads to: the hero sits in a pocket (the city's basin, a ledge): the obelisks lead out of it
+                roamFails.push(now);
+                roamFails = [for (t in roamFails) if (now - t < 120) t];
+                if (roamFails.length >= 3) { roamFails = []; leaving = true; Log.t("hunt", "three grounds in a row cannot be walked to: out of this place by obelisk"); }
             }
+        }
+        if (leaving) {
+            if (leaveByObelisk(now)) return true;
+            leaving = false;
         }
         if (roamKey < 0) {
             // the monsters' own zones when the game's tables know them (the whole map), else the zones of their levels
@@ -1109,6 +1026,9 @@ class Bot {
             // (the map with the glider's descents too: the way out of a basin by a drop and a ford is a way)
             if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
             var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
+            // no ground inside the closed region the hero stands in (the city's basin, a ledge): out by obelisk, not paced out on foot
+            if (g == null && nav.inClosedRegion(hero, now) && !leaveFailed) { leaving = true; if (leaveByObelisk(now)) return true; leaving = false; leaveFailed = true; }
+            if (g != null) leaveFailed = false;
             if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !nearDeath(x, y, now));
             if (g == null) {
                 var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
@@ -1299,8 +1219,8 @@ class Bot {
         var zz = z == null ? Math.NaN : z;
         var plain = nav.canReach(x, y, zz);
         var viaGlide = (targetDescent && target != null) || (plain == 0 && nav.canReach(x, y, zz, true) != 0); // (only the glider's descents lead there: the cliffs are open)
-        nav.noCliff = escapeBumper == null && !(viaGlide && !engaged);
-        nav.descentOk = escapeBumper == null && !engaged;
+        nav.noCliff = !(viaGlide && !engaged);
+        nav.descentOk = !engaged;
         // a spot the reach map says no way on foot leads to: by obelisk, whatever the gain (the glider's descents excepted)
         var force = !viaGlide && plain == 0;
         if (!nav.travel(hero, x, y, now, force)) nav.go(x, y, arrive, now);
@@ -1354,7 +1274,7 @@ class Bot {
         } catch (_:Dynamic) {}
         var fallback = rangedWeapon() ? 9.0 : 2.6;
         // (the margin keeps the hero inside the reach while the foe steps about; melee reach is the body's too, so it stays close)
-        rangeValue = basic > 0 ? Math.max(2.2, Math.min(MAX_FIGHT_RANGE, basic * 0.8)) : fallback;
+        rangeValue = rangedWeapon() ? MAX_FIGHT_RANGE : basic > 0 ? Math.max(2.2, Math.min(MAX_FIGHT_RANGE, basic * 0.8)) : fallback; // (a ranged hero strikes from 22 m: the skills that reach, the foe comes to the rest)
         if (Math.abs(rangeValue - rangeLogged) > 0.3) { rangeLogged = rangeValue; Log.t("fight", "fight range " + Math.round(rangeValue * 10) / 10 + " m (basic attack reach " + Math.round(basic * 10) / 10 + " m, " + (basic > 0 ? "from the game" : "fallback for the weapon") + ")"); }
         return rangeValue;
     }
@@ -1419,7 +1339,12 @@ class Bot {
         var range = combatRange();
         // the fight is held inside a zone of LEASH metres around the spot where it began: a hero the dodge has carried out of it walks back in, a foe that
         // stands outside it is not chased (it is waited for inside; one that never comes in is let go after a few seconds)
-        if (fightKey != key(target)) { fightKey = key(target); fightAx = Math.NaN; fightAy = Math.NaN; leashSince = -1; }
+        // (the zone belongs to the whole fight: a new foe inside it, e.g. an attacker the hero turns to, does not move its centre)
+        if (fightKey != key(target)) {
+            fightKey = key(target);
+            leashSince = -1;
+            if (!Math.isNaN(fightAx) && (now - lastFightAt > 20 || Nav.distance(target, fightAx, fightAy) > LEASH - 4)) { fightAx = Math.NaN; fightAy = Math.NaN; }
+        }
         if (!Math.isNaN(fightAx)) {
             var heroOut = Nav.distance(hero, fightAx, fightAy);
             var foeOut = Nav.distance(target, fightAx, fightAy);

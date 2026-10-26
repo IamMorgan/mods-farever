@@ -39,7 +39,7 @@ class NavGrid {
     static inline var STEP_UP = 0.5;
     /** How far above a cell's neighbour the ground is looked for: a little over the highest rise a jump clears (JUMP_MAX). */
     static inline var LOOK_UP = 2.9;
-    /** The highest rise the planner ever jumps (the hero's jump peaks at about 3.3 m: a hill or a ledge of 2 m is just jumped onto). */
+    /** The highest rise the planner ever jumps (the hero jumps about 3.3 m high: hills and ledges of 2.25 m (the way out of the city basin) need 2.5). */
     public static inline var JUMP_MAX = 2.5;
     /** A drop deeper than this is a cliff (the user's rule: 1.7 m). */
     public static inline var CLIFF = 1.7;

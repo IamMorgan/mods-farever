@@ -1623,7 +1623,7 @@ class AutoDodge {
         return zoneR > 0 && (x - zoneX) * (x - zoneX) + (y - zoneY) * (y - zoneY) > zoneR * zoneR;
     }
     /** A way is never run when its end, middle or bend comes within this of a monster that is not at the hero's feet yet (it would wake it, and the crowd follows). */
-    static inline var FOE_HARD = 11.0;
+    static inline var FOE_HARD = 20.0;
 
     /**
      * True when the way from (hx, hy) to (x, y) (through `via` when given) leads nearer to a monster than FOE_HARD while that monster is
