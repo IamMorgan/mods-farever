@@ -210,6 +210,9 @@ class Bot {
         this.plan = plan;
         Probe.app = app;
         AutoDodge.botDriven = running;
+        // the fight zone binds the dodge too (see LEASH)
+        if (running && targetKind == "mob" && target != null && !Math.isNaN(fightAx) && fightKey == key(target)) { AutoDodge.zoneX = fightAx; AutoDodge.zoneY = fightAy; AutoDodge.zoneR = LEASH - 1; }
+        else AutoDodge.zoneR = -1;
         if (!running) { releaseAttack(); return; }
         try AutoDodge.update(hero, now) catch (error:Dynamic) Log.err("dodge update", error);
         try Hazard.refreshTraps(hero, now) catch (error:Dynamic) Log.err("traps", error);
@@ -1431,7 +1434,17 @@ class Bot {
         if (d > (engaged ? range + REACH_HOLD : range) || !level || !seen) {
             engaged = false;
             releaseAttack();
-            moveTo(x, y, level && seen ? range - 0.6 : 1.5, now, z);
+            // never beyond the fight zone: a foe that stands outside it is waited for at its edge (it comes, or is let go by the zone rule)
+            var gx = x, gy = y;
+            if (!Math.isNaN(fightAx)) {
+                var fromCentre = Nav.distance(target, fightAx, fightAy);
+                if (fromCentre > LEASH - 2) {
+                    var k = (LEASH - 2) / fromCentre;
+                    gx = fightAx + (x - fightAx) * k;
+                    gy = fightAy + (y - fightAy) * k;
+                }
+            }
+            moveTo(gx, gy, level && seen ? range - 0.6 : 1.5, now, z);
             return;
         }
         engaged = true;

@@ -1427,6 +1427,7 @@ class AutoDodge {
                 var angle = n * 2 * Math.PI / DIRECTIONS;
                 if (isAvoided(angle)) continue;
                 var target = {x: hx + Math.cos(angle) * (distance + MARGIN), y: hy + Math.sin(angle) * (distance + MARGIN)};
+                if (outsideZone(target.x, target.y)) continue;
                 if (!walkable(hx, hy, hz, target.x, target.y).ok) continue;
                 scored.push({spot: {exit: distance, target: target, jumpAt: -1, open: isOpen(target.x, target.y)},
                     score: distance + openScore(target.x, target.y) + headingCost(angle, away) + foeCost(target.x, target.y) + foeCost((hx + target.x) / 2, (hy + target.y) / 2)});
@@ -1441,13 +1442,13 @@ class AutoDodge {
             var angle = n * 2 * Math.PI / DIRECTIONS;
             if (isAvoided(angle)) continue;
             var via = {x: hx + Math.cos(angle) * CORNER_LEG, y: hy + Math.sin(angle) * CORNER_LEG};
-            if (!walkable(hx, hy, hz, via.x, via.y).ok) continue;
+            if (outsideZone(via.x, via.y) || !walkable(hx, hy, hz, via.x, via.y).ok) continue;
             for (k in 0...8) {
                 var second = angle + k * Math.PI / 4;
                 if (Math.abs(DodgeMath.angleDiff(second, angle + Math.PI)) < Math.PI / 4) continue; // not straight back
                 for (distance in [3.0, 6.0]) {
                     var target = {x: via.x + Math.cos(second) * (distance + MARGIN), y: via.y + Math.sin(second) * (distance + MARGIN)};
-                    if (!walkable(via.x, via.y, hz, target.x, target.y).ok) continue;
+                    if (outsideZone(target.x, target.y) || !walkable(via.x, via.y, hz, target.x, target.y).ok) continue;
                     scored.push({spot: {exit: CORNER_LEG + distance, target: target, jumpAt: -1, via: via, open: isOpen(target.x, target.y)},
                         score: CORNER_LEG + distance + openScore(target.x, target.y) + headingCost(angle, away) + foeCost(target.x, target.y) + foeCost(via.x, via.y)});
                 }
@@ -1612,6 +1613,14 @@ class AutoDodge {
     static var bodies:Array<{x:Float, y:Float, r:Float}> = [];
     /** Every living hostile monster within shot reach (the far ones too): the way out of a hit never runs into them (a dodge that ends among the other monsters wakes them: the crowd that killed the hero, 26.10). */
     static var foes:Array<{x:Float, y:Float}> = [];
+    /** The fight zone (centre and radius, radius < 0: none): the dodge's ways never end, or bend, outside it. */
+    public static var zoneX = 0.0;
+    public static var zoneY = 0.0;
+    public static var zoneR = -1.0;
+
+    static function outsideZone(x:Float, y:Float):Bool {
+        return zoneR > 0 && (x - zoneX) * (x - zoneX) + (y - zoneY) * (y - zoneY) > zoneR * zoneR;
+    }
     static inline var FOE_RANGE = 18.0;
     static inline var FOE_COST = 5.0;
 
