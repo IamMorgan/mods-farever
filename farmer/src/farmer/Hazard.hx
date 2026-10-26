@@ -20,6 +20,16 @@ class Hazard {
         return level > groundZ + WATER_DEPTH;
     }
 
+    /** How deep the water stands over the ground at (x, y) (0: none). */
+    public static function waterDepth(x:Float, y:Float, groundZ:Float):Float {
+        try {
+            if (world == null) world = G.current("world.World", "inst");
+            if (world == null) return 0;
+            var level = G.number(G.call("world.World", "getWaterLevel", world, [x, y, groundZ + 0.6]), Math.NEGATIVE_INFINITY);
+            return level > groundZ ? Math.min(100.0, level - groundZ) : 0;
+        } catch (_:Dynamic) return 0;
+    }
+
     /**
      * True when the ground at (x, y), `groundZ` high, lies under water or in a harmful liquid. With `margin` > 0 the water within
      * that distance of the spot (up, down, left, right) counts too: a path along the edge of a lake keeps the hero's body dry.

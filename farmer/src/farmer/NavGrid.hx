@@ -142,6 +142,9 @@ class NavGrid {
     static var wet:Map<Int, Bool> = new Map();
     /** Cells with water right on the ground (without the margin of `wet`). */
     static var drowned:Map<Int, Bool> = new Map();
+    /** Cells under water deeper than WADE_DEPTH: no ford, a swim (the hero drowns in a bay: 26.10) - closed even when wading is allowed. */
+    static var deep:Map<Int, Bool> = new Map();
+    static inline var WADE_DEPTH = 1.4;
     /** Cells with a body of the physics world standing in them (a bench, a post, a flower bed: see Solid). */
     static var solids:Map<Int, Bool> = new Map();
     static var heightsSince = 0.0;
@@ -260,7 +263,7 @@ class NavGrid {
 
     /** Ground height of a cell seen from `refZ` (NaN: no ground). */
     static function height(ix:Int, iy:Int, refZ:Float, now:Float):Float {
-        if (now - heightsSince > CACHE_TIME || cached > CACHE_MAX) { heights = new Map(); wet = new Map(); drowned = new Map(); solids = new Map(); heightsSince = now; cached = 0; }
+        if (now - heightsSince > CACHE_TIME || cached > CACHE_MAX) { heights = new Map(); wet = new Map(); drowned = new Map(); deep = new Map(); solids = new Map(); heightsSince = now; cached = 0; }
         var k = heightKey(ix, iy, refZ);
         var known = heights.get(k);
         if (known != null) return known;
@@ -272,7 +275,10 @@ class NavGrid {
         // Water is death: such a cell is no ground at all (kept apart from the heights, to let a swimmer out of it).
         if (Math.isFinite(z) && Hazard.deadly(ix * CELL, iy * CELL, z, WATER_MARGIN)) {
             wet.set(k, true);
-            if (Hazard.deadly(ix * CELL, iy * CELL, z)) drowned.set(k, true);
+            if (Hazard.deadly(ix * CELL, iy * CELL, z)) {
+                drowned.set(k, true);
+                if (Hazard.waterDepth(ix * CELL, iy * CELL, z) > WADE_DEPTH) deep.set(k, true);
+            }
         }
         heights.set(k, z);
         cached++;
@@ -307,7 +313,7 @@ class NavGrid {
         // a prop with a body closes its cell (the hero's own surroundings at the start stay open, it may stand next to one)
         if (strict && !(ix == sx && iy == sy) && !padCell(ix, iy) && solid(ix, iy, z, k)) return Math.NaN; // (the soft search passes them at a price, see `step`)
         if (wet.exists(k)) {
-            if (wade) return z;
+            if (wade) return deep.exists(k) && !escape ? Math.NaN : z;
             var near = Math.abs(ix - sx) <= ESCAPE && Math.abs(iy - sy) <= ESCAPE;
             if (!(escape && near)) {
                 // right at the start only the water on the ground itself closes a cell (a dock or a shore path has water within the margin)

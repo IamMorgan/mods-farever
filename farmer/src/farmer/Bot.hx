@@ -596,6 +596,8 @@ class Bot {
         return true;
     }
 
+    /** Kinds of monster seen to be far tougher than the hero: left out of the hunting grounds of leveling. */
+    var toughIds:Map<String, Bool> = new Map();
     var levelZoneLevel = -1;
     var levelZoneSet:Map<String, Bool> = null;
 
@@ -603,7 +605,7 @@ class Bot {
     function levelZones(level:Int):Map<String, Bool> {
         if (levelZoneLevel != level || levelZoneSet == null) {
             levelZoneLevel = level;
-            var units = Catalog.unitsOfLevels(level + MIN_DIFF, level + MAX_DIFF);
+            var units = [for (u in Catalog.unitsOfLevels(level + MIN_DIFF, level + MAX_DIFF)) if (!toughIds.exists(u)) u];
             levelZoneSet = Hunt.zonesOf(units);
             var names = [for (z in levelZoneSet.keys()) z];
             names.sort(Reflect.compare);
@@ -893,6 +895,8 @@ class Bot {
     static inline var FAR_UNKNOWN = 130.0;
     /** While leveling a monster this near a pack leader, an elite or a boss is left alone. */
     static inline var DANGER_RANGE = 45.0;
+    /** While leveling a monster with more than this many times the hero's life is left alone. */
+    static inline var STRONG_RATIO = 2.3;
 
     function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false, quiet:Bool = false):Void {
         lenientTarget = lenient;
@@ -946,6 +950,7 @@ class Bot {
             if (pad.id.indexOf("Flying") >= 0 || pad.id.indexOf("Wall") >= 0 || Math.abs(pad.z - hz) > 3 || Nav.distance(hero, pad.x, pad.y) > 110) continue;
             padRise = Math.max(padRise, Pads.expectedRise(pad));
         }
+        var heroMax = G.number(G.call("ent.Unit", "get_maxHealth", hero), 0);
         var seen:Map<Int, Int> = new Map();
         var foePos:Array<{x:Float, y:Float}> = [];
         var dangerPos:Array<{x:Float, y:Float}> = [];
@@ -978,6 +983,12 @@ class Bot {
             if (reach == 0) { cut++; continue; } // the reach map says no way leads there (another tier, behind a cliff)
             // beyond the reach map the way is a guess: a monster far off is the hunting grounds' business (the obelisk or the road takes the hero there), not a
             // target (the 26.10 runs walked 800-1200 m towards a slime the way-finder never found a way to, in circles)
+            // a monster far tougher than the hero is not fought while leveling (a level-11 wolf, 339 life, took a 138-life mage's all in 12 s and killed it, 26.10)
+            if (leveling && heroMax > 0 && G.number(G.call("ent.Unit", "get_maxHealth", e), 0) > STRONG_RATIO * heroMax) {
+                var tid = G.s(G.field(inf, "id"));
+                if (!toughIds.exists(tid)) { toughIds.set(tid, true); levelZoneSet = null; Log.t("hunt", tid + " is too strong for the hero (" + Math.round(G.number(G.call("ent.Unit", "get_maxHealth", e), 0)) + " life against " + Math.round(heroMax) + "): its zones are not hunting grounds"); }
+                continue;
+            }
             if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) continue;
             if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
                 var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
@@ -1095,7 +1106,9 @@ class Bot {
             var useZones = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
             // first only ground the reach map on foot really contains (a ground it merely might reach, or only by a glider's one-way drop, sent the
             // hero 100 m one way, the way-finder gave up, and the next ground lay the other way: the 26.10 pacing), then the old rule
-            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> nav.canReach(x, y, Math.NaN) == 1 && !nearDeath(x, y, now));
+            // (the map with the glider's descents too: the way out of a basin by a drop and a ford is a way)
+            if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
+            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
             if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !nearDeath(x, y, now));
             if (g == null) {
                 var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
