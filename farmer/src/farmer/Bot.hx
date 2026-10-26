@@ -505,6 +505,7 @@ class Bot {
     // ---- choosing and working a target ----
 
     var stoneAt = -1000.0;
+    var closedSince = -1.0;
 
     /** The hero sits where nothing can be done (a closed gorge, an island): the home stone takes it to the city, from where the obelisks lead on. True when it was used. */
     function idleStone(now:Float, why:String):Bool {
@@ -610,7 +611,9 @@ class Bot {
             }
         }
         // a long time in a pit (a closed region) with no fight: the home stone, not a wander
-        if (leveling && now - lastFightAt > 60 && now - stoneAt > 150 && nav.inClosedRegion(hero, now) && idleStone(now, "a minute in a closed region (pit) with no fight")) return;
+        // (the minute is counted from the first moment the hero stands in a closed region, not from the last fight)
+        if (nav.inClosedRegion(hero, now)) { if (closedSince < 0) closedSince = now; } else closedSince = -1;
+        if (leveling && closedSince >= 0 && now - closedSince > 60 && now - lastFightAt > 60 && now - stoneAt > 150 && idleStone(now, "a minute in a closed region (pit) with no fight")) return;
         if (target == null && unfinished != null) {
             var back = unfinished;
             unfinished = null;
@@ -1015,8 +1018,15 @@ class Bot {
             }
         }
         if (leaving) {
-            if (leaveByObelisk(now)) return true;
-            leaving = false;
+            // the way to the obelisk led out of the pocket: ground the reach map holds now means no flight (the hero walks on)
+            if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
+            var useZ = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
+            var here = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZ, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
+            if (here != null && !nav.inClosedRegion(hero, now) && G.call("ent.Hero", "isFlyingToObelisk", hero) != true) { leaving = false; nav.stop(); }
+            else {
+                if (leaveByObelisk(now)) return true;
+                leaving = false;
+            }
         }
         if (roamKey < 0) {
             // the monsters' own zones when the game's tables know them (the whole map), else the zones of their levels

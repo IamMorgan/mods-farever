@@ -68,7 +68,8 @@ class Nav {
     /** The hero stands in a region the reach map says is closed on foot (a gorge, a ledge, an island). */
     public function inClosedRegion(hero:Dynamic, now:Float):Bool {
         var f = floodPlain;
-        return f.ready && floodFresh(f, hero, now) && f.grid.reachCount > 0 && f.grid.reachClosed;
+        // (a map of a few cells is made from a hero still falling after a flight: not a pit)
+        return f.ready && floodFresh(f, hero, now) && f.grid.reachCount >= 30 && f.grid.reachClosed && !airborne(hero) && !flying(hero) && now >= flightWait + 8;
     }
 
     /** True when the reach map is known and was made near here lately. */
