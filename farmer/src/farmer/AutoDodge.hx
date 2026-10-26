@@ -636,6 +636,7 @@ class AutoDodge {
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
         var unitsAlive = new haxe.ds.ObjectMap<Dynamic, {x:Float, y:Float, t:Float, speed:Float}>();
         bodies = [];
+        foes = [];
         for (unit in G.fastArray(G.field(layer, "units"))) {
             try {
                 if (unit == null || unit == hero || G.field(unit, "removed") == true || !hostile(unit)) continue;
@@ -653,6 +654,7 @@ class AutoDodge {
                     speed = dt < 0.05 ? before.speed : Math.sqrt((px - before.x) * (px - before.x) + (py - before.y) * (py - before.y)) / dt;
                 }
                 unitsAlive.set(unit, {x: px, y: py, t: now, speed: speed});
+                foes.push({x: px, y: py});
                 if (!far) bodies.push({x: px, y: py, r: bodyRadius(unit)});
                 var own = swingThreats(hero, unit, speed, far);
                 for (threat in own) threats.push(threat);
@@ -1427,7 +1429,7 @@ class AutoDodge {
                 var target = {x: hx + Math.cos(angle) * (distance + MARGIN), y: hy + Math.sin(angle) * (distance + MARGIN)};
                 if (!walkable(hx, hy, hz, target.x, target.y).ok) continue;
                 scored.push({spot: {exit: distance, target: target, jumpAt: -1, open: isOpen(target.x, target.y)},
-                    score: distance + openScore(target.x, target.y) + headingCost(angle, away)});
+                    score: distance + openScore(target.x, target.y) + headingCost(angle, away) + foeCost(target.x, target.y) + foeCost((hx + target.x) / 2, (hy + target.y) / 2)});
             }
         }
         return bestFirst(scored);
@@ -1447,7 +1449,7 @@ class AutoDodge {
                     var target = {x: via.x + Math.cos(second) * (distance + MARGIN), y: via.y + Math.sin(second) * (distance + MARGIN)};
                     if (!walkable(via.x, via.y, hz, target.x, target.y).ok) continue;
                     scored.push({spot: {exit: CORNER_LEG + distance, target: target, jumpAt: -1, via: via, open: isOpen(target.x, target.y)},
-                        score: CORNER_LEG + distance + openScore(target.x, target.y) + headingCost(angle, away)});
+                        score: CORNER_LEG + distance + openScore(target.x, target.y) + headingCost(angle, away) + foeCost(target.x, target.y) + foeCost(via.x, via.y)});
                 }
             }
         }
@@ -1608,6 +1610,20 @@ class AutoDodge {
 
     // ---- monsters' bodies ----------------------------------------------------------------------
     static var bodies:Array<{x:Float, y:Float, r:Float}> = [];
+    /** Every living hostile monster within shot reach (the far ones too): the way out of a hit never runs into them (a dodge that ends among the other monsters wakes them: the crowd that killed the hero, 26.10). */
+    static var foes:Array<{x:Float, y:Float}> = [];
+    static inline var FOE_RANGE = 18.0;
+    static inline var FOE_COST = 5.0;
+
+    /** What a spot costs for the monsters about it (metres of running it is worth avoiding): each one within FOE_RANGE, the closer the worse. */
+    static function foeCost(x:Float, y:Float):Float {
+        var c = 0.0;
+        for (f in foes) {
+            var d = Math.sqrt((x - f.x) * (x - f.x) + (y - f.y) * (y - f.y));
+            if (d < FOE_RANGE) c += (FOE_RANGE - d) * FOE_COST;
+        }
+        return c;
+    }
 
     /** A spot inside a monster's body (not counting one the hero is already touching at the start). */
     static function inBody(x:Float, y:Float, hx:Float, hy:Float):Bool {

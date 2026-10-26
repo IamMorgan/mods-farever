@@ -686,7 +686,8 @@ class Bot {
                 var toAttacker = Nav.distance(hero, G.number(G.field(attacker, "posx")), G.number(G.field(attacker, "posy")));
                 var tHp = G.number(G.call("ent.Unit", "get_health", target), 1), tMax = G.number(G.call("ent.Unit", "get_maxHealth", target), 1);
                 var finishing = engaged && tMax > 0 && tHp / tMax < 0.25 && toTarget <= combatRange() + REACH_HOLD; // (a foe nearly dead in reach is finished first)
-                var margin = engaged ? 2.0 : 3.0;
+                var margin = engaged ? 6.0 : 3.0; // (two foes at the hero's feet stand about as near: swapping between them hit neither - the 26.10 deaths)
+                if (hurt(target) && toTarget <= 12) finishing = true; // a foe already hurt and near is finished first, whoever else is about
                 var unnoticed = aggroOnHero(attacker) && !aggroOnHero(target) && toAttacker <= toTarget + 2;
                 if (!finishing && (toAttacker + margin < toTarget || unnoticed)) {
                     Log.t("bot", "defending against " + G.s(G.field(G.field(attacker, "inf"), "id")) + " at " + Math.round(toAttacker) + " m instead of the target at " + Math.round(toTarget) + " m" + (unnoticed ? " (the target has not noticed the hero)" : ""));
@@ -1388,7 +1389,8 @@ class Bot {
         if (!Math.isNaN(fightAx)) {
             var heroOut = Nav.distance(hero, fightAx, fightAy);
             var foeOut = Nav.distance(target, fightAx, fightAy);
-            if (heroOut > LEASH || (foeOut > LEASH && d > range)) {
+            // (with monsters near the hero the fight simply goes on where it stands: walking back through them is what drew the crowd)
+            if ((heroOut > LEASH || (foeOut > LEASH && d > range)) && foesAround(18).length == 0) {
                 if (foeOut > LEASH && !aggroOnHero(target)) {
                     if (leashSince < 0) leashSince = now;
                     else if (now - leashSince > 8) {
@@ -1518,11 +1520,9 @@ class Bot {
         var frac = max > 0 && hp >= 0 ? hp / max : 1.0;
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         var reason = "";
-        if (close >= 3) reason = close + " monsters at the hero";
-        else if (close >= 2 && frac < 0.5) reason = close + " monsters and the hero at " + Math.round(frac * 100) + "% health";
-        else if (frac < 0.25) reason = "hero at " + Math.round(frac * 100) + "% health";
-        else if (Nav.edgeNear(hx, hy, hz, 1.8)) reason = "a cliff's edge under the fight";
-        else if (close >= 2 && freeDirections(hx, hy, hz, 3.0) <= 3) reason = close + " monsters and the hero in a corner";
+        // The hero never backs away from a fight (a step back among the monsters woke the ones near by and made the crowd that killed it, 26.10):
+        // it stands and kills what is at it. Only a cliff's edge under the fight is left (a fall is worse than any monster).
+        if (Nav.edgeNear(hx, hy, hz, 1.8)) reason = "a cliff's edge under the fight";
         if (reason == "") return false;
         var spot = retreatSpot(foes, hx, hy, hz);
         if (spot == null) {
