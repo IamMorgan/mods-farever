@@ -1039,7 +1039,9 @@ class Bot {
             // no ground inside the closed region the hero stands in (the city's basin, a ledge): out by obelisk, not paced out on foot
             if (g == null && nav.inClosedRegion(hero, now) && !leaveFailed) { leaving = true; if (leaveByObelisk(now)) return true; leaving = false; leaveFailed = true; }
             if (g != null) leaveFailed = false;
-            if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !nearDeath(x, y, now));
+            // (a ground far beyond the reach map has no way the planner can find - its window is about 120 m: the hero ran back and forth on pieces
+            // of path that changed at every replan; such a ground is walked to in steps of other grounds, or reached after the home stone)
+            if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !farUnknown(x, y) && !nearDeath(x, y, now));
             if (g == null) {
                 var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
                 Log.t("hunt", "no hunting ground left that was not visited lately (" + remembered + " cells remembered): the memory is wiped, the sweep starts over");
@@ -1079,6 +1081,15 @@ class Bot {
 
     var flightAt = -100.0;
     var flightOut = false;
+
+    static inline var HUNT_UNKNOWN = 200.0;
+
+    /** The spot lies beyond HUNT_UNKNOWN and the reach maps neither hold it nor close it off: no way to it is known. */
+    function farUnknown(x:Float, y:Float):Bool {
+        if (Nav.distance(hero, x, y) <= HUNT_UNKNOWN) return false;
+        var a = nav.canReach(x, y, Math.NaN), b = nav.canReach(x, y, Math.NaN, true);
+        return a != 1 && b != 1 && (a < 0 || b < 0);
+    }
 
     /** The spot can be walked to (or the reach map does not know), or the hero can walk to an opened obelisk and fly (a closed region, an island). */
     function footOrFlight(x:Float, y:Float, z:Float):Bool {
