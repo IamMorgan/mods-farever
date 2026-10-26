@@ -1001,6 +1001,7 @@ class Bot {
     function roam(now:Float, level:Int, wide:Int = 2, ?zoneLevels:Array<Int>, ?zoneIds:Map<String, Bool>):Bool {
         if (!Hunt.onWorld(hero)) return false;
         if (!Hunt.ready()) { Hunt.scan(250); message = Locale.f("stTravel"); return true; }
+        if (G.call("ent.Hero", "isFlyingToObelisk", hero) == true) { message = Locale.f("stTravel"); return true; } // (the ground is chosen where the hero lands)
         if (now < roamWaitUntil) { nav.stop(); message = Locale.f("noTargets"); return true; } // just arrived: the monsters are loading
         if (roamKey >= 0) {
             var arrived = Nav.distance(hero, roamX, roamY) < 30;

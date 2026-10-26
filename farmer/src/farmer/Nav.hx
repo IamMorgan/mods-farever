@@ -63,6 +63,9 @@ class Nav {
     var floodPlain = new FloodMap(false);
     var floodDown = new FloodMap(true);
 
+    var reachHx = 0.0;
+    var reachHy = 0.0;
+
     function floodOf(descents:Bool):FloodMap return descents ? floodDown : floodPlain;
 
     /** The hero stands in a region the reach map says is closed on foot (a gorge, a ledge, an island). */
@@ -101,6 +104,7 @@ class Nav {
     public function canReach(x:Float, y:Float, z:Float, descents:Bool = false):Int {
         var f = floodOf(descents);
         if (!f.ready) return -1;
+        if (f.grid.floodCentre(reachHx, reachHy) > 70) return -1; // (a map made elsewhere - before a flight or the home stone - says nothing about here)
         return f.grid.reached(x, y, z, 2);
     }
 
@@ -108,6 +112,8 @@ class Nav {
      * Keeps the reach map fresh: true while it is being made (the caller waits a moment, at most a few seconds).
      */
     public function ensureReach(hero:Dynamic, now:Float, descents:Bool = false):Bool {
+        reachHx = G.number(G.field(hero, "posx"));
+        reachHy = G.number(G.field(hero, "posy"));
         var f = floodOf(descents);
         if (f.grid.state == 1) {
             if (f.waitSince < 0) f.waitSince = now;
