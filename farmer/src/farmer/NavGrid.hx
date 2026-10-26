@@ -37,6 +37,10 @@ class NavGrid {
     /** The highest rise a jump clears (set from the jump the hero was measured to make, see Nav.measureJump). */
     public static var JUMP_UP = 1.1;
     static inline var STEP_UP = 0.5;
+    /** How far above a cell's neighbour the ground is looked for: a little over the highest rise a jump clears (JUMP_MAX). */
+    static inline var LOOK_UP = 2.9;
+    /** The highest rise the planner ever jumps (the hero's jump peaks at about 3.3 m: a hill or a ledge of 2 m is just jumped onto). */
+    public static inline var JUMP_MAX = 2.5;
     /** A drop deeper than this is a cliff (the user's rule: 1.7 m). */
     public static inline var CLIFF = 1.7;
     /**
@@ -69,6 +73,26 @@ class NavGrid {
      * (cell -> height), so the bot can tell at once whether a monster or node can be walked to at all.
      */
     public var flood = false;
+    /** The reach map knows the spot can be got to: a descent below the spot's height is no pit then (the way climbs back). Set by the caller before `start`. */
+    public var dipOk = false;
+    /** The living hostile monsters about (not the one aimed at): a way through them wakes the lot, so the cells near them cost more. Set by the caller before `start`. */
+    public var foePts:Array<{x:Float, y:Float, r:Float}> = [];
+    static inline var FOE_AURA = 20.0;
+    static inline var FOE_STEP_COST = 1.2;
+
+    function foeExtra(ix:Int, iy:Int):Float {
+        var c = 0.0;
+        var x = ix * CELL, y = iy * CELL;
+        for (f in foePts) {
+            var dx = x - f.x, dy = y - f.y;
+            var reachR = Math.max(FOE_AURA, f.r);
+            if (dx > reachR || dx < -reachR || dy > reachR || dy < -reachR) continue;
+            var d = Math.sqrt(dx * dx + dy * dy);
+            if (d < f.r && !nearEnds(ix, iy)) return Math.POSITIVE_INFINITY; // (inside a monster's own ground: no way through)
+            if (d < FOE_AURA) c += (FOE_AURA - d) * FOE_STEP_COST;
+        }
+        return c;
+    }
     public var reach:Map<Int, Float> = new Map();
     /** The walking cost (about metres of way) from the flood's start to each reached cell. */
     public var reachCost:Map<Int, Float> = new Map();
@@ -219,7 +243,7 @@ class NavGrid {
 
     /** The ground height at a spot (not a cell's centre), NaN when none: the fine look along a run (see Nav). */
     public static function fineZ(x:Float, y:Float, ref:Float):Float {
-        var z = AutoDodge.worldZ(x, y, ref, 2.2);
+        var z = AutoDodge.worldZ(x, y, ref, LOOK_UP);
         if (!Math.isFinite(z) || z <= ref - 100) {
             z = AutoDodge.worldZ(x, y, ref - 30, 30);
             if (!Math.isFinite(z) || z <= ref - 100) return Math.NaN;
@@ -240,7 +264,7 @@ class NavGrid {
         var k = heightKey(ix, iy, refZ);
         var known = heights.get(k);
         if (known != null) return known;
-        var z = AutoDodge.worldZ(ix * CELL, iy * CELL, refZ, 2.2);
+        var z = AutoDodge.worldZ(ix * CELL, iy * CELL, refZ, LOOK_UP);
         if (!Math.isFinite(z) || z <= refZ - 100) { // no ground within a step: look deeper for a drop
             z = AutoDodge.worldZ(ix * CELL, iy * CELL, refZ - 30, 30);
             if (!Math.isFinite(z) || z <= refZ - 100) z = Math.NaN;
@@ -493,7 +517,9 @@ class NavGrid {
                     if (!hasGlider && -dz > NO_GLIDER_DROP) continue; // no glider: too high to fall
                     if (!glideTrusted && -dz > (glideAssumed ? ASSUMED_DROP : UNTRUSTED_DROP)) continue; // the glider has not been seen to hold yet: a fall this high is no gamble to take
                     // never down below the level of the spot (a gorge or a pit cannot be climbed out of): only as far as it needs
-                    if (Math.isFinite(goalZ) && z < goalZ - 4) continue;
+                    // (unless the reach map found the spot on foot or by descents, or the spot lies inside the window - the search then ends at it or finds
+                    // no way at all, no pit can hold a partial path -: its way dips and climbs back, e.g. through a valley round a ridge)
+                    if (Math.isFinite(goalZ) && z < goalZ - 4 && !dipOk && !(Math.abs(tx - sx) <= RADIUS && Math.abs(ty - sy) <= RADIUS)) continue;
                     extra = Math.min(70, 8 + -dz * 1.5); // a drop is a one-way road: dearer than a long walk round; above GLIDE_DROP the glider is opened in the air
                 }
                 if (!strict && !(nx == sx && ny == sy) && solid(nx, ny, z, heightKey(nx, ny, n.z))) extra += 10;
@@ -505,6 +531,7 @@ class NavGrid {
                     var z1 = open(n.ix + dx, n.iy, n.z, now), z2 = open(n.ix, n.iy + dy, n.z, now);
                     if (!Math.isFinite(z1) || !Math.isFinite(z2) || z1 - n.z > JUMP_UP || z2 - n.z > JUMP_UP) continue;
                 }
+                if (foePts.length > 0 && !flood) { var fe = foeExtra(nx, ny); if (fe == Math.POSITIVE_INFINITY) continue; extra += fe; }
                 if (wade) { var wk = heightKey(nx, ny, n.z); if (drowned.exists(wk)) extra += 6; else if (wet.exists(wk)) extra += 1; } // (the shortest swim, the driest way)
                 var g = n.g + (dx != 0 && dy != 0 ? 1.4142 : 1.0) + extra;
                 if (existing == null) {
@@ -627,6 +654,7 @@ class NavGrid {
             begin(false, goalX, goalY);
             return;
         }
+        // the reachable ground was all searched: a spot inside the window is not on it, and a spot outside is not either when the ground never reached the window's border (a closed pocket)
         // the reachable ground was all searched: a spot inside the window is not on it, and a spot outside is not either when the ground never reached the window's border (a closed pocket)
         unreachable = exhausted && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && ((Math.abs(goalX - startX) < RADIUS - 8 && Math.abs(goalY - startY) < RADIUS - 8) || !touchedWindow);
         var list:Array<Waypoint> = [];

@@ -1428,6 +1428,7 @@ class AutoDodge {
                 if (isAvoided(angle)) continue;
                 var target = {x: hx + Math.cos(angle) * (distance + MARGIN), y: hy + Math.sin(angle) * (distance + MARGIN)};
                 if (outsideZone(target.x, target.y)) continue;
+                if (nearsFoe(hx, hy, target.x, target.y, null)) continue;
                 if (!walkable(hx, hy, hz, target.x, target.y).ok) continue;
                 scored.push({spot: {exit: distance, target: target, jumpAt: -1, open: isOpen(target.x, target.y)},
                     score: distance + openScore(target.x, target.y) + headingCost(angle, away) + foeCost(target.x, target.y) + foeCost((hx + target.x) / 2, (hy + target.y) / 2)});
@@ -1442,13 +1443,13 @@ class AutoDodge {
             var angle = n * 2 * Math.PI / DIRECTIONS;
             if (isAvoided(angle)) continue;
             var via = {x: hx + Math.cos(angle) * CORNER_LEG, y: hy + Math.sin(angle) * CORNER_LEG};
-            if (outsideZone(via.x, via.y) || !walkable(hx, hy, hz, via.x, via.y).ok) continue;
+            if (outsideZone(via.x, via.y) || nearsFoe(hx, hy, via.x, via.y, null) || !walkable(hx, hy, hz, via.x, via.y).ok) continue;
             for (k in 0...8) {
                 var second = angle + k * Math.PI / 4;
                 if (Math.abs(DodgeMath.angleDiff(second, angle + Math.PI)) < Math.PI / 4) continue; // not straight back
                 for (distance in [3.0, 6.0]) {
                     var target = {x: via.x + Math.cos(second) * (distance + MARGIN), y: via.y + Math.sin(second) * (distance + MARGIN)};
-                    if (outsideZone(target.x, target.y) || !walkable(via.x, via.y, hz, target.x, target.y).ok) continue;
+                    if (outsideZone(target.x, target.y) || nearsFoe(hx, hy, target.x, target.y, via) || !walkable(via.x, via.y, hz, target.x, target.y).ok) continue;
                     scored.push({spot: {exit: CORNER_LEG + distance, target: target, jumpAt: -1, via: via, open: isOpen(target.x, target.y)},
                         score: CORNER_LEG + distance + openScore(target.x, target.y) + headingCost(angle, away) + foeCost(target.x, target.y) + foeCost(via.x, via.y)});
                 }
@@ -1621,6 +1622,29 @@ class AutoDodge {
     static function outsideZone(x:Float, y:Float):Bool {
         return zoneR > 0 && (x - zoneX) * (x - zoneX) + (y - zoneY) * (y - zoneY) > zoneR * zoneR;
     }
+    /** A way is never run when its end, middle or bend comes within this of a monster that is not at the hero's feet yet (it would wake it, and the crowd follows). */
+    static inline var FOE_HARD = 11.0;
+
+    /**
+     * True when the way from (hx, hy) to (x, y) (through `via` when given) leads nearer to a monster than FOE_HARD while that monster is
+     * farther from the hero than that now: the ones already at the hero stay behind, the ones about it are not run to. Only while the
+     * search is not relaxed to its last pass (a way through them is better than none).
+     */
+    static function nearsFoe(hx:Float, hy:Float, x:Float, y:Float, via:Null<{x:Float, y:Float}>):Bool {
+        if (relax >= 2 || foes.length == 0) return false;
+        var px = [x, (hx + x) / 2], py = [y, (hy + y) / 2];
+        if (via != null) { px.push(via.x); py.push(via.y); px.push((via.x + x) / 2); py.push((via.y + y) / 2); }
+        for (f in foes) {
+            var now = Math.sqrt((hx - f.x) * (hx - f.x) + (hy - f.y) * (hy - f.y));
+            if (now < 3) continue;
+            for (i in 0...px.length) {
+                var d = Math.sqrt((px[i] - f.x) * (px[i] - f.x) + (py[i] - f.y) * (py[i] - f.y));
+                if (d < FOE_HARD && d < now - 1) return true;
+            }
+        }
+        return false;
+    }
+
     static inline var FOE_RANGE = 18.0;
     static inline var FOE_COST = 5.0;
 

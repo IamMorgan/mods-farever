@@ -889,6 +889,11 @@ class Bot {
         return false;
     }
 
+    /** While leveling a monster beyond the reach map is a target only this near. */
+    static inline var FAR_UNKNOWN = 130.0;
+    /** While leveling a monster this near a pack leader, an elite or a boss is left alone. */
+    static inline var DANGER_RANGE = 45.0;
+
     function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false, quiet:Bool = false):Void {
         lenientTarget = lenient;
         targetDescent = false;
@@ -943,6 +948,7 @@ class Bot {
         }
         var seen:Map<Int, Int> = new Map();
         var foePos:Array<{x:Float, y:Float}> = [];
+        var dangerPos:Array<{x:Float, y:Float}> = [];
         var cands:Array<{e:Dynamic, score:Float, x:Float, y:Float}> = [];
         for (e in G.fastArray(G.field(layer, "units"))) {
             if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true) continue;
@@ -953,8 +959,11 @@ class Bot {
             var unitType = G.s(G.field(inf, "type"));
             if (unitType == "Environment" || unitType == "Critter") continue; // training dummies, harmless animals
             foePos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))}); // (every hostile monster counts for a group, wanted or not)
-            if (blacklisted(e, now)) continue;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
+            // a pack leader, an elite or a boss about: the monsters round it are not touched (its pack and it join any fight there)
+            if (unit != null && (Catalog.isBoss(unit) || Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6)) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)
+                dangerPos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
+            if (blacklisted(e, now)) continue;
             if (unit != null && Catalog.isBoss(unit)) continue;
             // (while leveling no pack leader or elite: its pack comes with it - a level-10 mage fell to an Alpha wolf's two level-12 packmates in seconds, 26.10)
             if (leveling && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) continue;
@@ -967,6 +976,9 @@ class Bot {
             // (a bumper within reach lifts the hero onto a ledge up to its throw: then a monster up there is a target too)
             var reach = nav.canReach(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), descents);
             if (reach == 0) { cut++; continue; } // the reach map says no way leads there (another tier, behind a cliff)
+            // beyond the reach map the way is a guess: a monster far off is the hunting grounds' business (the obelisk or the road takes the hero there), not a
+            // target (the 26.10 runs walked 800-1200 m towards a slime the way-finder never found a way to, in circles)
+            if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) continue;
             if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
                 var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
                 if (!lift && (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25))) continue;
@@ -996,6 +1008,12 @@ class Bot {
             } else {
                 if (!drops) continue;
                 score += Math.max(0, foeLevel - level) * 250;
+            }
+            if (leveling) {
+                var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
+                var nearDanger = false;
+                for (p in dangerPos) if ((p.x - ex) * (p.x - ex) + (p.y - ey) * (p.y - ey) < DANGER_RANGE * DANGER_RANGE) { nearDanger = true; break; }
+                if (nearDanger) { cut++; continue; }
             }
             cands.push({e: e, score: score, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
         }

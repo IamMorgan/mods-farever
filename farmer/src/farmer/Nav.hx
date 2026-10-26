@@ -408,11 +408,38 @@ class Nav {
         try return G.call("hxd.Window", "get_isFocused", G.staticCall("hxd.Window", "getInstance", [])) == true catch (_:Dynamic) return false;
     }
 
+    /** The hostile monsters within the search window except those at the spot itself (the target): the path keeps away from them. */
+    function foesForPath(hero:Dynamic, gx:Float, gy:Float):Array<{x:Float, y:Float, r:Float}> {
+        var out = [];
+        var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy"));
+        try {
+            for (e in G.fastArray(G.field(G.field(hero, "layer"), "units"))) {
+                if (out.length >= 40) break;
+                if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true || G.field(e, "dying") == true) continue;
+                if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "summonOwner") != null) continue;
+                if (G.call("ent.GameObject", "isEnemyWith", hero, [e]) != true) continue;
+                var type = G.s(G.field(G.field(e, "inf"), "type"));
+                if (type == "Environment" || type == "Critter") continue;
+                var x = G.number(G.field(e, "posx")), y = G.number(G.field(e, "posy"));
+                if (Math.abs(x - hx) > 135 || Math.abs(y - hy) > 135) continue;
+                var id = G.s(G.field(G.field(e, "inf"), "id"));
+                var unit = Catalog.unitRecord(id);
+                // a pack leader, an elite or a boss: its whole ground is closed to the path (they wake at 20 m and the pack comes with them)
+                var danger = (unit != null && (Catalog.isBoss(unit) || Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6))) || id.indexOf("Alpha") >= 0;
+                var gd2 = (x - gx) * (x - gx) + (y - gy) * (y - gy);
+                if (gd2 < 9) continue;
+                if ((x - hx) * (x - hx) + (y - hy) * (y - hy) < 16) continue; // (the ones at the hero's feet are in a fight, not on the way)
+                out.push({x: x, y: y, r: danger ? 28.0 : 7.0});
+            }
+        } catch (_:Dynamic) {}
+        return out;
+    }
+
     function planning(hero:Dynamic, hx:Float, hy:Float, hz:Float, now:Float):Void {
         // in the air (a jump, a fall, a glide, a trampoline's throw) the height under the hero is no place to plan from: a search from there
         // finds no ground to walk, counts as a dead end and the hero is left bouncing; the way is planned after the landing
         if (airborne(hero) && grid.state != 1) return;
-        if (route != null && now - plannedAt > 14) needPlan = true;
+        if (route != null && now - plannedAt > 6) needPlan = true;
         if (needPlan && grid.state != 1 && now >= planBlock) {
             needPlan = false;
             plannedAt = now;
@@ -424,6 +451,8 @@ class Nav {
             NavGrid.setPads([for (pad in Pads.list) if (pad.id.indexOf("Flying") < 0 && pad.id.indexOf("Wall") < 0) pad]);
             grid.goalZ = goalZ;
             grid.noCliff = noCliff && !cliffOverride;
+            grid.foePts = foesForPath(hero, tx, ty);
+            grid.dipOk = Math.isFinite(goalZ) && (canReach(tx, ty, goalZ, true) == 1 || canReach(tx, ty, goalZ, false) == 1);
             plannedCliff = noCliff;
             Log.t("nav", "planning from " + Math.round(hx) + "," + Math.round(hy) + "," + Math.round(hz) + " to " + Math.round(tx) + "," + Math.round(ty) + " glider " + NavGrid.hasGlider + " noCliff " + noCliff + " traps " + Hazard.trapCount());
             grid.start(hx, hy, hz, tx, ty, Hazard.heroInLiquid(hero));
@@ -933,7 +962,7 @@ class Nav {
                 climbT = profT;
                 climbZ = profZ;
                 // the planner sees rises up to 2.2 m (the height probe, see NavGrid.height): jumps are planned up to the lower of that and the peak less a margin
-                NavGrid.JUMP_UP = Math.max(0.8, Math.min(1.8, jumpMax - 0.3));
+                NavGrid.JUMP_UP = Math.max(0.8, Math.min(NavGrid.JUMP_MAX, jumpMax - 0.8));
                 Log.t("nav", "jump height learnt: peak " + Math.round(jumpMax * 100) / 100 + " m, the planner jumps up to " + Math.round(NavGrid.JUMP_UP * 100) / 100 + " m");
             }
             if (Math.isFinite(jumpWantRise)) {
