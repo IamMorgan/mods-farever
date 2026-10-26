@@ -100,6 +100,17 @@ class Hunt {
         return n;
     }
 
+    /** The centres of all grid cells of the wanted zones (where the monsters live): an obelisk is chosen by how many of them lie round it. */
+    public static function spotList(level:Int, wide:Int, ?zoneLevels:Array<Int>, ?zoneIds:Map<String, Bool>):Array<{x:Float, y:Float}> {
+        spread = wide;
+        allow = null;
+        allowZones = zoneIds;
+        if (zoneLevels != null) { allow = new Map(); for (l in zoneLevels) for (d in 0...spread + 1) allow.set(l + d, true); }
+        var out = [];
+        for (index in 0...NX * NY) if (wanted(index, level)) out.push({x: X0 + (index % NX) * STEP, y: Y0 + Std.int(index / NX) * STEP});
+        return out;
+    }
+
     static function wanted(index:Int, level:Int):Bool {
         if (allowZones != null) return allowZones.exists(ids[index]);
         var l = levels[index];

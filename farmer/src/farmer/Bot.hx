@@ -975,16 +975,17 @@ class Bot {
     }
 
     var roamFails:Array<Float> = [];
+    var wipeTimes:Array<Float> = [];
     var leaving = false;
     var leaveFailed = false;
     var leaveWaitUntil = 0.0;
 
     /** Walks to the nearest opened obelisk and flies from it to another one. True while that goes on, false when it cannot be done. */
-    function leaveByObelisk(now:Float):Bool {
+    function leaveByObelisk(now:Float, ?spots:Array<{x:Float, y:Float}>):Bool {
         message = Locale.f("stTravel");
         if (G.call("ent.Hero", "isFlyingToObelisk", hero) == true) { leaveWaitUntil = now + 3; return true; }
         if (now < leaveWaitUntil) return true;
-        if (nav.flyElsewhere(hero, now, [{x: roamX, y: roamY}])) { roamVisited = new Map(); leaveWaitUntil = now + 3; return true; }
+        if (nav.flyElsewhere(hero, now, spots != null && spots.length > 0 ? spots : [{x: roamX, y: roamY}])) { roamVisited = new Map(); leaveWaitUntil = now + 3; return true; }
         var best = null, bestD = 350.0;
         for (o in Nav.obelisks(hero)) {
             var d = Nav.distance(hero, o.x, o.y);
@@ -1024,8 +1025,10 @@ class Bot {
             var here = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZ, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
             if (here != null && !nav.inClosedRegion(hero, now) && G.call("ent.Hero", "isFlyingToObelisk", hero) != true) { leaving = false; nav.stop(); }
             else {
-                if (leaveByObelisk(now)) return true;
+                if (leaveByObelisk(now, Hunt.spotList(level, wide, zoneLevels, useZ))) return true;
                 leaving = false;
+                // no obelisk to fly from: the home stone (the city's obelisks lead on)
+                if (idleStone(now, "no way out of this place by obelisk")) return true;
             }
         }
         if (roamKey < 0) {
@@ -1037,13 +1040,23 @@ class Bot {
             if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
             var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
             // no ground inside the closed region the hero stands in (the city's basin, a ledge): out by obelisk, not paced out on foot
-            if (g == null && nav.inClosedRegion(hero, now) && !leaveFailed) { leaving = true; if (leaveByObelisk(now)) return true; leaving = false; leaveFailed = true; }
+            if (g == null && nav.inClosedRegion(hero, now) && !leaveFailed) { leaving = true; if (leaveByObelisk(now, Hunt.spotList(level, wide, zoneLevels, useZones))) return true; leaving = false; leaveFailed = true; }
             if (g != null) leaveFailed = false;
             // (a ground far beyond the reach map has no way the planner can find - its window is about 120 m: the hero ran back and forth on pieces
             // of path that changed at every replan; such a ground is walked to in steps of other grounds, or reached after the home stone)
             if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !farUnknown(x, y) && !nearDeath(x, y, now));
             if (g == null) {
                 var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
+                // the sweep came to its end twice in four minutes with no monster met: this place has none left that the hero can walk to - the
+                // obelisks lead to where the monsters live (the memory is kept, so that the walk to the obelisk is not turned back)
+                wipeTimes.push(now);
+                wipeTimes = [for (t in wipeTimes) if (now - t < 240) t];
+                if (wipeTimes.length >= 2 && remembered > 0) {
+                    wipeTimes = [];
+                    leaving = true;
+                    Log.t("hunt", "the sweep ended twice in a row with nothing found: out of this place by obelisk");
+                    return true;
+                }
                 Log.t("hunt", "no hunting ground left that was not visited lately (" + remembered + " cells remembered): the memory is wiped, the sweep starts over");
                 roamVisited = new Map();
                 // none even with an empty memory: the map has such ground but no way leads there from here (a gorge, a closed island) - the home stone
