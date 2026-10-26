@@ -98,6 +98,7 @@ class Bot {
         level is preferred to a lower one that is nearer by this much, but the hero does not run the map over for the last few levels of difference. */
     static inline var MIN_DIFF = -1;
     static inline var LOWER_COST = 450.0;
+    static inline var MAX_DIFF = 1;
     /** A fight starts inside this radius around where the hero first struck: farther from that spot (a dodge, a fleeing foe) the foe is let go. */
     static inline var LEASH = 50.0;
     /** A monster this much above or below the hero is on another tier (a plateau, a gorge): the way there is long or none, and the walk along the edge circles. */
@@ -590,11 +591,11 @@ class Bot {
     function levelZones(level:Int):Map<String, Bool> {
         if (levelZoneLevel != level || levelZoneSet == null) {
             levelZoneLevel = level;
-            var units = Catalog.unitsOfLevels(level + MIN_DIFF, level + 2);
+            var units = Catalog.unitsOfLevels(level + MIN_DIFF, level + MAX_DIFF);
             levelZoneSet = Hunt.zonesOf(units);
             var names = [for (z in levelZoneSet.keys()) z];
             names.sort(Reflect.compare);
-            Log.t("hunt", "monsters of level " + (level + MIN_DIFF) + ".." + (level + 2) + ": " + units.length + " kinds, living in " + names.length + " zones: " + names.slice(0, 40).join(" "));
+            Log.t("hunt", "monsters of level " + (level + MIN_DIFF) + ".." + (level + MAX_DIFF) + ": " + units.length + " kinds, living in " + names.length + " zones: " + names.slice(0, 40).join(" "));
         }
         return levelZoneSet;
     }
@@ -606,6 +607,8 @@ class Bot {
         if (dT < 35) return;
         var diff = G.integer(G.field(target, "_level")) - level;
         var current = dT + Math.abs(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) * 4.0 + (diff < 0 ? -diff * LOWER_COST : diff * 250);
+        var curWay = nav.pathCost(G.number(G.field(target, "posx")), G.number(G.field(target, "posy")), G.number(G.field(target, "posz")), needDescents);
+        if (!Math.isNaN(curWay) && curWay > dT) current += curWay - dT;
         var old = target, oldSince = targetSince, oldDescent = targetDescent, oldLocked = lockedFoe;
         pickTarget(now, true, level, needDescents, false, true);
         if (target != null && target != old && targetKind == "mob" && lastPickScore < current - 150 && lastPickScore < current * 0.65) {
@@ -769,6 +772,8 @@ class Bot {
             if (!aggro && !near) continue;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             if (unit != null && Catalog.isBoss(unit) && !aggro) continue;
+            // (a pack leader or elite that has not noticed the hero is left alone: fighting it brings its whole pack)
+            if (!aggro && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) continue;
             if (d < bestD) { bestD = d; best = e; }
         }
         return best;
@@ -937,6 +942,8 @@ class Bot {
             if (blacklisted(e, now)) continue;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             if (unit != null && Catalog.isBoss(unit)) continue;
+            // (while leveling no pack leader or elite: its pack comes with it - a level-10 mage fell to an Alpha wolf's two level-12 packmates in seconds, 26.10)
+            if (leveling && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) continue;
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
             var foeLevel = G.integer(G.field(e, "_level"));
             // another height (a plateau, a gorge, an upper storey) is a long way round or none: such monsters are not chosen
@@ -952,6 +959,10 @@ class Bot {
                 if (lift && dzFoe > 4 && cost(e) - dzFoe * 4.0 > 110) continue;
             }
             var score = cost(e);
+            // the way there may wind round a cliff or a pool: what the reach map says it costs counts, not the straight line (a wolf 100 m off over a
+            // gorge was a 300 m walk the other way, and the hero seemed to run from it)
+            var way = nav.pathCost(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), descents);
+            if (!Math.isNaN(way) && way > score) score = way;
             if (hurt(e)) score -= 60; // a wounded foe (one the hero began, or one that fought it) is finished before a fresh one is started
             var drops = false;
             if (wantHunt.length > 0 && unit != null) {
@@ -966,7 +977,7 @@ class Bot {
                 var diff = foeLevel - level;
                 // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
                 // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
-                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : MIN_DIFF) || diff > 2)) continue;
+                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : MIN_DIFF) || diff > MAX_DIFF)) continue;
                 score += (diff < 0 ? -diff * (lenient ? 600 : LOWER_COST) : diff * 250);
             } else {
                 if (!drops) continue;
@@ -994,7 +1005,7 @@ class Bot {
             lastSeenLog = haxe.Timer.stamp();
             var levels = [for (l => n in seen) l + "x" + n];
             levels.sort(Reflect.compare);
-            Log.w((cut > 0 ? cut + " candidates cut as unreachable; " : "") + "no mob to fight for hero L" + level + (leveling ? " (own level " + MIN_DIFF + "..+2 wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
+            Log.w((cut > 0 ? cut + " candidates cut as unreachable; " : "") + "no mob to fight for hero L" + level + (leveling ? " (own level " + MIN_DIFF + "..+" + MAX_DIFF + " wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
         }
     }
 

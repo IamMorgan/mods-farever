@@ -91,6 +91,12 @@ class Nav {
      * Can the hero walk to (x, y) at height z (NaN: any)? 1 yes, 0 no, -1 not known (no reach map yet, or the spot is beyond it).
      * `descents`: the map with the glider's descents allowed (for a hero on a ledge, an island).
      */
+    /** The way's length (about metres) from where the reach map was made to the spot, NaN when not known. */
+    public function pathCost(x:Float, y:Float, z:Float, descents:Bool = false):Float {
+        var f = floodOf(descents);
+        return f.ready ? f.grid.costTo(x, y, z, 2) : Math.NaN;
+    }
+
     public function canReach(x:Float, y:Float, z:Float, descents:Bool = false):Int {
         var f = floodOf(descents);
         if (!f.ready) return -1;

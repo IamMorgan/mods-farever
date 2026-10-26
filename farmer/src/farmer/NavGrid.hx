@@ -70,6 +70,8 @@ class NavGrid {
      */
     public var flood = false;
     public var reach:Map<Int, Float> = new Map();
+    /** The walking cost (about metres of way) from the flood's start to each reached cell. */
+    public var reachCost:Map<Int, Float> = new Map();
     public var reachCount = 0;
     /** True when the flood never reached the border of its window: the reachable ground is a closed region (an island, a ledge, a pocket). */
     public var reachClosed = false;
@@ -85,6 +87,20 @@ class NavGrid {
             if (zz != null && (!Math.isFinite(z) || Math.abs(zz - z) < 6)) return 1;
         }
         return 0;
+    }
+
+    /** The way's cost to the spot (the cheapest of the cells within `slack` of it at about height z), NaN when it is not known. */
+    public function costTo(x:Float, y:Float, z:Float, slack:Int):Float {
+        var best = Math.NaN;
+        if (reachCount == 0) return best;
+        for (ox in -slack...slack + 1) for (oy in -slack...slack + 1) {
+            var k = key(cell(x) + ox, cell(y) + oy);
+            var zz = reach.get(k);
+            if (zz == null || (Math.isFinite(z) && Math.abs(zz - z) >= 6)) continue;
+            var g = reachCost.get(k);
+            if (g != null && (Math.isNaN(best) || g < best)) best = g;
+        }
+        return best;
     }
 
     public function floodCentre(hx:Float, hy:Float):Float {
@@ -590,7 +606,8 @@ class NavGrid {
         if (flood) {
             reach = new Map();
             reachCount = 0;
-            for (n in nodes) { reach.set(key(n.ix, n.iy), n.z); reachCount++; }
+            reachCost = new Map();
+            for (n in nodes) { reach.set(key(n.ix, n.iy), n.z); reachCost.set(key(n.ix, n.iy), n.g); reachCount++; }
             reachX = sx;
             reachY = sy;
             reachClosed = exhausted && !touchedWindow;
