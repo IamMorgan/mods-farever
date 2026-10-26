@@ -99,7 +99,7 @@ class Bot {
     static inline var MIN_DIFF = -1;
     static inline var LOWER_COST = 450.0;
     /** A fight starts inside this radius around where the hero first struck: farther from that spot (a dodge, a fleeing foe) the foe is let go. */
-    static inline var LEASH = 80.0;
+    static inline var LEASH = 50.0;
     /** A monster this much above or below the hero is on another tier (a plateau, a gorge): the way there is long or none, and the walk along the edge circles. */
     static inline var MAX_DZ = 8.0;
     /** A monster farther than this (score metres) is not picked while hunting drops: the roaming goes there first. */
@@ -1039,7 +1039,7 @@ class Bot {
             var stuckWay = !arrived && !nav.walkingToObelisk() && noProgress(roamX, roamY, now);
             if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > 300 || stuckWay) {
                 Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 8 min");
-                for (c in Hunt.around(roamKey, 4)) roamVisited.set(c, now + 480); // (the cells next to it are the same ground; the monsters take minutes to come back)
+                for (c in Hunt.around(roamKey, arrived ? 4 : 6)) roamVisited.set(c, now + 480); // (a ground the way-finder gave up: the whole pocket around it is the same trouble) // (the cells next to it are the same ground; the monsters take minutes to come back)
                 roamKey = -1;
                 nav.gaveUp = false;
                 nav.stop();
@@ -1049,7 +1049,10 @@ class Bot {
         if (roamKey < 0) {
             // the monsters' own zones when the game's tables know them (the whole map), else the zones of their levels
             var useZones = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
-            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN));
+            // first only ground the reach map on foot really contains (a ground it merely might reach, or only by a glider's one-way drop, sent the
+            // hero 100 m one way, the way-finder gave up, and the next ground lay the other way: the 26.10 pacing), then the old rule
+            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> nav.canReach(x, y, Math.NaN) == 1);
+            if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN));
             if (g == null) {
                 var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
                 Log.t("hunt", "no hunting ground left that was not visited lately (" + remembered + " cells remembered): the memory is wiped, the sweep starts over");
@@ -1360,9 +1363,7 @@ class Bot {
         // the fight is held inside a zone of LEASH metres around the spot where it began: a hero the dodge has carried out of it walks back in, a foe that
         // stands outside it is not chased (it is waited for inside; one that never comes in is let go after a few seconds)
         if (fightKey != key(target)) { fightKey = key(target); fightAx = Math.NaN; fightAy = Math.NaN; leashSince = -1; }
-        if (Math.isNaN(fightAx)) {
-            if (d <= range + 12) { fightAx = G.number(G.field(hero, "posx")); fightAy = G.number(G.field(hero, "posy")); }
-        } else {
+        if (!Math.isNaN(fightAx)) {
             var heroOut = Nav.distance(hero, fightAx, fightAy);
             var foeOut = Nav.distance(target, fightAx, fightAy);
             if (heroOut > LEASH || (foeOut > LEASH && d > range)) {
@@ -1411,6 +1412,7 @@ class Bot {
         }
         engaged = true;
         lastFightAt = now;
+        if (Math.isNaN(fightAx)) { fightAx = G.number(G.field(hero, "posx")); fightAy = G.number(G.field(hero, "posy")); } // (the zone's centre: where the hero first strikes, not where it set out for the foe)
         nav.stop();
         attack(now, x, y);
     }
