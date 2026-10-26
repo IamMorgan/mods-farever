@@ -56,6 +56,14 @@ class Bot {
     var seekSince = 0.0;
     var defendAt = -100.0;
     var defendKey = "";
+    /** Where the hero died: monsters and hunting grounds within DEATH_RADIUS of it are avoided for a while (too strong a place for this hero). */
+    var deathSpots:Array<{x:Float, y:Float, until:Float}> = [];
+    static inline var DEATH_RADIUS = 130.0;
+
+    function nearDeath(x:Float, y:Float, now:Float):Bool {
+        for (d in deathSpots) if (now < d.until && (d.x - x) * (d.x - x) + (d.y - y) * (d.y - y) < DEATH_RADIUS * DEATH_RADIUS) return true;
+        return false;
+    }
     var idleTick = -100.0;
     var idleSince = -1.0;
     var retargetAt = -100.0;
@@ -120,7 +128,7 @@ class Bot {
     static inline var HIT_HEIGHT = 3.5;
     /** Monsters this near each other are one group: a lone one is fought before a group (the group's others join the fight). */
     static inline var GROUP_RANGE = 10.0;
-    static inline var GROUP_COST = 45.0;
+    static inline var GROUP_COST = 120.0;
     /** A group counts for at most this many others (past that it is simply a group). */
     static inline var GROUP_MAX = 4;
 
@@ -283,6 +291,7 @@ class Bot {
         if (G.call("ent.GameObject", "isDead", hero) == true) {
             if (!wasDead) Log.t("mod", "HERO DIED at " + Math.round(G.number(G.field(hero, "posx"))) + "," + Math.round(G.number(G.field(hero, "posy"))) + "," + Math.round(G.number(G.field(hero, "posz")))
                 + " (target " + targetKind + ", " + nav.status(hero, now) + "): respawning");
+            if (!wasDead) deathSpots.push({x: G.number(G.field(hero, "posx")), y: G.number(G.field(hero, "posy")), until: now + 900}); // (the ground it fell on is left alone for 15 min)
             wasDead = true;
             nav.stop();
             target = null;
@@ -794,6 +803,7 @@ class Bot {
     function blacklisted(e:Dynamic, now:Float):Bool {
         var until = blacklist.get(key(e));
         if (until != null && now < until) return true;
+        if (deathSpots.length > 0 && G.isA(e, "ent.Foe") && nearDeath(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), now)) return true;
         if (deadAreas.length > 0 && G.isA(e, "ent.Foe")) {
             var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
             for (a in deadAreas) if (now < a.until && (a.x - ex) * (a.x - ex) + (a.y - ey) * (a.y - ey) < 30 * 30) return true;
@@ -990,6 +1000,7 @@ class Bot {
         for (c in cands) {
             var others = -1; // (the monster itself is in the list)
             for (p in foePos) if ((p.x - c.x) * (p.x - c.x) + (p.y - c.y) * (p.y - c.y) <= GROUP_RANGE * GROUP_RANGE) others++;
+            if (leveling && others >= 3) continue; // (a herd of four or more: the hero is pressed into a corner and falls, 26.10)
             var counted = Std.int(Math.min(GROUP_MAX, Math.max(0, others)));
             var s = c.score + counted * GROUP_COST;
             if (s < bestScore) { bestScore = s; best = c.e; kind = "mob"; groupOfBest = Std.int(Math.max(0, others)); }
@@ -1062,8 +1073,8 @@ class Bot {
             var useZones = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
             // first only ground the reach map on foot really contains (a ground it merely might reach, or only by a glider's one-way drop, sent the
             // hero 100 m one way, the way-finder gave up, and the next ground lay the other way: the 26.10 pacing), then the old rule
-            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> nav.canReach(x, y, Math.NaN) == 1);
-            if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN));
+            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> nav.canReach(x, y, Math.NaN) == 1 && !nearDeath(x, y, now));
+            if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !nearDeath(x, y, now));
             if (g == null) {
                 var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
                 Log.t("hunt", "no hunting ground left that was not visited lately (" + remembered + " cells remembered): the memory is wiped, the sweep starts over");
