@@ -65,6 +65,12 @@ class Nav {
 
     function floodOf(descents:Bool):FloodMap return descents ? floodDown : floodPlain;
 
+    /** The hero stands in a region the reach map says is closed on foot (a gorge, a ledge, an island). */
+    public function inClosedRegion(hero:Dynamic, now:Float):Bool {
+        var f = floodPlain;
+        return f.ready && floodFresh(f, hero, now) && f.grid.reachCount > 0 && f.grid.reachClosed;
+    }
+
     /** True when the reach map is known and was made near here lately. */
     function floodFresh(f:FloodMap, hero:Dynamic, now:Float):Bool {
         return f.ready && now - f.at < 60 && f.grid.floodCentre(G.number(G.field(hero, "posx")), G.number(G.field(hero, "posy"))) < 35;

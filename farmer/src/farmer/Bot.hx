@@ -29,6 +29,7 @@ class Bot {
     var job:ServiceJob = null;
     var jobFailedAt = -100.0;
     var scrapFailedAt = -1000.0;
+    var sellFailedAt = -1000.0;
     var phase = "";
     var finishStage = 0;
     var finishAt = 0.0;
@@ -60,6 +61,9 @@ class Bot {
     var retargetAt = -100.0;
     var lastPickScore = 0.0;
     var fightKey = "";
+    var leashSince = -1.0;
+    var leashLogAt = -100.0;
+    var lastFightAt = 0.0;
     var fightAx = Math.NaN;
     var fightAy = Math.NaN;
     var unfinished:Dynamic = null;
@@ -125,6 +129,7 @@ class Bot {
 
     public function start():Void {
         running = true;
+        lastFightAt = haxe.Timer.stamp();
         finished = false;
         finishStage = 0;
         countsReady = false;
@@ -314,6 +319,7 @@ class Bot {
             // gathering: first the bank (its window opens from anywhere), then, if the bag is still full, recycle the chosen gear
             // (the recycler needs a walk to its station: the server only opens it within reach); leveling: only recycle, else fight on
             if (plan.resourcesLeft() && !skipBank) { startJob("bank", now); return; }
+            if (now - sellFailedAt > 120 && Services.sellCandidates(hero, plan, new Map()).length > 0) { startJob("sell", now); return; }
             if (plan.recycle && anyQuality() && Services.hasScrapGear(hero, plan)) { startJob("scrap", now); return; }
             warnBagFull(now); // a full bag does not stop the run: it keeps fighting (drops are left on the ground)
         }
@@ -359,7 +365,7 @@ class Bot {
         targetKind = "";
         job = new ServiceJob(kind);
         Log.t("svc", "job " + kind + " started, free slots " + Services.freeSlots(hero));
-        message = Locale.f(kind == "scrap" ? "stRecycle" : "stBank");
+        message = Locale.f(kind == "bank" ? "stBank" : "stRecycle");
     }
 
     function runJob(now:Float):Void {
@@ -373,7 +379,8 @@ class Bot {
                 return;
             } else if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
             nav.goalZ = Math.NaN;
-            if (Nav.distance(hero, w.x, w.y) <= job.walkArrive) { nav.stop(); job.retry(); return; }
+            // (the recycler opens from anywhere once its station is loaded: the walk to its remembered place ends as soon as it appears)
+            if (Nav.distance(hero, w.x, w.y) <= job.walkArrive || (job.walkArrive > 3 && Services.scrapStation(hero) != null)) { nav.stop(); job.retry(); return; }
             if (nav.gaveUp && !nav.walkingToObelisk()) { // no way to the recycler from here: the trip is dropped for a while
                 nav.gaveUp = false;
                 nav.stop();
@@ -401,6 +408,7 @@ class Bot {
             return;
         }
         jobFailedAt = now;
+        if (kind == "sell") sellFailedAt = now;
         if (kind == "scrap") scrapFailedAt = now; // (the recycler is in the city: a failed trip is not made again at once)
         message = r.substr(5);
         if (kind == "bank") { skipBank = true; jobFailedAt = -100; } // the bank is full or failed: recycling is next
@@ -649,6 +657,7 @@ class Bot {
             // a monster at the hero's feet is fought first: running from it (the dodge) and back to the node would go on for ever
             var threat = nearbyThreat(now);
             if (threat != null) {
+                lastFightAt = now;
                 Log.w("defending against " + G.s(G.field(G.field(threat, "inf"), "id")) + " at " + Math.round(Nav.distance(hero, G.number(G.field(threat, "posx")), G.number(G.field(threat, "posy")))) + " m");
                 target = threat; targetKind = "mob"; lockedFoe = null; targetSince = now; defendKey = key(threat);
                 nav.stop();
@@ -676,6 +685,8 @@ class Bot {
                 }
             }
         }
+        // a long time in a pit (a closed region) with no fight: the home stone, not a wander
+        if (leveling && now - lastFightAt > 60 && now - stoneAt > 150 && nav.inClosedRegion(hero, now) && idleStone(now, "a minute in a closed region (pit) with no fight")) return;
         // a foe far off is the target, and a nearer one of a better level has come into view on the way: that one (the old target is kept unless
         // the new one is clearly better, else the hero would turn round for every monster that loads)
         if (target != null && targetKind == "mob" && leveling && !engaged && !lenientTarget && !wantsGather() && now - targetSince > 5 && now - retargetAt > 3) {
@@ -1346,27 +1357,38 @@ class Bot {
         var d = Nav.distance(hero, x, y);
         var dz = z - G.number(G.field(hero, "posz"));
         var range = combatRange();
-        // the fight stays within LEASH of where it began: a foe the dodge has been run away from (or one that flees) is let go before it resets and
-        // the hero is led in circles (the same foe, struck again and again from a farther place each time)
-        if (fightKey != key(target)) { fightKey = key(target); fightAx = Math.NaN; fightAy = Math.NaN; }
+        // the fight is held inside a zone of LEASH metres around the spot where it began: a hero the dodge has carried out of it walks back in, a foe that
+        // stands outside it is not chased (it is waited for inside; one that never comes in is let go after a few seconds)
+        if (fightKey != key(target)) { fightKey = key(target); fightAx = Math.NaN; fightAy = Math.NaN; leashSince = -1; }
         if (Math.isNaN(fightAx)) {
             if (d <= range + 12) { fightAx = G.number(G.field(hero, "posx")); fightAy = G.number(G.field(hero, "posy")); }
-        } else if (Nav.distance(hero, fightAx, fightAy) > LEASH) {
-            if (aggroOnHero(target)) { // it follows and hits: the fight goes on where it is, from a new centre
-                fightAx = G.number(G.field(hero, "posx")); fightAy = G.number(G.field(hero, "posy"));
-            } else {
-                Log.t("fight", "the fight led " + Math.round(Nav.distance(hero, fightAx, fightAy)) + " m from where it began (the foe is " + Math.round(d) + " m away): let go for 5 min");
-                blacklist.set(key(target), now + 300);
-                deadAreas = [for (a in deadAreas) if (now < a.until) a];
-                deadAreas.push({x: x, y: y, until: now + 150});
-                fightKey = "";
-                target = null;
-                targetKind = "";
+        } else {
+            var heroOut = Nav.distance(hero, fightAx, fightAy);
+            var foeOut = Nav.distance(target, fightAx, fightAy);
+            if (heroOut > LEASH || (foeOut > LEASH && d > range)) {
+                if (foeOut > LEASH && !aggroOnHero(target)) {
+                    if (leashSince < 0) leashSince = now;
+                    else if (now - leashSince > 8) {
+                        Log.t("fight", "the foe stays outside the " + LEASH + " m fight zone (" + Math.round(foeOut) + " m from where the fight began): let go");
+                        blacklist.set(key(target), now + 30);
+                        fightKey = "";
+                        target = null;
+                        targetKind = "";
+                        engaged = false;
+                        nav.stop();
+                        releaseAttack();
+                        return;
+                    }
+                } else leashSince = -1;
                 engaged = false;
-                nav.stop();
                 releaseAttack();
+                if (heroOut > LEASH - 10) {
+                    if (now - leashLogAt > 5) { leashLogAt = now; Log.t("fight", "outside the fight zone (" + Math.round(heroOut) + " m from where it began): back in"); }
+                    moveTo(fightAx, fightAy, LEASH * 0.6, now);
+                } else nav.stop();
                 return;
             }
+            leashSince = -1;
         }
         // a foe on another height (a ledge above, a pit below) is not hit from here, however near it is on the map: closer in on a way up
         // or down, or let go when none leads there
@@ -1388,6 +1410,7 @@ class Bot {
             return;
         }
         engaged = true;
+        lastFightAt = now;
         nav.stop();
         attack(now, x, y);
     }

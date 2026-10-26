@@ -152,6 +152,34 @@ class Services {
         return isOk(reason);
     }
 
+    // ---- selling jewelry ----
+
+    /** Rings, necklaces and the like. */
+    public static function isJewelry(item:Dynamic):Bool {
+        var id = itemId(item);
+        var type = G.s(G.field(G.field(item, "inf"), "type"));
+        for (w in ["Finger", "Necklace", "Neck", "Ring", "Amulet", "Trinket"]) if (StringTools.startsWith(id, w + "_") || type.indexOf(w) >= 0) return true;
+        return false;
+    }
+
+    /** Jewelry of the bag the game lets be sold (to any merchant; the sale needs none near): common and uncommon, and any rarity the plan recycles. */
+    public static function sellCandidates(hero:Dynamic, plan:FarmPlan, skip:Map<String, Int>):Array<Dynamic> {
+        var out:Array<Dynamic> = [];
+        var loadout = G.field(hero, "loadout");
+        for (stack in stacks(bag(hero))) {
+            var item = G.field(stack, "item");
+            if (!isGear(item) || !isJewelry(item)) continue;
+            var rarity = itemRarity(item);
+            if (rarity != "Common" && rarity != "Uncommon" && !plan.recyclesRarity(rarity)) continue;
+            var k = itemId(item) + "#" + G.integer(G.call("st.Inventory", "getStackIndex", bag(hero), [stack]), -1);
+            if (skip.exists(k) && skip.get(k) >= 3) continue;
+            var ok = false;
+            try ok = G.call("st.Loadout", "canSellItem", loadout, [item]) == true catch (_:Dynamic) {}
+            if (ok) out.push(stack);
+        }
+        return out;
+    }
+
     // ---- the bank ----
 
     /** Bank tabs of the hero (st.Inventory each). */
@@ -217,7 +245,7 @@ class ServiceJob {
         if (startedAt == 0) startedAt = now;
         if (now - startedAt > (walkTo != null ? 600 : 90)) { close(app); return "fail:timeout"; }
         if (now < nextAt || (stage >= 1 && now < hold)) return "run";
-        return kind == "scrap" ? stepScrap(app, hero, plan, now) : stepBank(app, hero, plan, now);
+        return kind == "scrap" ? stepScrap(app, hero, plan, now) : kind == "sell" ? stepSell(hero, plan, now) : stepBank(app, hero, plan, now);
     }
 
     /** Set while the recycler is too far for the server to open it: where the bot has to walk first. */
@@ -325,6 +353,25 @@ class ServiceJob {
             }
             nextAt = now + 0.3;
         }
+        return "run";
+    }
+
+    var sellTries:Map<String, Int> = new Map();
+    var sold = 0;
+
+    /** Sells the jewelry of the bag one piece at a time (the game's own sale request, Loadout.sellItem: it needs no merchant in reach). */
+    function stepSell(hero:Dynamic, plan:FarmPlan, now:Float):String {
+        var candidates = Services.sellCandidates(hero, plan, sellTries);
+        if (candidates.length == 0) return "done";
+        if (sold++ > 80) return "fail:too many sales";
+        var stack = candidates[0];
+        var item = G.field(stack, "item");
+        var k = Services.itemId(item) + "#" + G.integer(G.call("st.Inventory", "getStackIndex", Services.bag(hero), [stack]), -1);
+        sellTries.set(k, (sellTries.exists(k) ? sellTries.get(k) : 0) + 1);
+        var reason:Dynamic = null;
+        try reason = G.call("st.Loadout", "sellItem", G.field(hero, "loadout"), [item, (ok:Bool) -> Log.t("svc", "sale result " + ok)]) catch (e:Dynamic) return "fail:sell " + Std.string(e);
+        Log.t("svc", "sell " + k + " (" + Services.itemRarity(item) + "): " + (reason == null ? "null" : Std.string(Type.enumConstructor(reason))));
+        nextAt = now + 0.4;
         return "run";
     }
 
