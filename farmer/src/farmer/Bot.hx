@@ -793,7 +793,7 @@ class Bot {
     /** While leveling a monster this near a pack leader, an elite or a boss is left alone (its pack joins the fight). */
     static inline var DANGER_RANGE = 25.0;
     /** While leveling a monster beyond the reach map is a target only this near. */
-    static inline var FAR_UNKNOWN = 120.0;
+    static inline var FAR_UNKNOWN = 400.0;
 
     function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false, quiet:Bool = false):Void {
         lenientTarget = lenient;
@@ -848,6 +848,9 @@ class Bot {
             padRise = Math.max(padRise, Pads.expectedRise(pad));
         }
         var seen:Map<Int, Int> = new Map();
+        var why:Map<String, Int> = new Map();
+        var drop = (r:String) -> why.set(r, (why.exists(r) ? why.get(r) : 0) + 1);
+        var rawNear = 0;
         var foePos:Array<{x:Float, y:Float}> = [];
         var dangerPos:Array<{x:Float, y:Float}> = [];
         var cands:Array<{e:Dynamic, score:Float, x:Float, y:Float}> = [];
@@ -860,15 +863,16 @@ class Bot {
             var unitType = G.s(G.field(inf, "type"));
             if (unitType == "Environment" || unitType == "Critter") continue; // training dummies, harmless animals
             foePos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))}); // (every hostile monster counts for a group, wanted or not)
+            if (Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) < 200) rawNear++;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             // a pack leader, an elite or a boss about: the monsters round it are not touched (its pack and it join any fight there)
             if (unit != null && (Catalog.isBoss(unit) || Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6)) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)
                 dangerPos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
-            if (blacklisted(e, now)) continue;
-            if (unit != null && Catalog.isBoss(unit)) continue;
+            if (blacklisted(e, now)) { drop("blacklist"); continue; }
+            if (unit != null && Catalog.isBoss(unit)) { drop("boss"); continue; }
             // (while leveling no pack leader or elite: its pack comes with it - a level-10 mage fell to an Alpha wolf's two level-12 packmates in seconds, 26.10)
-            if (leveling && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) continue;
-            if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) continue; // in the water
+            if (leveling && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) { drop("leader"); continue; }
+            if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) { drop("water"); continue; } // in the water
             var foeLevel = G.integer(G.field(e, "_level"));
             // another height (a plateau, a gorge, an upper storey) is a long way round or none: such monsters are not chosen
             // (hunting drops: a monster across the map is the roaming's business, not a target; leveling goes as far as its level needs)
@@ -876,15 +880,15 @@ class Bot {
             var dzFoe = Math.abs(G.number(G.field(e, "posz")) - hz);
             // (a bumper within reach lifts the hero onto a ledge up to its throw: then a monster up there is a target too)
             var reach = nav.canReach(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), descents);
-            if (reach == 0) { cut++; continue; } // the reach map says no way leads there (another tier, behind a cliff)
+            if (reach == 0) { cut++; drop("unreachable"); continue; } // the reach map says no way leads there (another tier, behind a cliff)
             // beyond the reach map the way is a guess: a monster far off is the hunting grounds' business (the obelisk or the road takes the hero there), not a
             // target (the 26.10 runs walked 800-1200 m towards a slime the way-finder never found a way to, in circles)
             // beyond the reach map the way is a guess: such a monster is the hunting grounds' business (they walk the hero there), not a target
-            if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) continue;
+            if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) { drop(foeLevel - level >= MIN_DIFF && foeLevel - level <= MAX_DIFF ? "far-unknown-RIGHT-LEVEL" : "far-unknown"); continue; }
             if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
                 var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
-                if (!lift && (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25))) continue;
-                if (lift && dzFoe > 4 && cost(e) - dzFoe * 4.0 > 110) continue;
+                if (!lift && (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25))) { drop("height"); continue; }
+                if (lift && dzFoe > 4 && cost(e) - dzFoe * 4.0 > 110) { drop("height"); continue; }
             }
             var score = cost(e);
             // the way there may wind round a cliff or a pool: what the reach map says it costs counts, not the straight line (a wolf 100 m off over a
@@ -898,24 +902,24 @@ class Bot {
                 for (id in wantHunt) if (items.exists(id)) { drops = true; break; }
             }
             seen.set(foeLevel, (seen.exists(foeLevel) ? seen.get(foeLevel) : 0) + 1);
-            if (Hazard.trapAt(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")))) continue; // stands in a trap
+            if (Hazard.trapAt(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")))) { drop("trap"); continue; } // stands in a trap
             if (leveling) {
                 // the hero hunts monsters of its OWN level (a little above is fine, below gives next to nothing): lower ones are
                 // not touched, the bot looks for its own level, as far away as that is (the obelisk or the road takes it there)
                 var diff = foeLevel - level;
                 // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
                 // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
-                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : MIN_DIFF) || diff > MAX_DIFF)) continue;
+                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : MIN_DIFF) || diff > MAX_DIFF)) { drop("level"); continue; }
                 score += (diff < 0 ? -diff * (lenient ? 600 : LOWER_COST) : diff * 250);
             } else {
-                if (!drops) continue;
+                if (!drops) { drop("no-drop"); continue; }
                 score += Math.max(0, foeLevel - level) * 250;
             }
             if (leveling) {
                 var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
                 var nearDanger = false;
                 for (p in dangerPos) if ((p.x - ex) * (p.x - ex) + (p.y - ey) * (p.y - ey) < DANGER_RANGE * DANGER_RANGE) { nearDanger = true; break; }
-                if (nearDanger) { cut++; continue; }
+                if (nearDanger) { cut++; drop("near-leader"); continue; }
             }
             cands.push({e: e, score: score, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
         }
@@ -938,7 +942,7 @@ class Bot {
             lastSeenLog = haxe.Timer.stamp();
             var levels = [for (l => n in seen) l + "x" + n];
             levels.sort(Reflect.compare);
-            Log.w((cut > 0 ? cut + " candidates cut as unreachable; " : "") + "no mob to fight for hero L" + level + (leveling ? " (own level " + MIN_DIFF + "..+" + MAX_DIFF + " wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")));
+            Log.w((cut > 0 ? cut + " candidates cut as unreachable; " : "") + "no mob to fight for hero L" + level + (leveling ? " (own level " + MIN_DIFF + "..+" + MAX_DIFF + " wanted)" : "") + "; monsters in the loaded world by level: " + (levels.length == 0 ? "none" : levels.join(" ")) + " | hostile within 200 m: " + rawNear + ", dropped: " + [for (r => n in why) r + "=" + n].join(" "));
         }
     }
 
