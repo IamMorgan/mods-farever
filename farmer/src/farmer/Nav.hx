@@ -453,8 +453,8 @@ class Nav {
                 if (Math.abs(x - hx) > 135 || Math.abs(y - hy) > 135) continue;
                 var id = G.s(G.field(G.field(e, "inf"), "id"));
                 var unit = Catalog.unitRecord(id);
-                // a pack leader, an elite or a boss: its whole ground is closed to the path (they wake at 20 m and the pack comes with them)
-                var danger = (unit != null && (Catalog.isBoss(unit) || Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6))) || id.indexOf("Alpha") >= 0;
+                // a boss: its whole ground is closed to the path
+                var danger = unit != null && Catalog.isBoss(unit);
                 var gd2 = (x - gx) * (x - gx) + (y - gy) * (y - gy);
                 if (gd2 < 9) continue;
                 if ((x - hx) * (x - hx) + (y - hy) * (y - hy) < 16) continue; // (the ones at the hero's feet are in a fight, not on the way)

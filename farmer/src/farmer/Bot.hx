@@ -833,8 +833,6 @@ class Bot {
             if (!aggro && !near) continue;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             if (unit != null && Catalog.isBoss(unit) && !aggro) continue;
-            // (a pack leader or elite that has not noticed the hero is left alone: fighting it brings its whole pack)
-            if (!aggro && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) continue;
             if (d < bestD) { bestD = d; best = e; }
         }
         return best;
@@ -1008,7 +1006,6 @@ class Bot {
         var drop = (r:String) -> why.set(r, (why.exists(r) ? why.get(r) : 0) + 1);
         var rawNear = 0;
         var foePos:Array<{x:Float, y:Float}> = [];
-        var dangerPos:Array<{x:Float, y:Float}> = [];
         var cands:Array<{e:Dynamic, score:Float, x:Float, y:Float}> = [];
         for (e in G.fastArray(G.field(layer, "units"))) {
             if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true) continue;
@@ -1021,13 +1018,8 @@ class Bot {
             foePos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))}); // (every hostile monster counts for a group, wanted or not)
             if (Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) < 200) rawNear++;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
-            // a pack leader, an elite or a boss about: the monsters round it are not touched (its pack and it join any fight there)
-            if (unit != null && (Catalog.isBoss(unit) || Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6)) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)
-                dangerPos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
             if (blacklisted(e, now) || isUntouchable(e, now)) { drop("blacklist"); continue; }
             if (unit != null && Catalog.isBoss(unit)) { drop("boss"); continue; }
-            // (while leveling no pack leader or elite: its pack comes with it - a level-10 mage fell to an Alpha wolf's two level-12 packmates in seconds, 26.10)
-            if (leveling && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) { drop("leader"); continue; }
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) { drop("water"); continue; } // in the water
             var foeLevel = G.integer(G.field(e, "_level"));
             // another height (a plateau, a gorge, an upper storey) is a long way round or none: such monsters are not chosen
@@ -1072,22 +1064,17 @@ class Bot {
                 if (!drops) { drop("no-drop"); continue; }
                 score += Math.max(0, foeLevel - level) * 250;
             }
-            if (leveling) {
-                var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
-                var nearDanger = false;
-                for (p in dangerPos) if ((p.x - ex) * (p.x - ex) + (p.y - ey) * (p.y - ey) < DANGER_RANGE * DANGER_RANGE) { nearDanger = true; break; }
-                if (nearDanger) { cut++; drop("near-leader"); continue; }
-            }
             cands.push({e: e, score: score, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
         }
-        // a lone monster before a group: the group's others would join the fight and press the hero into a corner
+        // the nearest one (by the way there)
         var groupOfBest = 0;
         for (c in cands) {
-            var others = -1; // (the monster itself is in the list)
-            for (p in foePos) if ((p.x - c.x) * (p.x - c.x) + (p.y - c.y) * (p.y - c.y) <= GROUP_RANGE * GROUP_RANGE) others++;
-            var counted = Std.int(Math.min(GROUP_MAX, Math.max(0, others)));
-            var s = c.score + counted * GROUP_COST;
-            if (s < bestScore) { bestScore = s; best = c.e; kind = "mob"; groupOfBest = Std.int(Math.max(0, others)); }
+            if (c.score < bestScore) { bestScore = c.score; best = c.e; kind = "mob"; }
+        }
+        if (best != null) {
+            var bx = G.number(G.field(best, "posx")), by = G.number(G.field(best, "posy"));
+            for (p in foePos) if ((p.x - bx) * (p.x - bx) + (p.y - by) * (p.y - by) <= GROUP_RANGE * GROUP_RANGE) groupOfBest++;
+            groupOfBest = Std.int(Math.max(0, groupOfBest - 1));
         }
         lastCut = cut;
         if (best != null) {
