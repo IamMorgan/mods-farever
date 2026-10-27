@@ -101,6 +101,9 @@ class Bot {
     static inline var MIN_DIFF = -1;
     static inline var LOWER_COST = 450.0;
     static inline var MAX_DIFF = 1;
+    /** A monster this many levels above the hero is not fought, nor anything within STRONG_RANGE of it. */
+    static inline var STRONG_DIFF = 3;
+    static inline var STRONG_RANGE = 20.0;
     /** Metres a monster of another level (±1) counts farther than one of the hero's own level. */
     static inline var OFF_LEVEL_COST = 150.0;
     /** A fight starts inside this radius around where the hero first struck: farther from that spot (a dodge, a fleeing foe) the foe is let go. */
@@ -1079,6 +1082,12 @@ class Bot {
         var rawNear = 0;
         var foePos:Array<{x:Float, y:Float}> = [];
         var cands:Array<{e:Dynamic, score:Float, x:Float, y:Float}> = [];
+        // monsters far above the hero's level (an L20 captain killed an L17 hero in three blows, 27.10): nothing standing near one is attacked
+        var strongPos:Array<{x:Float, y:Float}> = [];
+        for (e in G.fastArray(G.field(layer, "units"))) {
+            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true || G.field(e, "dying") == true) continue;
+            if (G.integer(G.field(e, "_level")) >= level + STRONG_DIFF) strongPos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
+        }
         for (e in G.fastArray(G.field(layer, "units"))) {
             if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true) continue;
             if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true) continue;
@@ -1136,6 +1145,12 @@ class Bot {
                 if (diff != 0) score += OFF_LEVEL_COST;
             } else {
                 if (!drops) { drop("no-drop"); continue; }
+            }
+            if (leveling) {
+                var sx = G.number(G.field(e, "posx")), sy = G.number(G.field(e, "posy"));
+                var nearStrong = false;
+                for (p in strongPos) if ((p.x - sx) * (p.x - sx) + (p.y - sy) * (p.y - sy) < STRONG_RANGE * STRONG_RANGE) { nearStrong = true; break; }
+                if (nearStrong) { drop("near-much-stronger"); continue; }
             }
             verdict.set(curKey, "CANDIDATE score " + Math.round(score));
             cands.push({e: e, score: score, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
