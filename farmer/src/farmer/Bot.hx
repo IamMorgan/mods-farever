@@ -1003,6 +1003,7 @@ class Bot {
     }
 
     var roamFar = false;
+    var farFlew = false;
     var carrotX = Math.NaN;
     var carrotY = Math.NaN;
     var carrotBad:Array<{x:Float, y:Float, until:Float}> = [];
@@ -1153,6 +1154,10 @@ class Bot {
         message = Locale.f("stTravel");
         if (!roamFarGround && stoneIfFar(roamX, roamY, now)) return true;
         if (roamFarGround && roamPath.length > 0) {
+            // an opened obelisk that saves a long walk: the flight to the one nearest the ground comes first (the whole way to the ground is judged, not the next carrot);
+            // after the landing the route is worked out again from there
+            if (nav.travel(hero, roamX, roamY, now)) { farFlew = true; message = Locale.f("stTravel"); return true; }
+            if (farFlew) { farFlew = false; roamKey = -1; carrotX = Math.NaN; nav.stop(); return true; }
             // the hero's place on the coarse route, then a carrot a little ahead on it: a point the reach map does not rule out (moved a little aside if need be)
             var bi = roamPathIdx, bd = 1e18;
             for (i in roamPathIdx...Std.int(Math.min(roamPath.length, roamPathIdx + 25))) {
