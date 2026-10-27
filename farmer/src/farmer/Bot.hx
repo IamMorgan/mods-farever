@@ -101,6 +101,8 @@ class Bot {
     static inline var MIN_DIFF = -1;
     static inline var LOWER_COST = 450.0;
     static inline var MAX_DIFF = 1;
+    /** Metres a monster of another level (±1) counts farther than one of the hero's own level. */
+    static inline var OFF_LEVEL_COST = 150.0;
     /** A fight starts inside this radius around where the hero first struck: farther from that spot (a dodge, a fleeing foe) the foe is let go. */
     static inline var LEASH = 40.0;
     /** A monster this much above or below the hero is on another tier (a plateau, a gorge): the way there is long or none, and the walk along the edge circles. */
@@ -112,7 +114,7 @@ class Bot {
     /** A ready skill waits at most this long for the weapon's combo series to end. */
     static inline var COMBO_WAIT = 2.5;
     /** A monster that has the hero as its target is fought from this far. */
-    static inline var AGGRO_RANGE = 15.0;
+    static inline var AGGRO_RANGE = 45.0;
     /** Monsters this close to the node that is to be gathered are cleared first. */
     static inline var NODE_GUARD = 8.0;
     /** A foe in reach that loses no health for this long is let go (hits into the void). */
@@ -300,6 +302,7 @@ class Bot {
         var held = false;
         try held = watchdog(now, plan.targetLevel > 0 && G.integer(G.field(hero, "_level")) < plan.targetLevel) catch (error:Dynamic) Log.err("watchdog", error);
         if (held) return;
+        try hitLog(now) catch (error:Dynamic) Log.err("hitlog", error);
         updateCounts();
         Services.noteStation(hero, now);
         if (job == null && leaveWater(now)) return;
@@ -331,6 +334,34 @@ class Bot {
             warnBagFull(now); // a full bag does not stop the run: it keeps fighting (drops are left on the ground)
         }
         farm(now, leveling, level);
+    }
+
+    var lastHp = -1.0;
+    var hitLogAt = 0.0;
+
+    /** The hero lost health: who is after it (every foe within 60 m that has it as its target, plus the nearest others) and what the bot is doing about it. */
+    function hitLog(now:Float):Void {
+        var hp = G.number(G.call("ent.Unit", "get_health", hero), -1);
+        var before = lastHp;
+        lastHp = hp;
+        if (before < 0 || hp >= before - 0.5 || now - hitLogAt < 0.4) return;
+        hitLogAt = now;
+        var rows:Array<{d:Float, text:String}> = [];
+        for (e in G.fastArray(G.field(G.field(hero, "layer"), "units"))) {
+            if (e == null || e == hero || !G.isA(e, "ent.Foe") || G.field(e, "removed") == true) continue;
+            if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true) continue;
+            var d = Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")));
+            if (d > 60) continue;
+            var aggro = false;
+            try aggro = G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) {}
+            if (!aggro && d > 15) continue;
+            rows.push({d: d, text: G.s(G.field(G.field(e, "inf"), "id")) + " L" + G.field(e, "_level") + " d=" + Math.round(d) + " dz=" + Math.round(G.number(G.field(e, "posz")) - G.number(G.field(hero, "posz")))
+                + (aggro ? " AGGRO" : "") + (e == target ? " =TARGET" : "") + (blacklisted(e, now) ? " blacklisted" : "") + (isUntouchable(e, now) ? " untouchable" : "")});
+        }
+        rows.sort((a, b) -> a.d < b.d ? -1 : a.d > b.d ? 1 : 0);
+        var threat = nearbyThreat(now);
+        Log.t("hit", "hp " + Math.round(before) + " -> " + Math.round(hp) + " | target " + (target == null ? "-" : G.s(G.field(G.field(target, "inf"), "id"))) + " " + targetKind + " engaged " + engaged
+            + " | defend choice " + (threat == null ? "none" : G.s(G.field(G.field(threat, "inf"), "id"))) + " | foes: " + [for (r in rows.slice(0, 8)) r.text].join("; "));
     }
 
     /** Out of combat (nothing fought, nothing hitting the hero, no bag job): the time to change gear. */
@@ -822,12 +853,13 @@ class Bot {
             var unitType = G.s(G.field(inf, "type"));
             if (unitType == "Environment" || unitType == "Critter") continue;
             var ex = G.number(G.field(e, "posx")), ey = G.number(G.field(e, "posy"));
-            if (Math.abs(G.number(G.field(e, "posz")) - hz) > 6) continue;
-            var d = Nav.distance(hero, ex, ey);
-            if (d > AGGRO_RANGE) continue;
             var aggro = false;
             try aggro = G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) {}
-            if (isUntouchable(e, now)) continue; // (hit for long and never hurt: under the ground, behind a wall)
+            // (whoever has taken the hero as its target is answered at any height and as far as it can strike: archers shoot from 30 m, wolves leap down from ledges)
+            if (Math.abs(G.number(G.field(e, "posz")) - hz) > (aggro ? 20 : 6)) continue;
+            var d = Nav.distance(hero, ex, ey);
+            if (d > (aggro ? AGGRO_RANGE : THREAT_RANGE + 6)) continue;
+            if (!aggro && isUntouchable(e, now)) continue; // (hit for long and never hurt: under the ground, behind a wall)
             if (!aggro && blacklisted(e, now)) continue; // (a foe that was given up but hits the hero is fought all the same)
             var near = d <= THREAT_RANGE || (haveNode && Math.sqrt((ex - nodeX) * (ex - nodeX) + (ey - nodeY) * (ey - nodeY)) <= NODE_GUARD && d <= 30);
             if (!aggro && !near) continue;
@@ -1100,7 +1132,8 @@ class Bot {
                 // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
                 // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
                 if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? Std.int(Math.min(-3, minDiff())) : minDiff()) || diff > MAX_DIFF)) { drop("level"); continue; }
-                // (every monster of the allowed levels counts the same: the nearest one is chosen)
+                // own level first: a monster one level off is taken only when no own-level one is within OFF_LEVEL_COST metres nearer
+                if (diff != 0) score += OFF_LEVEL_COST;
             } else {
                 if (!drops) { drop("no-drop"); continue; }
             }
@@ -2403,6 +2436,15 @@ class Bot {
                 return {type: G.typeName(sval), value: sval == null ? null : [for (v in G.fastArray(sval)) G.s(v)].join(" ")};
             case "obelisks":
                 return [for (o in Nav.obelisks(hero)) o.id + " " + Math.round(o.x) + "," + Math.round(o.y)];
+            case "zonecenter":
+                // developer: the middle of the zones whose id contains `zone`
+                return Hunt.zoneCenter(Std.string(Reflect.field(cmd, "zone")));
+            case "tp":
+                // developer: puts the hero at x,y (z when given) by the teleport mod's own move, to test the routes from another place
+                var tx:Float = Reflect.field(cmd, "x"), ty:Float = Reflect.field(cmd, "y");
+                var tz:Float = Reflect.hasField(cmd, "z") ? Reflect.field(cmd, "z") : G.number(G.field(hero, "posz"));
+                nav.stop(); target = null; targetKind = ""; blacklist = new Map(); deadAreas = [];
+                return AutoDodge.teleport == null ? "no teleport" : AutoDodge.teleport(hero, {x: tx, y: ty, z: tz});
             case "zones":
                 // developer: trigger elements (traps, bumpers, liquids) within `r` metres of the hero
                 var zr = Reflect.hasField(cmd, "r") ? G.number(Reflect.field(cmd, "r")) : 80.0;

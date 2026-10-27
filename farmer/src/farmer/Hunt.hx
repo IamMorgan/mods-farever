@@ -64,6 +64,18 @@ class Hunt {
         }
     }
 
+    /** The middle of the grid cells whose zone id contains `part`, with their number (developer). */
+    public static function zoneCenter(part:String):Null<{x:Float, y:Float, n:Int}> {
+        var sx = 0.0, sy = 0.0, n = 0;
+        for (i in 0...ids.length) {
+            if (ids[i] == "" || ids[i].indexOf(part) < 0) continue;
+            sx += X0 + (i % NX) * STEP;
+            sy += Y0 + Std.int(i / NX) * STEP;
+            n++;
+        }
+        return n == 0 ? null : {x: sx / n, y: sy / n, n: n};
+    }
+
     /** The grid cells within `r` cells of `key` (itself included). */
     public static function around(key:Int, r:Int):Array<Int> {
         var out = [];
