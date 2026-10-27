@@ -297,7 +297,9 @@ class Bot {
         if (wasDead) { wasDead = false; nextThink = now + 3; return; }
         if (G.field(hero, "inCutscene") == true) return;
 
-        try watchdog(now, plan.targetLevel > 0 && G.integer(G.field(hero, "_level")) < plan.targetLevel) catch (error:Dynamic) Log.err("watchdog", error);
+        var held = false;
+        try held = watchdog(now, plan.targetLevel > 0 && G.integer(G.field(hero, "_level")) < plan.targetLevel) catch (error:Dynamic) Log.err("watchdog", error);
+        if (held) return;
         updateCounts();
         Services.noteStation(hero, now);
         if (job == null && leaveWater(now)) return;
@@ -561,7 +563,7 @@ class Bot {
      * dead and a new way is looked for; the second time at the same place, or at once after 15 s in water, the home stone is used.
      * It runs before everything else the bot does (the water, a goto, a service job), so nothing can keep it from running.
      */
-    function watchdog(now:Float, leveling:Bool):Void {
+    function watchdog(now:Float, leveling:Bool):Bool {
         var x = G.number(G.field(hero, "posx")), y = G.number(G.field(hero, "posy"));
         var fighting = (engaged && target != null && now - progressAt < 20) || now - lastFightAt < 8;
         var dead = false;
@@ -570,13 +572,13 @@ class Bot {
         try flying = G.call("ent.Hero", "isFlyingToObelisk", hero) == true catch (_:Dynamic) {}
         // (gathering waits for the nodes to grow back standing: only a hero that has something to do - a target, a ground to walk to, leveling - is watched)
         var idleOk = !leveling && target == null && roamKey < 0 && job == null;
-        if (dead || flying || fighting || idleOk) { trail = []; trailAt = now; return; }
+        if (dead || flying || fighting || idleOk) { trail = []; trailAt = now; return false; }
         if (now - trailAt >= 1.0) {
             trailAt = now;
             trail.push({t: now, x: x, y: y});
             while (trail.length > 0 && now - trail[0].t > 46) trail.shift();
         }
-        if (trail.length < 10) return;
+        if (trail.length < 10) return false;
         var wet = false;
         try wet = Hazard.heroInLiquid(hero) catch (_:Dynamic) {}
         var window = wet ? 15.0 : 45.0;
@@ -587,7 +589,7 @@ class Bot {
             minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
             minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
         }
-        if (now - first < window - 1.5 || Math.max(maxX - minX, maxY - minY) >= (wet ? 4.0 : 8.0)) return;
+        if (now - first < window - 1.5 || Math.max(maxX - minX, maxY - minY) >= (wet ? 4.0 : 8.0)) return false;
         // held: the same place as the last strike counts again, a new place starts over
         if (!Math.isNaN(trapX) && Math.abs(x - trapX) < 25 && Math.abs(y - trapY) < 25 && now - trapAt < 400) trapStrikes++; else trapStrikes = 1;
         trapX = x; trapY = y; trapAt = now;
@@ -611,8 +613,10 @@ class Bot {
         nextThink = now;
         if (wet || trapStrikes >= 2) {
             stoneAt = Math.min(stoneAt, now - 1000); // (this is no ordinary idle: the stone is used now)
+            // (the stone's cast is cut by any move: nothing else is started this tick, and idleStone holds the bot for 14 s)
             if (!idleStone(now, "held in one place: " + (wet ? "in the water" : "strike " + trapStrikes))) Log.w("WATCHDOG: no home stone to use");
         }
+        return true;
     }
 
     /** Four flights by obelisk or home stone in fifteen minutes and no fight meanwhile: they lead nowhere. The hero stops flying for a quarter of an hour and fights what is near. */
