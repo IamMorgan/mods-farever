@@ -1002,6 +1002,15 @@ class Bot {
         return true;
     }
 
+    var roamFar = false;
+    var carrotX = Math.NaN;
+    var carrotY = Math.NaN;
+    var carrotBad:Array<{x:Float, y:Float, until:Float}> = [];
+    var carrotFails:Array<Float> = [];
+    var roamPath:Array<{x:Float, y:Float}> = [];
+    var roamPathIdx = 0;
+    var farBlocked:Map<Int, Float> = new Map();
+    var roamFarGround = false;
     var roamZone = "";
     var roamZoneLevel = -1;
 
@@ -1029,8 +1038,30 @@ class Bot {
         if (now < roamWaitUntil) { nav.stop(); message = Locale.f("noTargets"); return true; } // just arrived: the monsters are loading
         if (roamKey >= 0) {
             var arrived = Nav.distance(hero, roamX, roamY) < 30;
-            var stuckWay = !arrived && !nav.walkingToObelisk() && noProgress(roamX, roamY, now);
-            if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > 300 || stuckWay) {
+            var carrotOn = roamFarGround && roamPath.length > 0 && !Math.isNaN(carrotX);
+            var stuckWay = !arrived && !nav.walkingToObelisk() && (carrotOn ? noProgress(carrotX, carrotY, now, 25) : noProgress(roamX, roamY, now));
+            if (roamFarGround && roamPath.length > 0 && !arrived) {
+                if (carrotOn && ((nav.gaveUp && !nav.walkingToObelisk()) || stuckWay)) {
+                    // the way-finder cannot get to this carrot: it is left alone for five minutes and another one is chosen
+                    Log.t("hunt", "carrot " + Math.round(carrotX) + "," + Math.round(carrotY) + " cannot be reached: another one is chosen");
+                    carrotBad.push({x: carrotX, y: carrotY, until: now + 300});
+                    carrotFails = [for (t in carrotFails) if (now - t < 90) t];
+                    carrotFails.push(now);
+                    carrotX = Math.NaN;
+                    nav.gaveUp = false;
+                    nav.stop();
+                    if (carrotFails.length >= 8) {
+                        // the route itself is bad here: the cells round the hero's place on it are shut and the route is worked out again
+                        carrotFails = [];
+                        Log.t("hunt", "route is bad here: the cells ahead are shut, a new route is worked out");
+                        for (i in roamPathIdx...Std.int(Math.min(roamPath.length, roamPathIdx + 6))) for (c in Hunt.around(Hunt.cellAt(roamPath[i].x, roamPath[i].y), 1)) farBlocked.set(c, now + 900);
+                        roamKey = -1;
+                        return true;
+                    }
+                }
+                if (now - roamSince > 1800) { roamKey = -1; farBlocked = new Map(); return true; }
+            }
+            if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > (roamFarGround ? 1200 : 300) || stuckWay) {
                 Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 8 min");
                 for (c in Hunt.around(roamKey, arrived ? 4 : 6)) roamVisited.set(c, now + 480); // (a ground the way-finder gave up: the whole pocket around it is the same trouble) // (the cells next to it are the same ground; the monsters take minutes to come back)
                 roamKey = -1;
@@ -1070,6 +1101,21 @@ class Bot {
             // (a ground far beyond the reach map has no way the planner can find - its window is about 120 m: the hero ran back and forth on pieces
             // of path that changed at every replan; such a ground is walked to in steps of other grounds, or reached after the home stone)
             if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !farUnknown(x, y) && !nearDeath(x, y, now));
+            // leveling: the ground of the hero's own level may lie far beyond the reach map and every opened obelisk (no obelisk was opened there yet):
+            // it is walked to all the same, the way-finder works it out in steps; the home stone is not used on the way
+            roamFar = false;
+            if (g == null && ownLevel) {
+                var far = Hunt.farFind(hero, level, roamVisited, now, farBlocked, wide, zoneLevels, useZones);
+                if (far != null) {
+                    g = far;
+                    roamFar = true;
+                    roamPath = far.path;
+                    roamPathIdx = 0;
+                    carrotX = Math.NaN;
+                    Log.t("hunt", "no ground of the own level within the reach map: walking to the nearest one by a land route, " + Math.round(g.away) + " m away in a straight line, " + far.path.length + " way points: "
+                        + [for (p in far.path) Math.round(p.x) + "," + Math.round(p.y)].join(" "));
+                }
+            }
             if (g == null && roamZone != "") {
                 // nothing more to walk to in the zone chosen: the choice is dropped (the whole set is looked at next time)
                 Log.t("hunt", "zone " + roamZone + ": no cell left that can be walked to, the next zone is chosen");
@@ -1097,6 +1143,7 @@ class Bot {
             }
             roamKey = g.key;
             roamZone = useZones != null ? g.zone : "";
+            roamFarGround = roamFar;
             roamX = g.x;
             roamY = g.y;
             roamSince = now;
@@ -1104,7 +1151,46 @@ class Bot {
             Log.t("hunt", "going to a hunting ground: zone " + g.zone + " (level " + g.level + ") at " + Math.round(g.x) + "," + Math.round(g.y) + ", " + Math.round(g.away) + " m away");
         }
         message = Locale.f("stTravel");
-        if (stoneIfFar(roamX, roamY, now)) return true;
+        if (!roamFarGround && stoneIfFar(roamX, roamY, now)) return true;
+        if (roamFarGround && roamPath.length > 0) {
+            // the hero's place on the coarse route, then a carrot a little ahead on it: a point the reach map does not rule out (moved a little aside if need be)
+            var bi = roamPathIdx, bd = 1e18;
+            for (i in roamPathIdx...Std.int(Math.min(roamPath.length, roamPathIdx + 25))) {
+                var d = Nav.distance(hero, roamPath[i].x, roamPath[i].y);
+                if (d < bd) { bd = d; bi = i; }
+            }
+            roamPathIdx = bi;
+            if (Math.isNaN(carrotX) || Nav.distance(hero, carrotX, carrotY) < 18) {
+                carrotX = Math.NaN;
+                var offs = [[0, 0], [16, 0], [-16, 0], [0, 16], [0, -16], [32, 0], [-32, 0], [0, 32], [0, -32], [24, 24], [-24, 24], [24, -24], [-24, -24]];
+                var ahead = 4;
+                while (ahead >= 1 && Math.isNaN(carrotX)) {
+                    var p = roamPath[Std.int(Math.min(roamPathIdx + ahead, roamPath.length - 1))];
+                    for (o in offs) {
+                        var qx = p.x + o[0], qy = p.y + o[1];
+                        var bad = false;
+                        for (b in carrotBad) if (now < b.until && (b.x - qx) * (b.x - qx) + (b.y - qy) * (b.y - qy) < 30 * 30) { bad = true; break; }
+                        if (bad) continue;
+                        var a = nav.canReach(qx, qy, Math.NaN), b2 = nav.canReach(qx, qy, Math.NaN, true);
+                        if (a == 0 && b2 == 0) continue; // (the reach map says no way leads there)
+                        carrotX = qx;
+                        carrotY = qy;
+                        break;
+                    }
+                    ahead--;
+                }
+                if (Math.isNaN(carrotX)) {
+                    // nothing ahead is fit: the cells round the next stretch are shut and the route is worked out again
+                    Log.t("hunt", "no carrot ahead on the route fits: the cells ahead are shut, a new route is worked out");
+                    for (i in roamPathIdx...Std.int(Math.min(roamPath.length, roamPathIdx + 6))) for (c in Hunt.around(Hunt.cellAt(roamPath[i].x, roamPath[i].y), 1)) farBlocked.set(c, now + 900);
+                    roamKey = -1;
+                    return true;
+                }
+                progressReset(now);
+            }
+            moveTo(carrotX, carrotY, 10, now);
+            return true;
+        }
         moveTo(roamX, roamY, 8, now);
         return true;
     }
