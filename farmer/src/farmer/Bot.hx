@@ -176,7 +176,7 @@ class Bot {
     }
 
     /** The bot's skills and held Attack key wait only while the dodge is actually running (the dodge's own pause after a run would let a fight crawl). */
-    public function holdingSkills():Bool return running && AutoDodge.dodging();
+    public function holdingSkills():Bool return running && AutoDodge.dodging() && (!AutoDodge.castOnTheRun || AutoDodge.castRunning());
 
     public function moving():Bool return running && (AutoDodge.dodging() || (hero != null && nav.wantsMove(hero)));
 
@@ -1365,7 +1365,11 @@ class Bot {
         message = Locale.f(leveling ? "stLevel" : "stHunt");
         // the dodge has the legs and the skills while it runs: nothing is asked of the game meanwhile (a hit queued now would fire the
         // moment the run ends, and walking back to the foe at once is what made the hero twitch)
-        if (AutoDodge.dodging()) return;
+        if (AutoDodge.dodging()) {
+            // (the hero walks through its casts: the fight goes on while it runs from a hit, the legs are the dodge's)
+            if (AutoDodge.castOnTheRun && engaged && lockedFoe == target) attack(now, x, y);
+            return;
+        }
         if (lockedFoe != target) {
             lockedFoe = target;
             engaged = false;
@@ -1624,6 +1628,7 @@ class Bot {
                 try {
                     var why = Type.enumConstructor(G.field(castSkill, "stopReason"));
                     var ran = G.number(G.field(castSkill, "stopTime")) - G.number(G.field(castSkill, "startTime"));
+                    Log.t("fight", "cast of " + castKind + " ended: " + why + " after " + Math.round(ran * 100) / 100 + " s of " + castTime(castSkill) + " s, dodge " + AutoDodge.dodging());
                     if ((why == "Cancel" || why == "Interrupt") && ran < castTime(castSkill) * 0.6) wasCut = true;
                 } catch (_:Dynamic) {}
                 if (wasCut) {

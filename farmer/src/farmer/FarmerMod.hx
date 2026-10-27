@@ -161,6 +161,19 @@ class FarmerMod {
         return focused ? Continue : SkipWith(true);
     }
 
+    /**
+     * The game cancels a cast when the hero moves: BaseSkill.shouldCancel (run every update of a running skill) answers true when
+     * Skill.hasMoveCancel holds, the unit has a move request and 0.1 s of the skill have passed (stop reason Cancel). The bot's hero
+     * casts on the run: no skill asks for that cancel, and no skill holds the legs (Skill.canMove, read by Unit.canMove).
+     */
+    @:hlx.prefix(st.skill.Skill.hasMoveCancel)
+    static function beforeSkillHasMoveCancel(instance:Dynamic):HlxPrefixResult<Bool>
+        return active && bot.running && AutoDodge.castOnTheRun ? SkipWith(false) : Continue;
+
+    @:hlx.prefix(st.skill.Skill.canMove)
+    static function beforeSkillCanMove(instance:Dynamic):HlxPrefixResult<Bool>
+        return active && bot.running && AutoDodge.castOnTheRun ? SkipWith(true) : Continue;
+
     @:hlx.prefix(client.PlayerController.updateSkillInputs)
     static function beforeSkillInputs(instance:Dynamic):HlxPrefixResult<Void>
         return active && bot.holdingSkills() ? Skip : Continue;
