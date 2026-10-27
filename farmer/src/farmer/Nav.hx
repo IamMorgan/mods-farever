@@ -56,6 +56,24 @@ class Nav {
     public var noFly = false;
     /** When the flights by obelisk were started (the bot counts them: many and no fight is a loop). */
     public var flights:Array<Float> = [];
+    /** Obelisks the hero flew to and found nothing to walk on from (a plateau, an island): not flown to again for an hour. */
+    var obeliskDead:Map<String, Float> = new Map();
+    var lastLandingId = "";
+    var lastLandingAt = -1000.0;
+
+    /** The obelisk of the last flight is a dead end if it was started less than `within` seconds ago. True when one was marked. */
+    public function banLastLanding(now:Float, within:Float):Bool {
+        if (lastLandingId == "" || now - lastLandingAt > within) return false;
+        obeliskDead.set(lastLandingId, now + 3600);
+        Log.t("nav", "the flight to " + lastLandingId + " led nowhere: it is not flown to for an hour");
+        lastLandingId = "";
+        return true;
+    }
+
+    /** The opened obelisks without the dead ends. */
+    public function liveObelisks(hero:Dynamic, now:Float):Array<ObeliskInfo> {
+        return [for (o in obelisks(hero)) if (!(obeliskDead.exists(o.id) && now < obeliskDead.get(o.id))) o];
+    }
     /** The obelisk the hero is walking to (to fly from there), "" when none. */
     var walkId = "";
     /** True when no opened obelisk can be walked to: the caller must use another way (the home stone). */
@@ -1115,7 +1133,7 @@ class Nav {
         walkId = "";
         var direct = distance(hero, x, y);
         if (direct < OBELISK_FROM && !force) return false;
-        var list = obelisks(hero);
+        var list = liveObelisks(hero, now);
         if (list.length < 2) { travelNote(now, "obelisk not used: only " + list.length + " opened here, walking " + Math.round(direct) + " m"); return false; }
         var hz = G.number(G.field(hero, "posz"));
         var near = null, far = list[0];
@@ -1141,6 +1159,8 @@ class Nav {
                     Log.t("nav", "flying by obelisk to " + far.id + " (spot " + Math.round(direct) + " m away, obelisk " + Math.round(fd) + " m from it)");
                     G.call("ent.Hero", "flyToObelisk", hero, [far.id]);
                     flights.push(now);
+                    lastLandingId = far.id;
+                    lastLandingAt = now;
                     flightWait = now + 1.5;
                     stop();
                     return true;
@@ -1163,7 +1183,6 @@ class Nav {
      * obelisk, the one with most of the spots around it (an obelisk is not tried twice in 10 minutes). True when a flight was started.
      */
     public function flyElsewhere(hero:Dynamic, now:Float, spots:Array<{x:Float, y:Float}>):Bool {
-        if (noFly) return false;
         var standing = null;
         try standing = G.call("ent.Hero", "getStandingObelisk", hero) catch (_:Dynamic) {}
         var standId = standing == null ? "" : G.s(G.field(G.field(standing, "inf"), "id"));
@@ -1172,7 +1191,7 @@ class Nav {
         var best = null;
         var bestCount = -1;
         var bestD = Math.POSITIVE_INFINITY;
-        for (o in obelisks(hero)) {
+        for (o in liveObelisks(hero, now)) {
             if (o.id == standId) continue;
             var until = elsewhereTried.get(o.id);
             if (until != null && now < until) continue;
@@ -1192,6 +1211,8 @@ class Nav {
                 elsewhereTried.set(best.id, now + 600);
                 G.call("ent.Hero", "flyToObelisk", hero, [best.id]);
                 flights.push(now);
+                lastLandingId = best.id;
+                lastLandingAt = now;
                 flightWait = now + 1.5;
                 stop();
                 return true;

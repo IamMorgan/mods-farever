@@ -297,6 +297,7 @@ class Bot {
         if (wasDead) { wasDead = false; nextThink = now + 3; return; }
         if (G.field(hero, "inCutscene") == true) return;
 
+        try watchdog(now, plan.targetLevel > 0 && G.integer(G.field(hero, "_level")) < plan.targetLevel) catch (error:Dynamic) Log.err("watchdog", error);
         updateCounts();
         Services.noteStation(hero, now);
         if (job == null && leaveWater(now)) return;
@@ -514,10 +515,6 @@ class Bot {
     var deadGround:Map<Int, Float> = new Map();
     /** Foes that took no damage from the hero for a long time (under the ground, behind a wall, immune): left alone even when they have the hero as target. */
     var untouchable:Map<String, Float> = new Map();
-    var stillX = Math.NaN;
-    var stillY = Math.NaN;
-    var stillSince = 0.0;
-    var stillNext = 0.0;
     var stoneTimes:Array<Float> = [];
 
     function minDiff():Int return haxe.Timer.stamp() < grindUntil ? GRIND_DIFF : MIN_DIFF;
@@ -551,40 +548,71 @@ class Bot {
         return Math.isFinite(surface) && ez < surface - 6;
     }
 
+    var trail:Array<{t:Float, x:Float, y:Float}> = [];
+    var trailAt = 0.0;
+    var trapStrikes = 0;
+    var trapAt = -1000.0;
+    var trapX = Math.NaN;
+    var trapY = Math.NaN;
+
     /**
-     * The hero must never stand: still for 25 s (with no fight that wears a foe down) and everything it was doing is dropped and its place
-     * marked dead; still for 70 s and the home stone is used; the same again every minute after.
+     * The hero must never be held in one place. Every second its place is noted; if in 45 s it never left a circle of 8 m (a hero that stands, that runs
+     * into a wall, that circles in a pit, that is stuck in a pond) and no fight wears a foe down, everything it was doing is dropped, the place is marked
+     * dead and a new way is looked for; the second time at the same place, or at once after 15 s in water, the home stone is used.
+     * It runs before everything else the bot does (the water, a goto, a service job), so nothing can keep it from running.
      */
     function watchdog(now:Float, leveling:Bool):Void {
         var x = G.number(G.field(hero, "posx")), y = G.number(G.field(hero, "posy"));
-        var fighting = engaged && target != null && now - progressAt < 20;
+        var fighting = (engaged && target != null && now - progressAt < 20) || now - lastFightAt < 8;
         var dead = false;
         try dead = G.call("ent.GameObject", "isDead", hero) == true catch (_:Dynamic) {}
+        var flying = false;
+        try flying = G.call("ent.Hero", "isFlyingToObelisk", hero) == true catch (_:Dynamic) {}
         // (gathering waits for the nodes to grow back standing: only a hero that has something to do - a target, a ground to walk to, leveling - is watched)
-        var idleOk = !leveling && target == null && roamKey < 0;
-        if (Math.isNaN(stillX) || Math.abs(x - stillX) > 2.5 || Math.abs(y - stillY) > 2.5 || fighting || dead || idleOk) {
-            stillX = x; stillY = y; stillSince = now; stillNext = now + 25;
-            return;
+        var idleOk = !leveling && target == null && roamKey < 0 && job == null;
+        if (dead || flying || fighting || idleOk) { trail = []; trailAt = now; return; }
+        if (now - trailAt >= 1.0) {
+            trailAt = now;
+            trail.push({t: now, x: x, y: y});
+            while (trail.length > 0 && now - trail[0].t > 46) trail.shift();
         }
-        if (now < stillNext) return;
-        var still = now - stillSince;
-        stillNext = now + 60;
+        if (trail.length < 10) return;
+        var wet = false;
+        try wet = Hazard.heroInLiquid(hero) catch (_:Dynamic) {}
+        var window = wet ? 15.0 : 45.0;
+        var minX = x, maxX = x, minY = y, maxY = y, first = now;
+        for (p in trail) {
+            if (now - p.t > window) continue;
+            if (p.t < first) first = p.t;
+            minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+            minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+        }
+        if (now - first < window - 1.5 || Math.max(maxX - minX, maxY - minY) >= (wet ? 4.0 : 8.0)) return;
+        // held: the same place as the last strike counts again, a new place starts over
+        if (!Math.isNaN(trapX) && Math.abs(x - trapX) < 25 && Math.abs(y - trapY) < 25 && now - trapAt < 400) trapStrikes++; else trapStrikes = 1;
+        trapX = x; trapY = y; trapAt = now;
+        trail = [];
         var what = "no target";
         if (target != null) what = "target " + targetKind + " " + (try G.s(G.field(G.field(target, "inf"), "id")) catch (_:Dynamic) "?");
-        Log.w("WATCHDOG: the hero has stood still for " + Math.round(still) + " s (" + what + ", roam ground " + roamKey + ", " + message + "): everything is dropped");
+        Log.w("WATCHDOG: the hero has not left a " + (wet ? "4" : "8") + " m circle for " + Math.round(window) + " s" + (wet ? " (in the water)" : "") + " at " + Math.round(x) + "," + Math.round(y) + " (" + what + ", roam ground " + roamKey + ", " + message + "), strike " + trapStrikes + ": everything is dropped");
         if (target != null) {
             blacklist.set(key(target), now + 180);
             untouchable.set(key(target), now + 180);
             if (targetKind == "mob") deadAreas.push({x: G.number(G.field(target, "posx")), y: G.number(G.field(target, "posy")), until: now + 180});
         }
         if (roamKey >= 0) killDeadGround(now, roamKey);
-        target = null; targetKind = ""; engaged = false;
+        // the flight that brought the hero here led into a trap: that obelisk is not flown to again
+        nav.banLastLanding(now, 300);
+        target = null; targetKind = ""; engaged = false; gotoX = null;
         roamKey = -1; carrotX = Math.NaN; leaving = false;
         nav.gaveUp = false;
         nav.stop();
         releaseAttack();
         nextThink = now;
-        if (still >= 70) idleStone(now, "the hero stood still for " + Math.round(still) + " s");
+        if (wet || trapStrikes >= 2) {
+            stoneAt = Math.min(stoneAt, now - 1000); // (this is no ordinary idle: the stone is used now)
+            if (!idleStone(now, "held in one place: " + (wet ? "in the water" : "strike " + trapStrikes))) Log.w("WATCHDOG: no home stone to use");
+        }
     }
 
     /** Four flights by obelisk or home stone in fifteen minutes and no fight meanwhile: they lead nowhere. The hero stops flying for a quarter of an hour and fights what is near. */
@@ -672,11 +700,9 @@ class Bot {
         if (inAir) {
             if (target != null) { target = null; targetKind = ""; engaged = false; }
             message = Locale.f("stTravel");
-            stillX = Math.NaN;
             return;
         }
         grindCheck(now);
-        try watchdog(now, leveling) catch (error:Dynamic) Log.err("watchdog", error);
         if (strandedStone(now)) return;
         if (target != null && !targetValid(now, leveling)) {
             var lostId = "";
@@ -1191,7 +1217,7 @@ class Bot {
             }
             if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > (roamFarGround ? 1200 : 300) || stuckWay) {
                 Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 8 min");
-                if (!arrived) killDeadGround(now, roamKey);
+                if (!arrived) { killDeadGround(now, roamKey); if (nav.gaveUp || now - roamSince < 240) nav.banLastLanding(now, 240); }
                 for (c in Hunt.around(roamKey, arrived ? 4 : 6)) roamVisited.set(c, now + 480); // (a ground the way-finder gave up: the whole pocket around it is the same trouble) // (the cells next to it are the same ground; the monsters take minutes to come back)
                 roamKey = -1;
                 nav.gaveUp = false;
@@ -1207,7 +1233,7 @@ class Bot {
             // the way to the obelisk led out of the pocket: ground the reach map holds now means no flight (the hero walks on)
             if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
             var useZ = groundZones(now, level, zoneIds, ownLevel);
-            var here = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZ, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
+            var here = Hunt.find(hero, level, roamVisited, now, nav.liveObelisks(hero, now), wide, zoneLevels, useZ, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
             if (here != null && !nav.inClosedRegion(hero, now) && G.call("ent.Hero", "isFlyingToObelisk", hero) != true) { leaving = false; nav.stop(); }
             else {
                 if (leaveByObelisk(now, Hunt.spotList(level, wide, zoneLevels, useZ))) return true;
@@ -1223,13 +1249,13 @@ class Bot {
             // hero 100 m one way, the way-finder gave up, and the next ground lay the other way: the 26.10 pacing), then the old rule
             // (the map with the glider's descents too: the way out of a basin by a drop and a ford is a way)
             if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
-            var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
+            var g = Hunt.find(hero, level, roamVisited, now, nav.liveObelisks(hero, now), wide, zoneLevels, useZones, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
             // no ground inside the closed region the hero stands in (the city's basin, a ledge): out by obelisk, not paced out on foot
             if (g == null && nav.inClosedRegion(hero, now) && !leaveFailed && now >= grindUntil) { leaving = true; if (leaveByObelisk(now, Hunt.spotList(level, wide, zoneLevels, useZones))) return true; leaving = false; leaveFailed = true; }
             if (g != null) leaveFailed = false;
             // (a ground far beyond the reach map has no way the planner can find - its window is about 120 m: the hero ran back and forth on pieces
             // of path that changed at every replan; such a ground is walked to in steps of other grounds, or reached after the home stone)
-            if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !farUnknown(x, y) && !nearDeath(x, y, now));
+            if (g == null) g = Hunt.find(hero, level, roamVisited, now, nav.liveObelisks(hero, now), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !farUnknown(x, y) && !nearDeath(x, y, now));
             // leveling: the ground of the hero's own level may lie far beyond the reach map and every opened obelisk (no obelisk was opened there yet):
             // it is walked to all the same, the way-finder works it out in steps; the home stone is not used on the way
             roamFar = false;
@@ -1249,6 +1275,15 @@ class Bot {
                 // nothing more to walk to in the zone chosen: the choice is dropped (the whole set is looked at next time)
                 Log.t("hunt", "zone " + roamZone + ": no cell left that can be walked to, the next zone is chosen");
                 roamZone = "";
+                return true;
+            }
+            if (g == null && ownLevel && now >= grindUntil) {
+                // no ground of the hero's own level can be reached (the zones of that level lie beyond water or cliffs): the zones a few levels lower
+                // are hunted for a quarter of an hour instead of flying about, then the own level is tried again
+                grindUntil = now + 900;
+                levelZoneSet = null;
+                roamZone = "";
+                Log.w("GRIND: no ground of the own level can be reached: monsters down to " + GRIND_DIFF + " levels are hunted for 15 min");
                 return true;
             }
             if (g == null) {
