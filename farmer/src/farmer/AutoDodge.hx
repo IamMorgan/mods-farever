@@ -528,8 +528,8 @@ class AutoDodge {
     public static var interruptedKind = "";
     public static var interruptedAt = -100.0;
 
-    /** The bot casts while the dodge runs (the hooks on Skill.hasMoveCancel / Skill.canMove let the hero walk through a cast): its casts are not cut. */
-    public static var castOnTheRun = true;
+    /** OFF: the SERVER cancels a cast (rpcStop reason Cancel over the network, BaseSkill.shouldCancel on the host) when the hero moves in the cast phase; no client hook can stop it. With it on, the bot would run, be cancelled and recast in a loop. */
+    public static var castOnTheRun = false;
 
     static function interruptOwnSkill():Void {
         if (castOnTheRun && botDriven) return;
