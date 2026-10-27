@@ -639,7 +639,7 @@ class Bot {
                 return;
             }
             needDescents = false;
-            if (target == null && leveling && roam(now, level, 2, null, levelZones(level))) return;
+            if (target == null && leveling && roam(now, level, 2, null, levelZones(level), true)) return;
             // the map has no ground of the hero's level at all (the top zones are below it): the nearest lower monsters (up to 3 below) are better than none.
             // While such ground exists the hero keeps going to it, by obelisk or on foot, however long it takes - never settles for low monsters near by
             if (target == null && leveling && Hunt.onWorld(hero) && !Hunt.groundExists(level, 2)) pickTarget(now, leveling, level, needDescents, true);
@@ -1002,7 +1002,27 @@ class Bot {
         return true;
     }
 
-    function roam(now:Float, level:Int, wide:Int = 2, ?zoneLevels:Array<Int>, ?zoneIds:Map<String, Bool>):Bool {
+    var roamZone = "";
+    var roamZoneLevel = -1;
+
+    /**
+     * The zones the hunting ground is chosen from. While leveling these are the zones where monsters of the hero's own level live AND whose
+     * map level is the hero's (-1..+1): the others (a lower zone with a few stragglers) are left aside. Once a zone is chosen the hero stays in it
+     * and sweeps it cell by cell (the nearest first) until every cell was visited; only then the next zone is chosen. No changing of mind half way.
+     */
+    function groundZones(now:Float, level:Int, zoneIds:Map<String, Bool>, ownLevel:Bool):Null<Map<String, Bool>> {
+        if (zoneIds == null || Hunt.spotsIn(zoneIds) == 0) return null;
+        if (roamZoneLevel != level) { roamZoneLevel = level; roamZone = ""; }
+        if (roamZone != "" && zoneIds.exists(roamZone) && Hunt.hasFreeCell(roamZone, roamVisited, now)) return [roamZone => true];
+        roamZone = "";
+        if (ownLevel) {
+            var own = Hunt.zonesOfLevels(zoneIds, level + MIN_DIFF, level + MAX_DIFF);
+            if (own != null) return own;
+        }
+        return zoneIds;
+    }
+
+    function roam(now:Float, level:Int, wide:Int = 2, ?zoneLevels:Array<Int>, ?zoneIds:Map<String, Bool>, ownLevel:Bool = false):Bool {
         if (!Hunt.onWorld(hero)) return false;
         if (!Hunt.ready()) { Hunt.scan(250); message = Locale.f("stTravel"); return true; }
         if (G.call("ent.Hero", "isFlyingToObelisk", hero) == true) { message = Locale.f("stTravel"); return true; } // (the ground is chosen where the hero lands)
@@ -1026,7 +1046,7 @@ class Bot {
         if (leaving) {
             // the way to the obelisk led out of the pocket: ground the reach map holds now means no flight (the hero walks on)
             if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
-            var useZ = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
+            var useZ = groundZones(now, level, zoneIds, ownLevel);
             var here = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZ, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
             if (here != null && !nav.inClosedRegion(hero, now) && G.call("ent.Hero", "isFlyingToObelisk", hero) != true) { leaving = false; nav.stop(); }
             else {
@@ -1038,7 +1058,7 @@ class Bot {
         }
         if (roamKey < 0) {
             // the monsters' own zones when the game's tables know them (the whole map), else the zones of their levels
-            var useZones = zoneIds != null && Hunt.spotsIn(zoneIds) > 0 ? zoneIds : null;
+            var useZones = groundZones(now, level, zoneIds, ownLevel);
             // first only ground the reach map on foot really contains (a ground it merely might reach, or only by a glider's one-way drop, sent the
             // hero 100 m one way, the way-finder gave up, and the next ground lay the other way: the 26.10 pacing), then the old rule
             // (the map with the glider's descents too: the way out of a basin by a drop and a ford is a way)
@@ -1050,6 +1070,12 @@ class Bot {
             // (a ground far beyond the reach map has no way the planner can find - its window is about 120 m: the hero ran back and forth on pieces
             // of path that changed at every replan; such a ground is walked to in steps of other grounds, or reached after the home stone)
             if (g == null) g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> footOrFlight(x, y, Math.NaN) && !farUnknown(x, y) && !nearDeath(x, y, now));
+            if (g == null && roamZone != "") {
+                // nothing more to walk to in the zone chosen: the choice is dropped (the whole set is looked at next time)
+                Log.t("hunt", "zone " + roamZone + ": no cell left that can be walked to, the next zone is chosen");
+                roamZone = "";
+                return true;
+            }
             if (g == null) {
                 var remembered = Lambda.count({iterator: () -> roamVisited.keys()});
                 // the sweep came to its end twice in four minutes with no monster met: this place has none left that the hero can walk to - the
@@ -1070,6 +1096,7 @@ class Bot {
                 return false;
             }
             roamKey = g.key;
+            roamZone = useZones != null ? g.zone : "";
             roamX = g.x;
             roamY = g.y;
             roamSince = now;

@@ -93,6 +93,24 @@ class Hunt {
         return out;
     }
 
+    /** The zones of `zones` whose map level lies in lo..hi (null when there is none): the monsters of the hero's own level live there in numbers. */
+    public static function zonesOfLevels(zones:Map<String, Bool>, lo:Int, hi:Int):Null<Map<String, Bool>> {
+        var out = new Map<String, Bool>();
+        var n = 0;
+        for (i in 0...ids.length) if (zones.exists(ids[i]) && levels[i] >= lo && levels[i] <= hi && !out.exists(ids[i])) { out.set(ids[i], true); n++; }
+        return n > 0 ? out : null;
+    }
+
+    /** Is there a cell of the zone that is not left alone (visited) at the moment? */
+    public static function hasFreeCell(zone:String, visited:Map<Int, Float>, now:Float):Bool {
+        for (i in 0...ids.length) {
+            if (ids[i] != zone) continue;
+            var until = visited.get(i);
+            if (until == null || now >= until) return true;
+        }
+        return false;
+    }
+
     /** How many grid spots lie in any of the zones (to tell a usable zone set from an empty one). */
     public static function spotsIn(zones:Map<String, Bool>):Int {
         var n = 0;
