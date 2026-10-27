@@ -161,6 +161,11 @@ class FarmerMod {
         return focused ? Continue : SkipWith(true);
     }
 
+    /** A cast holds the hero still because the skill answers "canMove" with false while it runs (the unit itself can move): the bot's hero walks through its casts. */
+    @:hlx.prefix(st.skill.BaseSkill.canMove)
+    static function beforeSkillCanMove(instance:Dynamic):HlxPrefixResult<Bool>
+        return active && bot.running && AutoDodge.castOnTheRun && AutoDodge.dodging() ? SkipWith(true) : Continue;
+
     @:hlx.prefix(client.PlayerController.updateSkillInputs)
     static function beforeSkillInputs(instance:Dynamic):HlxPrefixResult<Void>
         return active && bot.holdingSkills() ? Skip : Continue;

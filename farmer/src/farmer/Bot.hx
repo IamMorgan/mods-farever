@@ -176,7 +176,7 @@ class Bot {
     }
 
     /** The bot's skills and held Attack key wait only while the dodge is actually running (the dodge's own pause after a run would let a fight crawl). */
-    public function holdingSkills():Bool return running && AutoDodge.dodging();
+    public function holdingSkills():Bool return running && AutoDodge.dodging() && !AutoDodge.castOnTheRun;
 
     public function moving():Bool return running && (AutoDodge.dodging() || (hero != null && nav.wantsMove(hero)));
 
@@ -1365,7 +1365,11 @@ class Bot {
         message = Locale.f(leveling ? "stLevel" : "stHunt");
         // the dodge has the legs and the skills while it runs: nothing is asked of the game meanwhile (a hit queued now would fire the
         // moment the run ends, and walking back to the foe at once is what made the hero twitch)
-        if (AutoDodge.dodging()) return;
+        if (AutoDodge.dodging()) {
+            // (the hero walks through its casts: the fight goes on while it runs from a hit, the legs are the dodge's)
+            if (AutoDodge.castOnTheRun && engaged && lockedFoe == target) attack(now, x, y);
+            return;
+        }
         if (lockedFoe != target) {
             lockedFoe = target;
             engaged = false;

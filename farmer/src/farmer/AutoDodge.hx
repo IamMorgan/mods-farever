@@ -519,7 +519,11 @@ class AutoDodge {
     public static var interruptedKind = "";
     public static var interruptedAt = -100.0;
 
+    /** The bot casts while the dodge runs (the hook on BaseSkill.canMove lets the hero walk through a cast): its casts are not cut. */
+    public static var castOnTheRun = true;
+
     static function interruptOwnSkill():Void {
+        if (castOnTheRun && botDriven) return;
         try {
             var skill = G.call("ent.GameObject", "getActiveSkill", currentHero);
             if (skill == null || G.text(G.field(skill, "kind")) == DASH_KIND) return;
@@ -587,6 +591,7 @@ class AutoDodge {
             }
         }
         if (stuckCheck != null && now - lastInterrupt < INTERRUPT_GRACE) stuckCheck = {x: hx, y: hy, t: now};
+        if (stuckCheck != null && castOnTheRun && botDriven && ownSkillRunning()) stuckCheck = {x: hx, y: hy, t: now}; // (a cast slows the walk: no wall to learn)
         if (stuckCheck != null && now - stuckCheck.t >= STUCK_TIME && heldByControl(hero)) {
             stuckCheck = {x: hx, y: hy, t: now}; // stunned, rooted or knocked about: no wall to learn
             if (now - ccLogged > 2) { ccLogged = now; DodgeLog.write(now, "hero under crowd control: not moving, no obstacle learnt"); }
