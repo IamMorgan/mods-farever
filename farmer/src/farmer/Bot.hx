@@ -176,7 +176,7 @@ class Bot {
     }
 
     /** The bot's skills and held Attack key wait only while the dodge is actually running (the dodge's own pause after a run would let a fight crawl). */
-    public function holdingSkills():Bool return running && AutoDodge.dodging() && !AutoDodge.castOnTheRun;
+    public function holdingSkills():Bool return running && AutoDodge.dodging();
 
     public function moving():Bool return running && (AutoDodge.dodging() || (hero != null && nav.wantsMove(hero)));
 
@@ -1365,11 +1365,7 @@ class Bot {
         message = Locale.f(leveling ? "stLevel" : "stHunt");
         // the dodge has the legs and the skills while it runs: nothing is asked of the game meanwhile (a hit queued now would fire the
         // moment the run ends, and walking back to the foe at once is what made the hero twitch)
-        if (AutoDodge.dodging()) {
-            // (the hero walks through its casts: the fight goes on while it runs from a hit, the legs are the dodge's)
-            if (AutoDodge.castOnTheRun && engaged && lockedFoe == target) attack(now, x, y);
-            return;
-        }
+        if (AutoDodge.dodging()) return;
         if (lockedFoe != target) {
             lockedFoe = target;
             engaged = false;
@@ -1624,6 +1620,12 @@ class Bot {
                 // a cast the dodge cut: twice in 20 s and the skill is left alone for 15 s (the hero strikes with the quick ones and the basic attack
                 // meanwhile); a long cast in a crowd of hits is a cast that never lands, and the fight of it never ends
                 var wasCut = AutoDodge.interruptedKind == castKind && AutoDodge.interruptedAt >= castAt - 0.1;
+                // (the game itself cancels a cast that cannot go on while the hero runs - the totem - after a tenth of a second: the same loss as a cut)
+                try {
+                    var why = Type.enumConstructor(G.field(castSkill, "stopReason"));
+                    var ran = G.number(G.field(castSkill, "stopTime")) - G.number(G.field(castSkill, "startTime"));
+                    if ((why == "Cancel" || why == "Interrupt") && ran < castTime(castSkill) * 0.6) wasCut = true;
+                } catch (_:Dynamic) {}
                 if (wasCut) {
                     var times = cutCasts.exists(castKind) ? cutCasts.get(castKind) : [];
                     times = [for (t in times) if (now - t < 20) t];
