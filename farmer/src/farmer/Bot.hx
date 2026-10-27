@@ -949,6 +949,44 @@ class Bot {
     /** While leveling a monster beyond the reach map is a target only this near. */
     static inline var FAR_UNKNOWN = 400.0;
 
+    var censusAt = 0.0;
+
+    /** Every unit of the layer within 150 m, whatever it is, with the verdict the target choice gave it (so nothing the hero fails to see goes unnoticed). */
+    function census(now:Float, level:Int, verdict:Map<String, String>):Void {
+        if (now - censusAt < 6) return;
+        censusAt = now;
+        try {
+            var units = G.fastArray(G.field(G.field(hero, "layer"), "units"));
+            var rows:Array<{d:Float, text:String}> = [];
+            var classes:Map<String, Int> = new Map();
+            for (e in units) {
+                if (e == null || e == hero) continue;
+                var cls = G.typeName(e);
+                classes.set(cls, (classes.exists(cls) ? classes.get(cls) : 0) + 1);
+                var d = Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy")));
+                if (d > 150) continue;
+                var inf = G.field(e, "inf");
+                var isFoe = G.isA(e, "ent.Foe");
+                var enemy = "?";
+                try enemy = Std.string(G.call("ent.GameObject", "isEnemyWith", hero, [e])) catch (_:Dynamic) {}
+                var v = verdict.get(key(e));
+                if (v == null) {
+                    if (!isFoe) v = "not a Foe";
+                    else if (G.field(e, "removed") == true) v = "removed";
+                    else if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true) v = "dead";
+                    else if (G.field(e, "summonOwner") != null) v = "summon";
+                    else if (enemy != "true") v = "not an enemy";
+                    else v = "type " + G.s(G.field(inf, "type")) + " skipped";
+                }
+                rows.push({d: d, text: cls + " " + G.s(G.field(inf, "id")) + " type " + G.s(G.field(inf, "type")) + " L" + G.field(e, "_level") + " d=" + Math.round(d) + " dz="
+                    + Math.round(G.number(G.field(e, "posz")) - G.number(G.field(hero, "posz"))) + " enemy " + enemy + " -> " + v});
+            }
+            rows.sort((a, b) -> a.d < b.d ? -1 : a.d > b.d ? 1 : 0);
+            Log.t("census", "hero L" + level + ", layer has " + units.length + " units [" + [for (c => n in classes) c + " " + n].join(", ") + "], within 150 m: " + rows.length);
+            for (r in rows) Log.t("census", "  " + r.text);
+        } catch (error:Dynamic) Log.err("census", error);
+    }
+
     function pickTarget(now:Float, leveling:Bool, level:Int, descents:Bool, lenient:Bool = false, quiet:Bool = false):Void {
         lenientTarget = lenient;
         targetDescent = false;
@@ -1003,7 +1041,9 @@ class Bot {
         }
         var seen:Map<Int, Int> = new Map();
         var why:Map<String, Int> = new Map();
-        var drop = (r:String) -> why.set(r, (why.exists(r) ? why.get(r) : 0) + 1);
+        var verdict:Map<String, String> = new Map();
+        var curKey = "";
+        var drop = (r:String) -> { why.set(r, (why.exists(r) ? why.get(r) : 0) + 1); verdict.set(curKey, r); };
         var rawNear = 0;
         var foePos:Array<{x:Float, y:Float}> = [];
         var cands:Array<{e:Dynamic, score:Float, x:Float, y:Float}> = [];
@@ -1012,6 +1052,7 @@ class Bot {
             if (G.call("ent.GameObject", "isDead", e) == true || G.field(e, "dying") == true) continue;
             if (G.field(e, "summonOwner") != null) continue;
             try if (G.call("ent.GameObject", "isEnemyWith", hero, [e]) != true) continue catch (_:Dynamic) continue;
+            curKey = key(e);
             var inf = G.field(e, "inf");
             var unitType = G.s(G.field(inf, "type"));
             if (unitType == "Environment" || unitType == "Critter") continue; // training dummies, harmless animals
@@ -1059,13 +1100,14 @@ class Bot {
                 // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
                 // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
                 if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? Std.int(Math.min(-3, minDiff())) : minDiff()) || diff > MAX_DIFF)) { drop("level"); continue; }
-                score += (diff < 0 ? -diff * (lenient ? 600 : LOWER_COST) : diff * 250);
+                // (every monster of the allowed levels counts the same: the nearest one is chosen)
             } else {
                 if (!drops) { drop("no-drop"); continue; }
-                score += Math.max(0, foeLevel - level) * 250;
             }
+            verdict.set(curKey, "CANDIDATE score " + Math.round(score));
             cands.push({e: e, score: score, x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
         }
+        if (!quiet) census(now, level, verdict);
         // the nearest one (by the way there)
         var groupOfBest = 0;
         for (c in cands) {
