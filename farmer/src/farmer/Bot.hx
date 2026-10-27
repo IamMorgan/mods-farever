@@ -176,7 +176,7 @@ class Bot {
     }
 
     /** The bot's skills and held Attack key wait only while the dodge is actually running (the dodge's own pause after a run would let a fight crawl). */
-    public function holdingSkills():Bool return running && AutoDodge.dodging() && (!AutoDodge.castOnTheRun || AutoDodge.castRunning());
+    public function holdingSkills():Bool return running && (AutoDodge.castOnTheRun ? AutoDodge.castRunning() : AutoDodge.dodging());
 
     public function moving():Bool return running && (AutoDodge.dodging() || (hero != null && nav.wantsMove(hero)));
 

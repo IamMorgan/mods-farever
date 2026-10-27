@@ -528,8 +528,10 @@ class AutoDodge {
     public static var interruptedKind = "";
     public static var interruptedAt = -100.0;
 
-    /** OFF: the SERVER cancels a cast (rpcStop reason Cancel over the network, BaseSkill.shouldCancel on the host) when the hero moves in the cast phase; no client hook can stop it. With it on, the bot would run, be cancelled and recast in a loop. */
-    public static var castOnTheRun = false;
+    /** The SERVER cancels a cast (rpcStop reason Cancel over the network, BaseSkill.shouldCancel on the host) when it sees the hero's move input in the cast phase: while a cast runs the hero's synced move input is sent as zero (FarmerMod.beforeUnitFlush), the hero itself keeps running. */
+    public static var castOnTheRun = true;
+
+    public static function isHero(unit:Dynamic):Bool return unit != null && unit == currentHero;
 
     static function interruptOwnSkill():Void {
         if (castOnTheRun && botDriven) return;

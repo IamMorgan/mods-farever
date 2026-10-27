@@ -83,6 +83,7 @@ class FarmerMod {
             Log.t("mod", "hero in the world: Farmer active");
         }
         bot.update(app, hero, plan, now, dt);
+        syncMoveSpoof(hero);
         if (config.pickupLoot || bot.running) Loot.update(hero, now);
         if (config.replaceGear || (bot.running && plan.replaceGear && bot.calm(now))) Equip.update(hero, now);
         var scale = Math.max(0.5, Math.min(2.0, config.buttonScalePercent / 100));
@@ -166,6 +167,50 @@ class FarmerMod {
      * Skill.hasMoveCancel holds, the unit has a move request and 0.1 s of the skill have passed (stop reason Cancel). The bot's hero
      * casts on the run: no skill asks for that cancel, and no skill holds the legs (Skill.canMove, read by Unit.canMove).
      */
+    // ---- the move input the server sees ----
+    // The host cancels a cast when the hero's synced move input (Unit.moveX / moveY, net bits 21 / 22) is not zero while the cast is in its
+    // wind-up. While the bot's cast runs, the hero's flush to the host carries a zero input; the hero keeps running on this side (its
+    // position syncs on its own) and the real input goes out again when the cast is over.
+    static var moveSpoofed = false;
+    static var moveSwapped = false;
+    static var moveSavedX:Dynamic = 0.0;
+    static var moveSavedY:Dynamic = 0.0;
+
+    static function syncMoveSpoof(hero:Dynamic):Void {
+        var now = active && bot.running && AutoDodge.castOnTheRun && AutoDodge.castRunning();
+        if (now == moveSpoofed) return;
+        moveSpoofed = now;
+        try { // (the bits are marked again so the changed value goes out at the next flush)
+            G.call("st.BaseState", "networkSetBit", hero, [21]);
+            G.call("st.BaseState", "networkSetBit", hero, [22]);
+        } catch (error:Dynamic) Log.err("moveSpoof", error);
+        Log.t("fight", moveSpoofed ? "cast running: the host is sent a zero move input" : "cast over: the real move input goes to the host again");
+    }
+
+    @:hlx.prefix(ent.Unit.networkFlush)
+    static function beforeUnitFlush(instance:Dynamic, serializer:Dynamic):HlxPrefixResult<Void> {
+        moveSwapped = false;
+        if (!moveSpoofed || !AutoDodge.isHero(instance)) return Continue;
+        try {
+            moveSavedX = G.field(instance, "moveX");
+            moveSavedY = G.field(instance, "moveY");
+            G.set(instance, "moveX", 0.0);
+            G.set(instance, "moveY", 0.0);
+            moveSwapped = true;
+        } catch (_:Dynamic) {}
+        return Continue;
+    }
+
+    @:hlx.postfix(ent.Unit.networkFlush)
+    static function afterUnitFlush(instance:Dynamic, serializer:Dynamic, result:Void):Void {
+        if (!moveSwapped) return;
+        moveSwapped = false;
+        try {
+            G.set(instance, "moveX", moveSavedX);
+            G.set(instance, "moveY", moveSavedY);
+        } catch (_:Dynamic) {}
+    }
+
     @:hlx.prefix(st.skill.Skill.hasMoveCancel)
     static function beforeSkillHasMoveCancel(instance:Dynamic):HlxPrefixResult<Bool>
         return active && bot.running && AutoDodge.castOnTheRun ? SkipWith(false) : Continue;
