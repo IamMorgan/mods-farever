@@ -505,22 +505,120 @@ class Bot {
     // ---- choosing and working a target ----
 
     var stoneAt = -1000.0;
+
+    // ---- no loop of flights, no standing still ----
+    /** Until this time the hero does not fly by obelisk; it fights what lives near, down to GRIND_DIFF levels below it. */
+    var grindUntil = 0.0;
+    static inline var GRIND_DIFF = -4;
+    /** Grounds no way led to (the flight landed on a plateau the spot lies beyond, a pocket): not chosen again for a long time, whatever wipes the sweep's memory. */
+    var deadGround:Map<Int, Float> = new Map();
+    /** Foes that took no damage from the hero for a long time (under the ground, behind a wall, immune): left alone even when they have the hero as target. */
+    var untouchable:Map<String, Float> = new Map();
+    var stillX = Math.NaN;
+    var stillY = Math.NaN;
+    var stillSince = 0.0;
+    var stillNext = 0.0;
+    var stoneTimes:Array<Float> = [];
+
+    function minDiff():Int return haxe.Timer.stamp() < grindUntil ? GRIND_DIFF : MIN_DIFF;
+
+    /** The sweep's memory with the dead grounds kept (they are wiped by nothing but their time). */
+    function resetVisited(now:Float):Void {
+        roamVisited = new Map();
+        for (c => until in deadGround) if (until > now) roamVisited.set(c, until);
+    }
+
+    function killDeadGround(now:Float, ground:Int):Void {
+        for (c in Hunt.around(ground, 6)) { deadGround.set(c, now + 2400); roamVisited.set(c, now + 2400); }
+    }
+
+    function isUntouchable(e:Dynamic, now:Float):Bool {
+        var until = untouchable.get(key(e));
+        return until != null && now < until;
+    }
+
+    /** The terrain's height at (x, y) seen from just above the hero's height, NaN when it cannot be read. */
+    function surfaceAt(x:Float, y:Float, hz:Float):Float {
+        return try G.number(G.call("world.World", "getZ", G.current("world.World", "inst"), [x, y, hz + 2.2, null, null]), Math.NaN) catch (_:Dynamic) Math.NaN;
+    }
+
+    /** A monster far below the ground at its place (a burrow, a cave under the map): no spell reaches it, nor can the hero get there. */
+    function underground(e:Dynamic):Bool {
+        var ez = G.number(G.field(e, "posz"));
+        var hz = G.number(G.field(hero, "posz"));
+        if (ez > hz - 3) return false;
+        var surface = surfaceAt(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), hz);
+        return Math.isFinite(surface) && ez < surface - 6;
+    }
+
+    /**
+     * The hero must never stand: still for 25 s (with no fight that wears a foe down) and everything it was doing is dropped and its place
+     * marked dead; still for 70 s and the home stone is used; the same again every minute after.
+     */
+    function watchdog(now:Float, leveling:Bool):Void {
+        var x = G.number(G.field(hero, "posx")), y = G.number(G.field(hero, "posy"));
+        var fighting = engaged && target != null && now - progressAt < 20;
+        var dead = false;
+        try dead = G.call("ent.GameObject", "isDead", hero) == true catch (_:Dynamic) {}
+        // (gathering waits for the nodes to grow back standing: only a hero that has something to do - a target, a ground to walk to, leveling - is watched)
+        var idleOk = !leveling && target == null && roamKey < 0;
+        if (Math.isNaN(stillX) || Math.abs(x - stillX) > 2.5 || Math.abs(y - stillY) > 2.5 || fighting || dead || idleOk) {
+            stillX = x; stillY = y; stillSince = now; stillNext = now + 25;
+            return;
+        }
+        if (now < stillNext) return;
+        var still = now - stillSince;
+        stillNext = now + 60;
+        var what = "no target";
+        if (target != null) what = "target " + targetKind + " " + (try G.s(G.field(G.field(target, "inf"), "id")) catch (_:Dynamic) "?");
+        Log.w("WATCHDOG: the hero has stood still for " + Math.round(still) + " s (" + what + ", roam ground " + roamKey + ", " + message + "): everything is dropped");
+        if (target != null) {
+            blacklist.set(key(target), now + 180);
+            untouchable.set(key(target), now + 180);
+            if (targetKind == "mob") deadAreas.push({x: G.number(G.field(target, "posx")), y: G.number(G.field(target, "posy")), until: now + 180});
+        }
+        if (roamKey >= 0) killDeadGround(now, roamKey);
+        target = null; targetKind = ""; engaged = false;
+        roamKey = -1; carrotX = Math.NaN; leaving = false;
+        nav.gaveUp = false;
+        nav.stop();
+        releaseAttack();
+        nextThink = now;
+        if (still >= 70) idleStone(now, "the hero stood still for " + Math.round(still) + " s");
+    }
+
+    /** Four flights by obelisk or home stone in fifteen minutes and no fight meanwhile: they lead nowhere. The hero stops flying for a quarter of an hour and fights what is near. */
+    function grindCheck(now:Float):Void {
+        nav.flights = [for (t in nav.flights) if (now - t < 900) t];
+        stoneTimes = [for (t in stoneTimes) if (now - t < 900) t];
+        nav.noFly = now < grindUntil;
+        if (nav.noFly || now - lastFightAt < 240) return;
+        if (nav.flights.length + stoneTimes.length >= 4) {
+            grindUntil = now + 900;
+            nav.noFly = true;
+            leaving = false;
+            roamKey = -1;
+            levelZoneSet = null;
+            Log.w("GRIND: " + nav.flights.length + " flights by obelisk and " + stoneTimes.length + " home stones in 15 minutes without a fight: no more flying for 15 min, monsters down to " + GRIND_DIFF + " levels are fought where the hero is");
+        }
+    }
     var closedSince = -1.0;
 
     /** The hero sits where nothing can be done (a closed gorge, an island): the home stone takes it to the city, from where the obelisks lead on. True when it was used. */
     function idleStone(now:Float, why:String):Bool {
-        if (now - stoneAt < 150) return false;
+        if (now - stoneAt < (now < grindUntil ? 600 : 150)) return false;
         stoneAt = now;
         var used = useHomeStone();
         Log.t("bot", "STUCK (" + why + "): home stone " + (used ? "used" : "not in the bag"));
         if (!used) return false;
+        stoneTimes.push(now);
         message = Locale.f("stHome");
         nav.stop();
         nav.forgetObeliskTrouble();
         target = null;
         targetKind = "";
         roamKey = -1;
-        roamVisited = new Map();
+        resetVisited(now);
         blacklist = new Map(); deadAreas = [];
         idleSince = -1;
         nextThink = now + 14;
@@ -528,17 +626,19 @@ class Bot {
     }
 
     var levelZoneLevel = -1;
+    var levelZoneLo = 0;
     var levelZoneSet:Map<String, Bool> = null;
 
     /** The zones where monsters of the hero's level (up to +2) live, from the game's unit sheet and spawner tables: the whole map is searched with them, not just the zones the map calls that level. */
     function levelZones(level:Int):Map<String, Bool> {
-        if (levelZoneLevel != level || levelZoneSet == null) {
+        if (levelZoneLevel != level || levelZoneSet == null || levelZoneLo != minDiff()) {
             levelZoneLevel = level;
-            var units = [for (u in Catalog.unitsOfLevels(level + MIN_DIFF, level + MAX_DIFF)) u];
+            levelZoneLo = minDiff();
+            var units = [for (u in Catalog.unitsOfLevels(level + levelZoneLo, level + MAX_DIFF)) u];
             levelZoneSet = Hunt.zonesOf(units);
             var names = [for (z in levelZoneSet.keys()) z];
             names.sort(Reflect.compare);
-            Log.t("hunt", "monsters of level " + (level + MIN_DIFF) + ".." + (level + MAX_DIFF) + ": " + units.length + " kinds, living in " + names.length + " zones: " + names.slice(0, 40).join(" "));
+            Log.t("hunt", "monsters of level " + (level + levelZoneLo) + ".." + (level + MAX_DIFF) + ": " + units.length + " kinds, living in " + names.length + " zones: " + names.slice(0, 40).join(" "));
         }
         return levelZoneSet;
     }
@@ -552,6 +652,7 @@ class Bot {
         var used = useHomeStone();
         Log.t("bot", "STRANDED (no obelisk can be walked to from here): home stone " + (used ? "used" : "not in the bag"));
         if (used) {
+            stoneTimes.push(now);
             message = Locale.f("stHome");
             nav.stop();
             nav.forgetObeliskTrouble();
@@ -565,6 +666,17 @@ class Bot {
     }
 
     function farm(now:Float, leveling:Bool, level:Int):Void {
+        // (in the air on the way to an obelisk nothing is chosen: the flight lasts half a minute, and a target picked then is lost on landing)
+        var inAir = false;
+        try inAir = G.call("ent.Hero", "isFlyingToObelisk", hero) == true catch (_:Dynamic) {}
+        if (inAir) {
+            if (target != null) { target = null; targetKind = ""; engaged = false; }
+            message = Locale.f("stTravel");
+            stillX = Math.NaN;
+            return;
+        }
+        grindCheck(now);
+        try watchdog(now, leveling) catch (error:Dynamic) Log.err("watchdog", error);
         if (strandedStone(now)) return;
         if (target != null && !targetValid(now, leveling)) {
             var lostId = "";
@@ -685,6 +797,7 @@ class Bot {
             if (d > AGGRO_RANGE) continue;
             var aggro = false;
             try aggro = G.call("ent.Unit", "getTarget", e) == hero catch (_:Dynamic) {}
+            if (isUntouchable(e, now)) continue; // (hit for long and never hurt: under the ground, behind a wall)
             if (!aggro && blacklisted(e, now)) continue; // (a foe that was given up but hits the hero is fought all the same)
             var near = d <= THREAT_RANGE || (haveNode && Math.sqrt((ex - nodeX) * (ex - nodeX) + (ey - nodeY) * (ey - nodeY)) <= NODE_GUARD && d <= 30);
             if (!aggro && !near) continue;
@@ -731,6 +844,19 @@ class Bot {
             if (thp >= 0 && thp < progressHp - 1) progressAt = now;
             progressHp = thp;
         }
+        if (targetKind == "mob" && now - targetSince > 3 && underground(target)) {
+            Log.w("target is under the ground (z " + Math.round(G.number(G.field(target, "posz"))) + "): let go");
+            blacklist.set(key(target), now + 600);
+            untouchable.set(key(target), now + 600);
+            return false;
+        }
+        // (the hero fights or walks and the foe loses nothing and gets no nearer for 20 s - even one that has the hero as its target: it cannot be hit from here)
+        if (targetKind == "mob" && now - progressAt > 20 && now - targetSince > 20) {
+            Log.w("no damage dealt and no way nearer for " + Math.round(now - progressAt) + " s (" + Math.round(dNow) + " m, dz " + Math.round(G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"))) + "): the foe is left alone for 3 min");
+            blacklist.set(key(target), now + 180);
+            untouchable.set(key(target), now + 180);
+            return false;
+        }
         if (dNow > 12 && now - progressAt > 22) {
             Log.w("no progress towards the target for 22 s (still " + Math.round(dNow) + " m): another one");
             blacklist.set(key(target), now + 180);
@@ -769,7 +895,7 @@ class Bot {
         // fights the hero or is hurt already
         // (a foe that is being defended against, or already near, is fought out: dropping it and picking it up again as a threat made the bot stop and
         // start ten times a second, the 26.10 log)
-        if (leveling && !lenientTarget && !hurt(target) && !aggroOnHero(target) && key(target) != defendKey && dNow > 14 && G.integer(G.field(target, "_level")) < G.integer(G.field(hero, "_level")) + MIN_DIFF) {
+        if (leveling && !lenientTarget && !hurt(target) && !aggroOnHero(target) && key(target) != defendKey && dNow > 14 && G.integer(G.field(target, "_level")) < G.integer(G.field(hero, "_level")) + minDiff()) {
             Log.t("bot", "the target is below the hero's level now: another one");
             return false;
         }
@@ -868,7 +994,7 @@ class Bot {
             // a pack leader, an elite or a boss about: the monsters round it are not touched (its pack and it join any fight there)
             if (unit != null && (Catalog.isBoss(unit) || Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6)) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)
                 dangerPos.push({x: G.number(G.field(e, "posx")), y: G.number(G.field(e, "posy"))});
-            if (blacklisted(e, now)) { drop("blacklist"); continue; }
+            if (blacklisted(e, now) || isUntouchable(e, now)) { drop("blacklist"); continue; }
             if (unit != null && Catalog.isBoss(unit)) { drop("boss"); continue; }
             // (while leveling no pack leader or elite: its pack comes with it - a level-10 mage fell to an Alpha wolf's two level-12 packmates in seconds, 26.10)
             if (leveling && unit != null && (Catalog.flagSet(unit, 3) || Catalog.flagSet(unit, 6) || G.s(G.field(inf, "id")).indexOf("Alpha") >= 0)) { drop("leader"); continue; }
@@ -884,12 +1010,13 @@ class Bot {
             // beyond the reach map the way is a guess: a monster far off is the hunting grounds' business (the obelisk or the road takes the hero there), not a
             // target (the 26.10 runs walked 800-1200 m towards a slime the way-finder never found a way to, in circles)
             // beyond the reach map the way is a guess: such a monster is the hunting grounds' business (they walk the hero there), not a target
-            if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) { drop(foeLevel - level >= MIN_DIFF && foeLevel - level <= MAX_DIFF ? "far-unknown-RIGHT-LEVEL" : "far-unknown"); continue; }
+            if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) { drop(foeLevel - level >= minDiff() && foeLevel - level <= MAX_DIFF ? "far-unknown-RIGHT-LEVEL" : "far-unknown"); continue; }
             if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
                 var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
                 if (!lift && (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25))) { drop("height"); continue; }
                 if (lift && dzFoe > 4 && cost(e) - dzFoe * 4.0 > 110) { drop("height"); continue; }
             }
+            if (underground(e)) { drop("underground"); continue; }
             var score = cost(e);
             // the way there may wind round a cliff or a pool: what the reach map says it costs counts, not the straight line (a wolf 100 m off over a
             // gorge was a 300 m walk the other way, and the hero seemed to run from it)
@@ -909,7 +1036,7 @@ class Bot {
                 var diff = foeLevel - level;
                 // (when the zone has none of the hero's level, the nearest lower ones - up to 3 below - are the best there is: they
                 // cost so much in the score that any monster of the hero's level, however far, is chosen before them)
-                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? -3 : MIN_DIFF) || diff > MAX_DIFF)) { drop("level"); continue; }
+                if (drops ? Math.abs(diff) > 6 : (diff < (lenient ? Std.int(Math.min(-3, minDiff())) : minDiff()) || diff > MAX_DIFF)) { drop("level"); continue; }
                 score += (diff < 0 ? -diff * (lenient ? 600 : LOWER_COST) : diff * 250);
             } else {
                 if (!drops) { drop("no-drop"); continue; }
@@ -989,7 +1116,7 @@ class Bot {
         message = Locale.f("stTravel");
         if (G.call("ent.Hero", "isFlyingToObelisk", hero) == true) { leaveWaitUntil = now + 3; return true; }
         if (now < leaveWaitUntil) return true;
-        if (nav.flyElsewhere(hero, now, spots != null && spots.length > 0 ? spots : [{x: roamX, y: roamY}])) { roamVisited = new Map(); leaveWaitUntil = now + 3; leaving = false; return true; } // (one flight: the hunt goes on where the hero lands)
+        if (nav.flyElsewhere(hero, now, spots != null && spots.length > 0 ? spots : [{x: roamX, y: roamY}])) { resetVisited(now); leaveWaitUntil = now + 3; leaving = false; return true; } // (one flight: the hunt goes on where the hero lands)
         var best = null, bestD = 350.0;
         for (o in Nav.obelisks(hero)) {
             var d = Nav.distance(hero, o.x, o.y);
@@ -1026,7 +1153,7 @@ class Bot {
         if (roamZone != "" && zoneIds.exists(roamZone) && Hunt.hasFreeCell(roamZone, roamVisited, now)) return [roamZone => true];
         roamZone = "";
         if (ownLevel) {
-            var own = Hunt.zonesOfLevels(zoneIds, level + MIN_DIFF, level + MAX_DIFF);
+            var own = Hunt.zonesOfLevels(zoneIds, level + minDiff(), level + MAX_DIFF);
             if (own != null) return own;
         }
         return zoneIds;
@@ -1064,6 +1191,7 @@ class Bot {
             }
             if (arrived || (nav.gaveUp && !nav.walkingToObelisk()) || now - roamSince > (roamFarGround ? 1200 : 300) || stuckWay) {
                 Log.t("hunt", "ground " + roamKey + " " + (arrived ? "reached, no monster to fight in sight" : nav.gaveUp ? "cannot be reached" : "took too long") + ": leaving it alone for 8 min");
+                if (!arrived) killDeadGround(now, roamKey);
                 for (c in Hunt.around(roamKey, arrived ? 4 : 6)) roamVisited.set(c, now + 480); // (a ground the way-finder gave up: the whole pocket around it is the same trouble) // (the cells next to it are the same ground; the monsters take minutes to come back)
                 roamKey = -1;
                 nav.gaveUp = false;
@@ -1072,7 +1200,7 @@ class Bot {
                 // three grounds in two minutes that no way leads to: the hero sits in a pocket (the city's basin, a ledge): the obelisks lead out of it
                 roamFails.push(now);
                 roamFails = [for (t in roamFails) if (now - t < 120) t];
-                if (roamFails.length >= 3) { roamFails = []; leaving = true; Log.t("hunt", "three grounds in a row cannot be walked to: out of this place by obelisk"); }
+                if (roamFails.length >= 3) { roamFails = []; leaving = now >= grindUntil; Log.t("hunt", "three grounds in a row cannot be walked to: out of this place by obelisk"); }
             }
         }
         if (leaving) {
@@ -1097,7 +1225,7 @@ class Bot {
             if (nav.ensureReach(hero, now, true)) { message = Locale.f("stTravel"); return true; }
             var g = Hunt.find(hero, level, roamVisited, now, Nav.obelisks(hero), wide, zoneLevels, useZones, (x, y) -> (nav.canReach(x, y, Math.NaN) == 1 || nav.canReach(x, y, Math.NaN, true) == 1) && !nearDeath(x, y, now));
             // no ground inside the closed region the hero stands in (the city's basin, a ledge): out by obelisk, not paced out on foot
-            if (g == null && nav.inClosedRegion(hero, now) && !leaveFailed) { leaving = true; if (leaveByObelisk(now, Hunt.spotList(level, wide, zoneLevels, useZones))) return true; leaving = false; leaveFailed = true; }
+            if (g == null && nav.inClosedRegion(hero, now) && !leaveFailed && now >= grindUntil) { leaving = true; if (leaveByObelisk(now, Hunt.spotList(level, wide, zoneLevels, useZones))) return true; leaving = false; leaveFailed = true; }
             if (g != null) leaveFailed = false;
             // (a ground far beyond the reach map has no way the planner can find - its window is about 120 m: the hero ran back and forth on pieces
             // of path that changed at every replan; such a ground is walked to in steps of other grounds, or reached after the home stone)
@@ -1131,12 +1259,12 @@ class Bot {
                 wipeTimes = [for (t in wipeTimes) if (now - t < 240) t];
                 if (wipeTimes.length >= 2 && remembered > 0) {
                     wipeTimes = [];
-                    leaving = true;
+                    leaving = now >= grindUntil;
                     Log.t("hunt", "the sweep ended twice in a row with nothing found: out of this place by obelisk");
                     return true;
                 }
                 Log.t("hunt", "no hunting ground left that was not visited lately (" + remembered + " cells remembered): the memory is wiped, the sweep starts over");
-                roamVisited = new Map();
+                resetVisited(now);
                 // none even with an empty memory: the map has such ground but no way leads there from here (a gorge, a closed island) - the home stone
                 if (remembered == 0 && Hunt.groundExists(level, wide) && idleStone(now, "ground of the hero's level exists but no way leads to it")) return true;
                 roamWaitUntil = now + 6; // (look again in a few seconds: the reach map may be made by then)
@@ -1191,7 +1319,16 @@ class Bot {
                     roamKey = -1;
                     return true;
                 }
-                progressReset(now);
+                if (Nav.distance(hero, carrotX, carrotY) < 12 && roamPathIdx >= roamPath.length - 2) {
+                    // the hero stands at the end of the land route: nothing is left to walk to on it (standing there for ever was the 27.10 log)
+                    Log.t("hunt", "the end of the land route is reached at " + Math.round(carrotX) + "," + Math.round(carrotY) + ": the ground is left");
+                    for (c in Hunt.around(roamKey, 4)) roamVisited.set(c, now + 480);
+                    roamKey = -1;
+                    carrotX = Math.NaN;
+                    roamWaitUntil = now + 2;
+                    return true;
+                }
+                if (Nav.distance(hero, carrotX, carrotY) >= 12) progressReset(now); // (a carrot already under the hero's feet is no progress)
             }
             moveTo(carrotX, carrotY, 10, now);
             return true;
@@ -1209,7 +1346,7 @@ class Bot {
         stoneAt = now;
         var used = useHomeStone();
         Log.t("bot", "the place is " + Math.round(Nav.distance(hero, x, y)) + " m away and the nearest obelisk " + Math.round(nearest) + " m: home stone " + (used ? "used" : "not in the bag"));
-        if (used) { nav.stop(); nav.forgetObeliskTrouble(); message = Locale.f("stHome"); nextThink = now + 14; }
+        if (used) { stoneTimes.push(now); nav.stop(); nav.forgetObeliskTrouble(); message = Locale.f("stHome"); nextThink = now + 14; }
         return used;
     }
 

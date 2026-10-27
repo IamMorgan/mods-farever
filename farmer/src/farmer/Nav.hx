@@ -52,6 +52,10 @@ class Nav {
     var flightTo = "";
     var obeliskTried:Map<String, Float> = new Map();
     var obeliskBad:Map<String, Float> = new Map();
+    /** No flights by obelisk at all (the bot has been flying about without a fight: it walks and fights where it is). */
+    public var noFly = false;
+    /** When the flights by obelisk were started (the bot counts them: many and no fight is a loop). */
+    public var flights:Array<Float> = [];
     /** The obelisk the hero is walking to (to fly from there), "" when none. */
     var walkId = "";
     /** True when no opened obelisk can be walked to: the caller must use another way (the home stone). */
@@ -1100,6 +1104,7 @@ class Nav {
     public function travel(hero:Dynamic, x:Float, y:Float, now:Float, force:Bool = false):Bool {
         if (flying(hero)) { flightWait = now + 1.5; return true; }
         if (now < flightWait) return true; // just landed: wait for the world to settle
+        if (noFly) return false;
         // the walk to an obelisk that no way leads to (a plateau, a gorge) was given up: that obelisk is left alone for 10 minutes
         if (gaveUp && walkId != "") {
             obeliskBad.set(walkId, now + 600);
@@ -1135,6 +1140,7 @@ class Nav {
                 if (G.call("ent.Hero", "canFlyToObelisk", hero, [far.id]) == true) {
                     Log.t("nav", "flying by obelisk to " + far.id + " (spot " + Math.round(direct) + " m away, obelisk " + Math.round(fd) + " m from it)");
                     G.call("ent.Hero", "flyToObelisk", hero, [far.id]);
+                    flights.push(now);
                     flightWait = now + 1.5;
                     stop();
                     return true;
@@ -1157,6 +1163,7 @@ class Nav {
      * obelisk, the one with most of the spots around it (an obelisk is not tried twice in 10 minutes). True when a flight was started.
      */
     public function flyElsewhere(hero:Dynamic, now:Float, spots:Array<{x:Float, y:Float}>):Bool {
+        if (noFly) return false;
         var standing = null;
         try standing = G.call("ent.Hero", "getStandingObelisk", hero) catch (_:Dynamic) {}
         var standId = standing == null ? "" : G.s(G.field(G.field(standing, "inf"), "id"));
@@ -1184,6 +1191,7 @@ class Nav {
                 Log.t("nav", "this obelisk's surroundings lead to no wanted spot: flying to " + best.id + " (" + bestCount + " spots within 200 m of it)");
                 elsewhereTried.set(best.id, now + 600);
                 G.call("ent.Hero", "flyToObelisk", hero, [best.id]);
+                flights.push(now);
                 flightWait = now + 1.5;
                 stop();
                 return true;
