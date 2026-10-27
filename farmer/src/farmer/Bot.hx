@@ -1672,7 +1672,10 @@ class Bot {
                 var skillRange = G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), 0);
                 if (skillRange > 0 && skillRange < Nav.distance(hero, tx, ty) - 0.5) continue; // (a skill that does not reach the foe from here is not cast: the basic attack does)
                 if (crowded(now) && castTime(skill) > LONG_CAST) continue; // (surrounded, a long cast is cut by the dodge before it lands: the quick ones strike)
-                if (skillOk(skill)) { ready = skill; break; }
+                if (skillOk(skill)) {
+                    if (isBuff(skill)) { ready = skill; break; } // (the shield and the cooldown boost go first: they make the rest of the fight shorter and safer)
+                    if (ready == null) ready = skill;
+                }
             }
         }
         if (now - lastFightLog > 1.0) {
@@ -1786,11 +1789,27 @@ class Bot {
         try {
             var inf = G.field(skill, "inf");
             var type = G.integer(G.field(inf, "type"), -1);
-            if (type != 7 && type != 17 && type != 5) return false; // weapon-slot skills, the signature skill, the secondary skill
+            if (type != 7 && type != 17 && type != 5 && !(type == 9 && isBuff(skill))) return false; // weapon-slot skills, the signature skill, the secondary skill, a self-buff of the skill bar
             if (G.integer(G.field(inf, "nature"), -1) == 5) return false;
             if (G.isA(skill, "st.skill.Mount") || G.isA(skill, "st.skill.Block")) return false;
             for (check in ["isDash", "isBlock", "isBasicAttack"]) if (G.call("st.skill.BaseSkill", check, skill) == true) return false;
             return true;
+        } catch (_:Dynamic) return false;
+    }
+
+    /**
+     * A self-buff the hero carries on its skill bar (data type 9, reach 0: the mage's Spark Shield and Mystic Empowerment, which cuts
+     * cooldowns). Steps (Blink, dash, leap, mount) are not buffs, and a learnt skill that is not on the bar is not cast.
+     */
+    function isBuff(skill:Dynamic):Bool {
+        try {
+            var inf = G.field(skill, "inf");
+            if (G.integer(G.field(inf, "type"), -1) != 9) return false;
+            var kind = G.s(G.field(skill, "kind"));
+            if (~/Blink|Dash|Leap|Jump|Teleport|Charge|Mount|Dodge|Step/i.match(kind)) return false;
+            if (G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), 0) > 0.5) return false;
+            for (slot in G.array(G.field(hero, "skillSlots"))) if (G.s(slot) == kind) return true;
+            return false;
         } catch (_:Dynamic) return false;
     }
 
