@@ -64,27 +64,42 @@ class Services {
     // ---- the recycler ----
 
     static inline var STATION_FILE = "hlx/config/farmer/stations.json";
-    /** Where a recycler was seen (the layer holds only the loaded chunks' stations, so a far hero finds none): kept between sessions. The home city's one is the first guess. */
-    static var stationAt:Null<{x:Float, y:Float}> = null;
+    /** Every recycler place known (the layer holds only the loaded chunks' stations, so a far hero finds none): kept between sessions. The home city's one is the first. */
+    static var stationList:Array<{x:Float, y:Float}> = [];
     static var stationRead = false;
     static var stationScanAt = -100.0;
-    /** The last recycler entity seen: its window is tried from afar with it (the player's recycler inventory is in the loadout). */
+    /** The last recycler entity seen. */
     public static var cachedStation:Dynamic = null;
     public static var remoteBad = false;
 
-    /** The recycler's place, remembered from an earlier sighting (or the home city's), null when none is known. */
-    public static function stationSpot():Null<{x:Float, y:Float}> {
-        if (!stationRead) {
-            stationRead = true;
-            stationAt = {x: -340.0, y: 1430.0}; // (the home city's recycler, seen in the 25.10 log)
-            try {
-                if (sys.FileSystem.exists(STATION_FILE)) {
-                    var d:Dynamic = haxe.Json.parse(sys.io.File.getContent(STATION_FILE));
-                    if (Reflect.field(d, "x") != null && Reflect.field(d, "y") != null) stationAt = {x: Reflect.field(d, "x"), y: Reflect.field(d, "y")};
-                }
-            } catch (_:Dynamic) {}
+    static function readStations():Void {
+        if (stationRead) return;
+        stationRead = true;
+        stationList = [{x: -340.0, y: 1430.0}]; // (the home city's recycler, seen in the 25.10 log)
+        try {
+            if (sys.FileSystem.exists(STATION_FILE)) {
+                var d:Dynamic = haxe.Json.parse(sys.io.File.getContent(STATION_FILE));
+                var rows:Array<Dynamic> = Std.isOfType(d, Array) ? d : [d];
+                for (r in rows) if (Reflect.field(r, "x") != null && Reflect.field(r, "y") != null) addStation(Reflect.field(r, "x"), Reflect.field(r, "y"));
+            }
+        } catch (_:Dynamic) {}
+    }
+
+    static function addStation(x:Float, y:Float):Bool {
+        for (s in stationList) if (Math.abs(s.x - x) < 3 && Math.abs(s.y - y) < 3) return false;
+        stationList.push({x: x, y: y});
+        return true;
+    }
+
+    /** The known recycler nearest to the hero (a straight line), null when none is known. */
+    public static function stationSpot(?hero:Dynamic):Null<{x:Float, y:Float}> {
+        readStations();
+        var best = null, bd = Math.POSITIVE_INFINITY;
+        for (s in stationList) {
+            var d = hero == null ? 0.0 : Nav.distance(hero, s.x, s.y);
+            if (d < bd) { bd = d; best = s; }
         }
-        return stationAt;
+        return best;
     }
 
     /** Every few seconds: a recycler in the loaded world is remembered (and written down when its place is new). */
@@ -92,15 +107,14 @@ class Services {
         if (now - stationScanAt < 5) return;
         stationScanAt = now;
         try {
+            readStations();
             var st = scrapStation(hero);
-            if (st != null) cachedStation = st;
             if (st == null) return;
+            cachedStation = st;
             var x = G.number(G.field(st, "posx")), y = G.number(G.field(st, "posy"));
-            var known = stationSpot();
-            if (known != null && Math.abs(known.x - x) < 3 && Math.abs(known.y - y) < 3) return;
-            stationAt = {x: x, y: y};
+            if (!addStation(x, y)) return;
             Log.t("svc", "recycler seen at " + Math.round(x) + "," + Math.round(y) + ": remembered");
-            sys.io.File.saveContent(STATION_FILE, haxe.Json.stringify({x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10}));
+            sys.io.File.saveContent(STATION_FILE, haxe.Json.stringify([for (s in stationList) {x: Math.round(s.x * 10) / 10, y: Math.round(s.y * 10) / 10}]));
         } catch (_:Dynamic) {}
     }
 
@@ -258,10 +272,10 @@ class ServiceJob {
     public var walkArrive = 2.2;
     var requestedAt = 0.0;
     var remote = false;
-    var triedWindow = false;
     var attempts = 0;
 
     public function retry():Void {
+        startedAt = 0; // (the walk is over: the 90 s of the work itself start now)
         walkTo = null;
         walkArrive = 2.2;
         stage = 0;
@@ -281,20 +295,44 @@ class ServiceJob {
      */
     function stepScrap(app:Dynamic, hero:Dynamic, plan:FarmPlan, now:Float):String {
         if (stage == 0) {
-            // Remote, never walking: the station seen (or loaded, or a raw object) only names the request; the player's recycler inventory is the station's
-            // getInventory(player) (kept in the loadout), and the scrap request works on it from anywhere (28.10: the user's order - no trip to the recycler)
             station = Services.scrapStation(hero);
-            if (station == null) station = Services.cachedStation;
-            if (station == null) try station = G.allocRaw("ent.interactible.ScrapStation") catch (_:Dynamic) {}
-            if (station == null) return "fail:no recycler object";
-            try stationInv = G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]) catch (_:Dynamic) {}
-            if (stationInv == null) {
-                try stationInv = G.call("ent.interactible.ScrapStation", "getInventory", station, [G.field(hero, "player")]) catch (e:Dynamic) Log.t("svc", "recycler: getInventory failed: " + Std.string(e));
+            remote = false;
+            // from afar: the player's recycler inventory sits in the loadout once the station was used, so the window is opened with the last station seen
+            if (station == null && Services.cachedStation != null && !Services.remoteBad && G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]) != null) {
+                station = Services.cachedStation;
+                remote = true;
+                Log.t("svc", "recycler: opened from afar with the station seen earlier");
             }
-            Log.t("svc", "recycler: remote inventory " + (stationInv != null ? "found" : "missing"));
-            if (stationInv == null) return "fail:the recycler inventory cannot be made from afar";
-            stage = 2;
-            nextAt = now + 0.3;
+            if (station == null) {
+                // not loaded here: the remembered place is walked (or flown) to, the station loads as the hero comes near
+                var spot = Services.stationSpot(hero);
+                if (spot == null || attempts > 0 || !Hunt.onWorld(hero)) return "fail:no recycler in this zone";
+                if (Nav.distance(hero, spot.x, spot.y) > 25) { walkTo = {x: spot.x, y: spot.y}; walkArrive = 20; return "run"; }
+                return "fail:no recycler at the remembered place";
+            }
+            var existing = openedScrapWindow(app);
+            if (existing != null) { window = existing; stationInv = G.call("ui.win.Scrap", "get_inventory", window); stage = 2; return "run"; }
+            // The server makes the player's recycler inventory when the station is first used within reach; once it exists
+            // (the hero's loadout holds it) the window can be opened from anywhere, like a portal's.
+            var known = G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]);
+            if (known != null) {
+                window = G.create("ui.win.Scrap", [station, null]);
+                stationInv = known;
+                stage = 2;
+                nextAt = now + 0.4;
+                return "run";
+            }
+            var inRange = false;
+            try inRange = G.call("ent.Interactible", "isInRange", station, [hero]) == true catch (_:Dynamic) {}
+            // (the last metres to the station may be unwalkable - it stands on a platform: near enough, the request is sent all the same)
+            if (!inRange && Nav.distance(hero, G.number(G.field(station, "posx")), G.number(G.field(station, "posy"))) <= 7) inRange = true;
+            if (!inRange) {
+                walkTo ={x: G.number(G.field(station, "posx")), y: G.number(G.field(station, "posy"))};
+                return "run";
+            }
+            try G.call("ent.Interactible", "requestClientInteraction", station, [hero]) catch (e:Dynamic) Log.t("svc", "recycler: activation note (" + Std.string(e) + ")"); // (the window may still open: stage 1 checks)
+            requestedAt = now;
+            stage = 1;
             return "run";
         }
         if (stage == 1) {

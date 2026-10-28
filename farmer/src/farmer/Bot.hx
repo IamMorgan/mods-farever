@@ -322,6 +322,7 @@ class Bot {
             return;
         }
         if (job != null) { runJob(now); return; }
+        if (returnTo != null) { runReturn(now); return; }
         var level = G.integer(G.field(hero, "_level"));
         var leveling = plan.targetLevel > 0 && level < plan.targetLevel;
         var workLeft = plan.resourcesLeft() || leveling;
@@ -406,13 +407,71 @@ class Bot {
         target = null;
         targetKind = "";
         job = new ServiceJob(kind);
+        if (kind == "scrap") { tripOrigin = {x: G.number(G.field(hero, "posx")), y: G.number(G.field(hero, "posy")), z: G.number(G.field(hero, "posz"))}; tripStoned = false; tripWaitUntil = 0; tripSince = now; }
         Log.t("svc", "job " + kind + " started, free slots " + Services.freeSlots(hero));
         message = Locale.f(kind == "bank" ? "stBank" : "stRecycle");
+    }
+
+    // ---- the recycling trip: home stone, obelisks, the nearest recycler, and back to where the hero left the farm ----
+    var tripOrigin:Null<{x:Float, y:Float, z:Float}> = null;
+    var tripStoned = false;
+    var tripWaitUntil = 0.0;
+    var tripSince = 0.0;
+    var returnTo:Null<{x:Float, y:Float, z:Float}> = null;
+    var returnSince = 0.0;
+
+    /** The job is over (done or failed): a recycling trip sends the hero back to where it was. */
+    function jobEnded(kind:String, now:Float):Void {
+        if (kind != "scrap" || tripOrigin == null) return;
+        returnTo = tripOrigin;
+        tripOrigin = null;
+        returnSince = now;
+        nav.stop();
+        Log.t("svc", "back to the farm: " + Math.round(returnTo.x) + "," + Math.round(returnTo.y));
+    }
+
+    /** Goes back to where the recycling trip began (by obelisk when far, fighting back when attacked on the way). */
+    function runReturn(now:Float):Void {
+        var r = returnTo;
+        message = Locale.f("stTravel");
+        if (Nav.distance(hero, r.x, r.y) < 30 || now - returnSince > 900 || !Hunt.onWorld(hero)) {
+            Log.t("svc", "back at the farm (" + Math.round(Nav.distance(hero, r.x, r.y)) + " m from the old place)");
+            returnTo = null;
+            nav.stop();
+            return;
+        }
+        var foe = nearbyThreat(now);
+        if (foe != null) {
+            if (target != foe) { target = foe; targetKind = "mob"; lockedFoe = null; targetSince = now; nav.stop(); }
+            workMob(now, false);
+            return;
+        } else if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
+        nav.goalZ = r.z;
+        if (nav.gaveUp && !nav.walkingToObelisk()) { Log.t("svc", "no way back to the old place: the farm goes on from here"); nav.gaveUp = false; returnTo = null; nav.stop(); return; }
+        if (!nav.travel(hero, r.x, r.y, now)) nav.go(r.x, r.y, 3, now);
     }
 
     function runJob(now:Float):Void {
         if (job.walkTo != null) { // the recycler is out of the server's reach: walk up to it first
             var w = job.walkTo;
+            if (now - tripSince > 1200) { Log.t("svc", "job " + job.kind + ": the trip took too long"); job.close(app); var k0 = job.kind; job = null; jobFailedAt = now; scrapFailedAt = now; jobEnded(k0, now); return; }
+            if (now < tripWaitUntil) return; // (the home stone is being cast / the hero is carried)
+            // the home stone first: it takes the hero to the city, from where the obelisks lead on; used when the recycler is far (the stone is cast once per trip)
+            if (job.kind == "scrap" && !tripStoned && Services.scrapStation(hero) == null && Nav.distance(hero, w.x, w.y) > 300 && now - stoneAt > 30) {
+                tripStoned = true;
+                if (useHomeStone()) {
+                    stoneAt = now;
+                    stoneTimes.push(now);
+                    nav.stop();
+                    nav.forgetObeliskTrouble();
+                    tripWaitUntil = now + 14;
+                    Log.t("svc", "recycling trip: home stone used (the recycler is " + Math.round(Nav.distance(hero, w.x, w.y)) + " m away)");
+                    return;
+                }
+                Log.t("svc", "recycling trip: no home stone in the bag, going by obelisk / on foot");
+            }
+            var spot2 = job.kind == "scrap" ? Services.stationSpot(hero) : null; // (the nearest recycler, after the stone it may be another one)
+            if (spot2 != null && Services.scrapStation(hero) == null) { w = {x: spot2.x, y: spot2.y}; job.walkTo = w; }
             message = Locale.f("stTravel");
             var foe = nearbyThreat(now);
             if (foe != null) { // attacked on the way: fight back first
@@ -433,6 +492,7 @@ class Bot {
                 job = null;
                 jobFailedAt = now;
                 scrapFailedAt = now;
+                jobEnded("scrap", now);
                 return;
             }
             if (!nav.travel(hero, w.x, w.y, now)) nav.go(w.x, w.y, 1.4, now);
@@ -444,6 +504,7 @@ class Bot {
         job = null;
         countsReady = false; // what left the bag is not "lost" progress
         Log.t("svc", "job " + kind + ": " + r);
+        jobEnded(kind, now);
         if (r == "done") {
             if (Services.freeSlots(hero) <= 1) {
                 if (kind == "bank") skipBank = true; // the bank took what it could: recycling is next
