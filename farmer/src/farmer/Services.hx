@@ -282,11 +282,27 @@ class ServiceJob {
         if (stage == 0) {
             station = Services.scrapStation(hero);
             remote = false;
-            // from afar: the player's recycler inventory sits in the loadout once the station was used, so the window is opened with the last station seen
-            if (station == null && Services.cachedStation != null && !Services.remoteBad && G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]) != null) {
+            // from anywhere, like the bank (BankWindow takes a null): the window is made with the last station seen, or with none, and the scrap request goes
+            // out with a raw ScrapStation object when there is no real one (the server works on the player's own recycler inventory)
+            if (station == null && !Services.remoteBad) {
                 station = Services.cachedStation;
                 remote = true;
-                Log.t("svc", "recycler: opened from afar with the station seen earlier");
+                Log.t("svc", "recycler: opened from anywhere (" + (station != null ? "with the station seen earlier" : "without a station") + ")");
+
+                try {
+                    window = G.create("ui.win.Scrap", [station, null]);
+                    stationInv = G.call("ui.win.Scrap", "get_inventory", window);
+                    if (stationInv == null) stationInv = G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]);
+                } catch (e:Dynamic) { Log.t("svc", "recycler: remote window failed: " + Std.string(e)); stationInv = null; }
+                if (stationInv != null) {
+                    if (station == null) try station = G.allocRaw("ent.interactible.ScrapStation") catch (_:Dynamic) {}
+                    stage = 2;
+                    nextAt = now + 0.4;
+                    return "run";
+                }
+                close(app);
+                remote = false;
+                Services.remoteBad = true;
             }
             if (station == null) {
                 // not loaded here: the remembered place is walked (or flown) to, the station loads as the hero comes near
