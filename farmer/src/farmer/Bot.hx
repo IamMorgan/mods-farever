@@ -58,7 +58,7 @@ class Bot {
     var defendKey = "";
     /** Where the hero died: monsters and hunting grounds within DEATH_RADIUS of it are avoided for a while (too strong a place for this hero). */
     var deathSpots:Array<{x:Float, y:Float, until:Float}> = [];
-    static inline var DEATH_RADIUS = 130.0;
+    static inline var DEATH_RADIUS = 40.0; // (130 m for 15 min blacklisted a whole hunting ground after a death: 28.10)
 
     function nearDeath(x:Float, y:Float, now:Float):Bool {
         for (d in deathSpots) if (now < d.until && (d.x - x) * (d.x - x) + (d.y - y) * (d.y - y) < DEATH_RADIUS * DEATH_RADIUS) return true;
@@ -290,7 +290,7 @@ class Bot {
         if (G.call("ent.GameObject", "isDead", hero) == true) {
             if (!wasDead) Log.t("mod", "HERO DIED at " + Math.round(G.number(G.field(hero, "posx"))) + "," + Math.round(G.number(G.field(hero, "posy"))) + "," + Math.round(G.number(G.field(hero, "posz")))
                 + " (target " + targetKind + ", " + nav.status(hero, now) + "): respawning");
-            if (!wasDead) deathSpots.push({x: G.number(G.field(hero, "posx")), y: G.number(G.field(hero, "posy")), until: now + 900}); // (the ground it fell on is left alone for 15 min)
+            if (!wasDead) deathSpots.push({x: G.number(G.field(hero, "posx")), y: G.number(G.field(hero, "posy")), until: now + 240}); // (the ground it fell on is left alone for 4 min)
             wasDead = true;
             nav.stop();
             target = null;
@@ -421,7 +421,9 @@ class Bot {
             } else if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
             nav.goalZ = Math.NaN;
             // (the recycler opens from anywhere once its station is loaded: the walk to its remembered place ends as soon as it appears)
-            if (Nav.distance(hero, w.x, w.y) <= job.walkArrive || (job.walkArrive > 3 && Services.scrapStation(hero) != null)) { nav.stop(); job.retry(); return; }
+            var stationNear = Services.scrapStation(hero);
+            if (Nav.distance(hero, w.x, w.y) <= job.walkArrive || (job.walkArrive > 3 && stationNear != null)
+                || (stationNear != null && Nav.distance(hero, G.number(G.field(stationNear, "posx")), G.number(G.field(stationNear, "posy"))) <= 7)) { nav.stop(); job.retry(); return; }
             if (nav.gaveUp && !nav.walkingToObelisk()) { // no way to the recycler from here: the trip is dropped for a while
                 nav.gaveUp = false;
                 nav.stop();
@@ -546,7 +548,7 @@ class Bot {
     // ---- no loop of flights, no standing still ----
     /** Until this time the hero does not fly by obelisk; it fights what lives near, down to GRIND_DIFF levels below it. */
     var grindUntil = 0.0;
-    static inline var GRIND_DIFF = -4;
+    static inline var GRIND_DIFF = -1;
     /** Grounds no way led to (the flight landed on a plateau the spot lies beyond, a pocket): not chosen again for a long time, whatever wipes the sweep's memory. */
     var deadGround:Map<Int, Float> = new Map();
     /** Foes that took no damage from the hero for a long time (under the ground, behind a wall, immune): left alone even when they have the hero as target. */
@@ -566,6 +568,7 @@ class Bot {
     }
 
     function isUntouchable(e:Dynamic, now:Float):Bool {
+        if (G.isA(e, "ent.Foe")) return false; // (no black list of monsters at all - the user's order, 28.10)
         var until = untouchable.get(key(e));
         return until != null && now < until;
     }
@@ -657,17 +660,14 @@ class Bot {
     function grindCheck(now:Float):Void {
         nav.flights = [for (t in nav.flights) if (now - t < 900) t];
         stoneTimes = [for (t in stoneTimes) if (now - t < 900) t];
-        nav.noFly = now < grindUntil;
-        if (nav.noFly || now - lastFightAt < 240) return;
+        nav.noFly = false; // (no GRIND: the hero never stops flying nor drops to lower monsters - it ran about a level-15 land for hours, 28.10)
+        if (now - lastFightAt < 240 || now - grindNoteAt < 900) return;
         if (nav.flights.length + stoneTimes.length >= 4) {
-            grindUntil = now + 900;
-            nav.noFly = true;
-            leaving = false;
-            roamKey = -1;
-            levelZoneSet = null;
-            Log.w("GRIND: " + nav.flights.length + " flights by obelisk and " + stoneTimes.length + " home stones in 15 minutes without a fight: no more flying for 15 min, monsters down to " + GRIND_DIFF + " levels are fought where the hero is");
+            grindNoteAt = now;
+            Log.w("flights: " + nav.flights.length + " by obelisk and " + stoneTimes.length + " home stones in 15 minutes without a fight (the own level is still hunted)");
         }
     }
+    var grindNoteAt = -1000.0;
     var closedSince = -1.0;
 
     /** The hero sits where nothing can be done (a closed gorge, an island): the home stone takes it to the city, from where the obelisks lead on. True when it was used. */
@@ -886,6 +886,7 @@ class Bot {
     static function key(e:Dynamic):String return Std.string(G.field(e, "__uid"));
 
     function blacklisted(e:Dynamic, now:Float):Bool {
+        if (G.isA(e, "ent.Foe")) return false; // (no black list of monsters at all - the user's order, 28.10)
         var until = blacklist.get(key(e));
         if (until != null && now < until) return true;
         if (deathSpots.length > 0 && G.isA(e, "ent.Foe") && nearDeath(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), now)) return true;
@@ -1356,15 +1357,6 @@ class Bot {
                 // nothing more to walk to in the zone chosen: the choice is dropped (the whole set is looked at next time)
                 Log.t("hunt", "zone " + roamZone + ": no cell left that can be walked to, the next zone is chosen");
                 roamZone = "";
-                return true;
-            }
-            if (g == null && ownLevel && now >= grindUntil) {
-                // no ground of the hero's own level can be reached (the zones of that level lie beyond water or cliffs): the zones a few levels lower
-                // are hunted for a quarter of an hour instead of flying about, then the own level is tried again
-                grindUntil = now + 900;
-                levelZoneSet = null;
-                roamZone = "";
-                Log.w("GRIND: no ground of the own level can be reached: monsters down to " + GRIND_DIFF + " levels are hunted for 15 min");
                 return true;
             }
             if (g == null) {
