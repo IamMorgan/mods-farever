@@ -60,7 +60,8 @@ class Bot {
     var deathSpots:Array<{x:Float, y:Float, until:Float}> = [];
     static inline var DEATH_RADIUS = 40.0; // (130 m for 15 min blacklisted a whole hunting ground after a death: 28.10)
 
-    function nearDeath(x:Float, y:Float, now:Float):Bool {
+    function nearDeath(x:Float, y:Float, now:Float):Bool return false; // (no avoiding the place of a death: farming through deaths, the user's order, 28.10)
+    function nearDeathOld(x:Float, y:Float, now:Float):Bool {
         for (d in deathSpots) if (now < d.until && (d.x - x) * (d.x - x) + (d.y - y) * (d.y - y) < DEATH_RADIUS * DEATH_RADIUS) return true;
         return false;
     }
@@ -933,6 +934,7 @@ class Bot {
             blacklist.set(key(target), now + 120);
             return false;
         }
+        if (nav.gaveUp && !nav.walkingToObelisk() && targetKind == "mob") nav.gaveUp = false; // (a monster is never given up: the way-finder tries again)
         if (nav.gaveUp && !nav.walkingToObelisk()) {
             var rise = G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"));
             Log.w("target " + targetKind + " given up by the way-finder (rise " + Math.round(rise) + " m, " + Math.round(dNow) + " m away): blacklisted for 2 min");
@@ -1111,15 +1113,14 @@ class Bot {
             var dzFoe = Math.abs(G.number(G.field(e, "posz")) - hz);
             // (a bumper within reach lifts the hero onto a ledge up to its throw: then a monster up there is a target too)
             var reach = nav.canReach(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), descents);
-            if (reach == 0) { cut++; drop("unreachable"); continue; } // the reach map says no way leads there (another tier, behind a cliff)
+            // (no monster is "unreachable": the hero goes to the nearest one however the way winds - the user's order, 28.10)
             // beyond the reach map the way is a guess: a monster far off is the hunting grounds' business (the obelisk or the road takes the hero there), not a
             // target (the 26.10 runs walked 800-1200 m towards a slime the way-finder never found a way to, in circles)
             // beyond the reach map the way is a guess: such a monster is the hunting grounds' business (they walk the hero there), not a target
-            if (leveling && reach != 1 && Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) > FAR_UNKNOWN) { drop(foeLevel - level >= minDiff() && foeLevel - level <= MAX_DIFF ? "far-unknown-RIGHT-LEVEL" : "far-unknown"); continue; }
             if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
                 var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
-                if (!lift && (dzFoe > MAX_DZ || (dzFoe > 4 && cost(e) - dzFoe * 4.0 > 25))) { drop("height"); continue; }
-                if (lift && dzFoe > 4 && cost(e) - dzFoe * 4.0 > 110) { drop("height"); continue; }
+                
+                
             }
             if (underground(e)) { drop("underground"); continue; }
             var score = cost(e);
