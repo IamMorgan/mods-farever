@@ -2339,6 +2339,7 @@ class Bot {
                 // developer: the recycling trip from here, as when the bag is full
                 if (plan == null) return "no plan";
                 running = true;
+                AutoDodge.enabled = true;
                 startJob("scrap", haxe.Timer.stamp());
                 return "trip";
             case "move":
