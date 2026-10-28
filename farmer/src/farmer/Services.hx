@@ -331,7 +331,13 @@ class ServiceJob {
                 walkTo ={x: G.number(G.field(station, "posx")), y: G.number(G.field(station, "posy"))};
                 return "run";
             }
-            try G.call("ent.Interactible", "requestClientInteraction", station, [hero]) catch (e:Dynamic) Log.t("svc", "recycler: activation note (" + Std.string(e) + ")"); // (the window may still open: stage 1 checks)
+            // the key press path first (the F key: the hero asks to interact with the station), the station's own request after it
+            try G.call("ent.Unit", "requestInteractAction", hero, [station]) catch (e:Dynamic) {
+                Log.t("svc", "recycler: requestInteractAction (" + Std.string(e) + ") " + haxe.CallStack.toString(haxe.CallStack.exceptionStack()).split("
+").join(" | "));
+                try G.call("ent.Interactible", "requestClientInteraction", station, [hero]) catch (e2:Dynamic) Log.t("svc", "recycler: requestClientInteraction (" + Std.string(e2) + ") " + haxe.CallStack.toString(haxe.CallStack.exceptionStack()).split("
+").join(" | "));
+            }
             requestedAt = now;
             stage = 1;
             return "run";
