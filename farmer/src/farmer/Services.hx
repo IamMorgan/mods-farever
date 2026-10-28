@@ -325,7 +325,8 @@ class ServiceJob {
             var inRange = false;
             try inRange = G.call("ent.Interactible", "isInRange", station, [hero]) == true catch (_:Dynamic) {}
             // (the last metres to the station may be unwalkable - it stands on a platform: near enough, the request is sent all the same)
-            if (!inRange && Nav.distance(hero, G.number(G.field(station, "posx")), G.number(G.field(station, "posy"))) <= 7) inRange = true;
+            Log.t("svc", "recycler: station at " + Math.round(G.number(G.field(station, "posx"))) + "," + Math.round(G.number(G.field(station, "posy"))) + "," + Math.round(G.number(G.field(station, "posz"))) + ", hero at " + Math.round(G.number(G.field(hero, "posx"))) + "," + Math.round(G.number(G.field(hero, "posy"))) + "," + Math.round(G.number(G.field(hero, "posz"))) + ", in range by the game: " + inRange);
+            if (!inRange && Nav.distance(hero, G.number(G.field(station, "posx")), G.number(G.field(station, "posy"))) <= 3) inRange = true;
             if (!inRange) {
                 walkTo ={x: G.number(G.field(station, "posx")), y: G.number(G.field(station, "posy"))};
                 return "run";

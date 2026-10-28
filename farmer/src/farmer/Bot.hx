@@ -419,6 +419,8 @@ class Bot {
     var tripSince = 0.0;
     var returnTo:Null<{x:Float, y:Float, z:Float}> = null;
     var returnSince = 0.0;
+    var returnStoned = false;
+    var returnWaitUntil = 0.0;
 
     /** The job is over (done or failed): a recycling trip sends the hero back to where it was. */
     function jobEnded(kind:String, now:Float):Void {
@@ -426,6 +428,8 @@ class Bot {
         returnTo = tripOrigin;
         tripOrigin = null;
         returnSince = now;
+        returnStoned = !tripStoned;
+        returnWaitUntil = 0;
         nav.stop();
         Log.t("svc", "back to the farm: " + Math.round(returnTo.x) + "," + Math.round(returnTo.y));
     }
@@ -446,6 +450,20 @@ class Bot {
             workMob(now, false);
             return;
         } else if (targetKind == "mob") { target = null; targetKind = ""; releaseAttack(); }
+        if (now < returnWaitUntil) return; // (the home stone is being cast / the hero is carried)
+        // the recycler stands on a platform with no way down on foot: the stone carries the hero to the obelisk, which flies on to the farm
+        if (!returnStoned) {
+            returnStoned = true;
+            if (useHomeStone()) {
+                stoneAt = now;
+                stoneTimes.push(now);
+                nav.stop();
+                nav.forgetObeliskTrouble();
+                returnWaitUntil = now + 14;
+                Log.t("svc", "back to the farm: home stone used (the farm is " + Math.round(Nav.distance(hero, r.x, r.y)) + " m away)");
+                return;
+            }
+        }
         nav.goalZ = r.z;
         if (nav.gaveUp && !nav.walkingToObelisk()) { Log.t("svc", "no way back to the old place: the farm goes on from here"); nav.gaveUp = false; returnTo = null; nav.stop(); return; }
         if (!nav.travel(hero, r.x, r.y, now)) nav.go(r.x, r.y, 3, now);
@@ -457,7 +475,7 @@ class Bot {
             if (now - tripSince > 1200) { Log.t("svc", "job " + job.kind + ": the trip took too long"); job.close(app); var k0 = job.kind; job = null; jobFailedAt = now; scrapFailedAt = now; jobEnded(k0, now); return; }
             if (now < tripWaitUntil) return; // (the home stone is being cast / the hero is carried)
             // the home stone first: it takes the hero to the city, from where the obelisks lead on; used when the recycler is far (the stone is cast once per trip)
-            if (job.kind == "scrap" && !tripStoned && Services.scrapStation(hero) == null && Nav.distance(hero, w.x, w.y) > 300 && now - stoneAt > 30) {
+            if (job.kind == "scrap" && !tripStoned) {
                 tripStoned = true;
                 if (useHomeStone()) {
                     stoneAt = now;
@@ -483,7 +501,7 @@ class Bot {
             // (the recycler opens from anywhere once its station is loaded: the walk to its remembered place ends as soon as it appears)
             var stationNear = Services.scrapStation(hero);
             if (Nav.distance(hero, w.x, w.y) <= job.walkArrive || (job.walkArrive > 3 && stationNear != null)
-                || (stationNear != null && Nav.distance(hero, G.number(G.field(stationNear, "posx")), G.number(G.field(stationNear, "posy"))) <= 7)) { nav.stop(); job.retry(); return; }
+                || (stationNear != null && Nav.distance(hero, G.number(G.field(stationNear, "posx")), G.number(G.field(stationNear, "posy"))) <= 3)) { nav.stop(); job.retry(); return; }
             if (nav.gaveUp && !nav.walkingToObelisk()) { // no way to the recycler from here: the trip is dropped for a while
                 nav.gaveUp = false;
                 nav.stop();
@@ -2315,6 +2333,14 @@ class Bot {
                 noHome = true;
                 running = true;
                 return "job " + kind;
+            case "stone":
+                return useHomeStone() ? "stone used" : "no stone";
+            case "trip":
+                // developer: the recycling trip from here, as when the bag is full
+                if (plan == null) return "no plan";
+                running = true;
+                startJob("scrap", haxe.Timer.stamp());
+                return "trip";
             case "move":
                 // developer: moves the stack of an item to the bank (to=bank) or back (to=bag)
                 var id = Std.string(Reflect.field(cmd, "item")), toBank = Reflect.field(cmd, "to") == "bank";
