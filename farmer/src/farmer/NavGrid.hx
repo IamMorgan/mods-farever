@@ -653,7 +653,7 @@ class NavGrid {
             return;
         }
         var ex0 = end.ix * CELL - goalX, ey0 = end.iy * CELL - goalY;
-        if (strict && !softTried && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3 && ((Math.abs(goalX - startX) < RADIUS - 20 && Math.abs(goalY - startY) < RADIUS - 20) || count < 150 || (exhausted && !touchedWindow))) {
+        if (strict && !softTried && Math.sqrt(ex0 * ex0 + ey0 * ey0) > 3) {
             // no clean way: the same search again, now allowed to pass close to walls
             Log.t("nav", "strict path failed (short by " + Math.round(Math.sqrt(ex0 * ex0 + ey0 * ey0)) + " m): soft search");
             softTried = true;
