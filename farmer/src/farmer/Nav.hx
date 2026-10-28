@@ -30,7 +30,9 @@ class Nav {
     public var ty = 0.0;
     public var arrive = 2.0;
     /** True once the spot was given up (stuck for too long). */
-    public var gaveUp = false;
+    public var gaveUp(default, set) = false;
+    var gaveUpAt = -1000.0;
+    function set_gaveUp(v:Bool):Bool { if (v) gaveUpAt = haxe.Timer.stamp(); return gaveUp = v; }
     /** The height of the spot the hero goes to (NaN: unknown). Set by the caller before `go`. */
     public var goalZ = Math.NaN;
     /** True when the last direction() gave a way to run: only then does the bot fake a pressed movement key (see Bot.moving). */
@@ -1131,6 +1133,8 @@ class Nav {
             gaveUp = false;
         }
         walkId = "";
+        // the way-finder has just found no way on foot (a plateau, a far shore): the obelisk is taken whatever it saves
+        if (haxe.Timer.stamp() - gaveUpAt < 90) force = true;
         var direct = distance(hero, x, y);
         if (direct < OBELISK_FROM && !force) return false;
         var list = liveObelisks(hero, now);
