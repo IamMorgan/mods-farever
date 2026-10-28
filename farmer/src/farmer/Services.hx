@@ -258,6 +258,7 @@ class ServiceJob {
     public var walkArrive = 2.2;
     var requestedAt = 0.0;
     var remote = false;
+    var triedWindow = false;
     var attempts = 0;
 
     public function retry():Void {
@@ -280,60 +281,20 @@ class ServiceJob {
      */
     function stepScrap(app:Dynamic, hero:Dynamic, plan:FarmPlan, now:Float):String {
         if (stage == 0) {
+            // Remote, never walking: the station seen (or loaded, or a raw object) only names the request; the player's recycler inventory is the station's
+            // getInventory(player) (kept in the loadout), and the scrap request works on it from anywhere (28.10: the user's order - no trip to the recycler)
             station = Services.scrapStation(hero);
-            remote = false;
-            // from anywhere, like the bank (BankWindow takes a null): the window is made with the last station seen, or with none, and the scrap request goes
-            // out with a raw ScrapStation object when there is no real one (the server works on the player's own recycler inventory)
-            if (station == null && !Services.remoteBad) {
-                station = Services.cachedStation;
-                remote = true;
-                Log.t("svc", "recycler: opened from anywhere (" + (station != null ? "with the station seen earlier" : "without a station") + ")");
-
-                try {
-                    window = G.create("ui.win.Scrap", [station, null]);
-                    stationInv = G.call("ui.win.Scrap", "get_inventory", window);
-                    if (stationInv == null) stationInv = G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]);
-                } catch (e:Dynamic) { Log.t("svc", "recycler: remote window failed: " + Std.string(e)); stationInv = null; }
-                if (stationInv != null) {
-                    if (station == null) try station = G.allocRaw("ent.interactible.ScrapStation") catch (_:Dynamic) {}
-                    stage = 2;
-                    nextAt = now + 0.4;
-                    return "run";
-                }
-                close(app);
-                remote = false;
-                Services.remoteBad = true;
+            if (station == null) station = Services.cachedStation;
+            if (station == null) try station = G.allocRaw("ent.interactible.ScrapStation") catch (_:Dynamic) {}
+            if (station == null) return "fail:no recycler object";
+            try stationInv = G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]) catch (_:Dynamic) {}
+            if (stationInv == null) {
+                try stationInv = G.call("ent.interactible.ScrapStation", "getInventory", station, [G.field(hero, "player")]) catch (e:Dynamic) Log.t("svc", "recycler: getInventory failed: " + Std.string(e));
             }
-            if (station == null) {
-                // not loaded here: the remembered place is walked (or flown) to, the station loads as the hero comes near
-                var spot = Services.stationSpot();
-                if (spot == null || attempts > 0 || !Hunt.onWorld(hero)) return "fail:no recycler in this zone";
-                if (Nav.distance(hero, spot.x, spot.y) > 25) { walkTo = {x: spot.x, y: spot.y}; walkArrive = 20; return "run"; }
-                return "fail:no recycler at the remembered place";
-            }
-            var existing = openedScrapWindow(app);
-            if (existing != null) { window = existing; stationInv = G.call("ui.win.Scrap", "get_inventory", window); stage = 2; return "run"; }
-            // The server makes the player's recycler inventory when the station is first used within reach; once it exists
-            // (the hero's loadout holds it) the window can be opened from anywhere, like a portal's.
-            var known = G.call("st.Loadout", "getElementInventory", G.field(hero, "loadout"), ["ScrapStation"]);
-            if (known != null) {
-                window = G.create("ui.win.Scrap", [station, null]);
-                stationInv = known;
-                stage = 2;
-                nextAt = now + 0.4;
-                return "run";
-            }
-            var inRange = false;
-            try inRange = G.call("ent.Interactible", "isInRange", station, [hero]) == true catch (_:Dynamic) {}
-            // (the last metres to the station may be unwalkable - it stands on a platform: near enough, the request is sent all the same)
-            if (!inRange && Nav.distance(hero, G.number(G.field(station, "posx")), G.number(G.field(station, "posy"))) <= 7) inRange = true;
-            if (!inRange) {
-                walkTo ={x: G.number(G.field(station, "posx")), y: G.number(G.field(station, "posy"))};
-                return "run";
-            }
-            try G.call("ent.Unit", "requestInteractAction", hero, [station]) catch (e:Dynamic) return "fail:activate " + Std.string(e);
-            requestedAt = now;
-            stage = 1;
+            Log.t("svc", "recycler: remote inventory " + (stationInv != null ? "found" : "missing"));
+            if (stationInv == null) return "fail:the recycler inventory cannot be made from afar";
+            stage = 2;
+            nextAt = now + 0.3;
             return "run";
         }
         if (stage == 1) {
