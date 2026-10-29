@@ -470,7 +470,6 @@ class Nav {
         // in the air (a jump, a fall, a glide, a trampoline's throw) the height under the hero is no place to plan from: a search from there
         // finds no ground to walk, counts as a dead end and the hero is left bouncing; the way is planned after the landing
         if (airborne(hero) && grid.state != 1) return;
-        if (route != null && now - plannedAt > 6) needPlan = true;
         if (needPlan && grid.state != 1 && now >= planBlock) {
             needPlan = false;
             plannedAt = now;
