@@ -18,29 +18,6 @@ class Shapes {
         G.call("h2d.Graphics", "endFill", g, []);
     }
 
-    /** A spiky explosion: `spikes` points out to `outer`, notches in to `inner`. */
-    public static function star(cx:Float, cy:Float, outer:Float, inner:Float, spikes:Int, turn:Float):Array<Float> {
-        var out:Array<Float> = [];
-        for (i in 0...spikes * 2) {
-            var a = turn + Math.PI * i / spikes, r = i % 2 == 0 ? outer : inner;
-            out.push(cx + Math.cos(a) * r);
-            out.push(cy + Math.sin(a) * r * 0.8);
-        }
-        return out;
-    }
-
-    /** A scalloped cloud with `bumps` lobes. */
-    public static function cloud(cx:Float, cy:Float, radius:Float, bumps:Int, turn:Float):Array<Float> {
-        var out:Array<Float> = [], steps = bumps * 6;
-        for (i in 0...steps) {
-            var a = turn + Math.PI * 2 * i / steps;
-            var r = radius * (0.84 + 0.16 * Math.abs(Math.sin(a * bumps / 2)));
-            out.push(cx + Math.cos(a) * r);
-            out.push(cy + Math.sin(a) * r * 0.75);
-        }
-        return out;
-    }
-
     /** A comic speech cloud: an ellipse with `bumps` round lobes. */
     public static function lobes(cx:Float, cy:Float, rx:Float, ry:Float, bumps:Int):Array<Float> {
         var out:Array<Float> = [], steps = bumps * 8;

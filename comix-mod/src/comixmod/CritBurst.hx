@@ -2,58 +2,53 @@ package comixmod;
 
 import comixmod.GameAccess as G;
 
-private typedef BurstStyle = {word:String, ink:Int, outer:Int, inner:Int, cloud:Bool, count:Int};
-
 /** The comic burst of a critical hit: one at a time, a new crit replaces it, it never stays longer than LIFETIME. */
 class CritBurst {
     static inline var LIFETIME = 2.0;
     static inline var FADE = 0.3;
+    static inline var WIDTH = 230.0; // px at 1080p
     static inline var RED = 0xFF2A1A;
-    static final STYLES:Array<BurstStyle> = [
-        {word: "CRASH", ink: 0x2255DD, outer: 0xFFD400, inner: 0xFFF2A8, cloud: false, count: 12},
-        {word: "WHAM", ink: 0xD9261C, outer: 0x2E9BFF, inner: 0xFFF2A8, cloud: false, count: 10},
-        {word: "SNAP", ink: 0x1E7A2E, outer: 0xFFC800, inner: 0xFFF6B8, cloud: false, count: 9},
-        {word: "SMASH", ink: 0xD9261C, outer: 0x35D0C0, inner: 0xB5F5EC, cloud: true, count: 8},
-        {word: "BOOM", ink: 0x7A2BD9, outer: 0x3FA8F0, inner: 0xBFE5FF, cloud: true, count: 7},
-        {word: "CRACK", ink: 0xD9261C, outer: 0x4CD964, inner: 0xFFF2A8, cloud: false, count: 11},
-        {word: "BAM", ink: 0x1F3FBF, outer: 0xE5322D, inner: 0xFFE27A, cloud: false, count: 9},
-        {word: "GRRR", ink: 0xC2410C, outer: 0x57C84D, inner: 0xD3F7B0, cloud: true, count: 9},
-        {word: "POW", ink: 0xD9261C, outer: 0x3FB6FF, inner: 0xFFFFFF, cloud: false, count: 10}
-    ];
+    static final NAMES = ["crush", "wham", "snap", "smash", "boom", "crack", "bam", "grrr", "pow"];
 
+    var tiles = new Map<String, Dynamic>();
     var burst:Dynamic;
     var age = 0.0;
 
     public function new() {}
 
+    /** The picture of a burst (bursts/<name>.png of the mod's folder), loaded once. */
+    function tile(name:String):Dynamic {
+        if (!tiles.exists(name)) {
+            var path = "hlx/mods/" + HlxRuntime.moduleName() + "/bursts/" + name + ".png";
+            var any = G.staticCall("hxd.res.Any", "fromBytes", [path, sys.io.File.getBytes(path)]);
+            tiles.set(name, G.call("hxd.res.Any", "toTile", any));
+        }
+        return tiles.get(name);
+    }
+
+    /** `x`,`y` is the target on the layer; the burst stands to the right of it, the damage number is in its middle. */
     public function show(parent:Dynamic, x:Float, y:Float, amount:Int, sc:Float):Void {
         clear();
-        var style = STYLES[Std.random(STYLES.length)];
+        var tile = tile(NAMES[Std.random(NAMES.length)]);
         var box = G.create("h2d.Object", [parent]);
-        var shapes = G.create("h2d.Graphics", [box]);
-        var word = Fonts.text(box, style.word, style.ink, 1.2 * sc), value = Fonts.text(box, Std.string(amount), RED, 1.9 * sc);
-        // the word is bold: the same word again, a pixel to each side
-        var bold = [for (d in [[-1, 0], [1, 0], [0, -1], [0, 1]]) Fonts.text(box, style.word, style.ink, 1.2 * sc)];
-        var ww = Fonts.width(word), wh = Fonts.height(word), vw = Fonts.width(value), vh = Fonts.height(value);
-        var radius = Math.max(60 * sc, Math.max(ww, vw) * 0.75 + 24 * sc);
-        var turn = Math.random() * Math.PI;
-        var line = Math.max(2, 3 * sc);
-        Shapes.polygon(shapes, style.cloud ? Shapes.cloud(0, 0, radius, style.count, turn) : Shapes.star(0, 0, radius, radius * 0.62, style.count, turn),
-            style.outer, 0x000000, line);
-        Shapes.polygon(shapes, style.cloud ? Shapes.cloud(0, 0, radius * 0.72, style.count, turn) : Shapes.star(0, 0, radius * 0.7, radius * 0.45, style.count, turn),
-            style.inner, 0x000000, line * 0.6);
-        // the word sits above the value
-        var top = -(wh + vh) / 2;
-        G.set(word, "x", -ww / 2);
-        G.set(word, "y", top);
-        var offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-        for (k in 0...4) {
-            G.set(bold[k], "x", -ww / 2 + offsets[k][0] * sc);
-            G.set(bold[k], "y", top + offsets[k][1] * sc);
+        var picture = G.create("h2d.Bitmap", [tile, box]);
+        var tw = G.number(G.field(tile, "width")), th = G.number(G.field(tile, "height"));
+        var k = WIDTH * sc / tw;
+        G.call("h2d.Object", "setScale", picture, [k]);
+        G.set(picture, "x", -tw * k / 2);
+        G.set(picture, "y", -th * k / 2);
+        // the number: red with a dark outline, centred over the burst
+        var size = 1.9 * sc;
+        var value = Std.string(amount);
+        var vw = 0.0, vh = 0.0;
+        for (d in [[-1, 0], [1, 0], [0, -1], [0, 1], [0, 0]]) {
+            var t = Fonts.text(box, value, d[0] == 0 && d[1] == 0 ? RED : 0x000000, size);
+            vw = Fonts.width(t);
+            vh = Fonts.height(t);
+            G.set(t, "x", -vw / 2 + d[0] * sc * 1.5);
+            G.set(t, "y", -vh / 2 + d[1] * sc * 1.5);
         }
-        G.set(value, "x", -vw / 2);
-        G.set(value, "y", top + wh);
-        G.set(box, "x", x + radius + 40 * sc);
+        G.set(box, "x", x + tw * k / 2 + 110 * sc);
         G.set(box, "y", y);
         G.set(box, "rotation", (Math.random() - 0.5) * 0.3);
         burst = box;
