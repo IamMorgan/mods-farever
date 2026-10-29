@@ -94,7 +94,7 @@ class ComixMod {
         try {
             var bubblesOn = config.enabled && config.bubbleEnabled;
             bubbles.update(s2d, s3d, dt, bubblesOn, scale(s2d));
-            crit.update(dt, config.enabled && config.damageEnabled);
+            crit.update(s2d, s3d, dt, config.enabled && config.damageEnabled);
         } catch (error:Dynamic) report("update", error);
         return Continue;
     }
@@ -139,7 +139,7 @@ class ComixMod {
                 lastCritAt = now;
                 if (same) return result;
                 var s2d = G.field(app, "s2d");
-                crit.show(s2d, counter, scale(s2d));
+                crit.show(G.field(result, "parent"), position, scale(s2d));
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
