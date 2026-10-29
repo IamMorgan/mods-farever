@@ -2,7 +2,7 @@ package comixmod;
 
 import comixmod.GameAccess as G;
 
-private typedef Outlined = {counter:Dynamic, copies:Array<Dynamic>};
+private typedef Outlined = {counter:Dynamic, widget:Dynamic, frames:Int, copies:Array<Dynamic>};
 
 /** A white outline for the critical hit numbers: white copies of the text on the scene (never inside the game's flow panels), kept on the text's screen place. */
 class Outlines {
@@ -12,7 +12,7 @@ class Outlines {
 
     public function new() {}
 
-    public function add(s2d:Dynamic, counter:Dynamic):Void {
+    public function add(s2d:Dynamic, counter:Dynamic, widget:Dynamic):Void {
         var copies = [];
         var font = G.field(counter, "font"), value = G.text(G.field(counter, "text"));
         for (_ in SHIFTS) {
@@ -22,7 +22,7 @@ class Outlines {
             G.set(t, "visible", false);
             copies.push(t);
         }
-        list.push({counter: counter, copies: copies});
+        list.push({counter: counter, widget: widget, frames: 0, copies: copies});
     }
 
     function drop(o:Outlined):Void {
@@ -39,6 +39,9 @@ class Outlines {
             kept.push(o);
             var x = G.number(G.field(o.counter, "absX")), y = G.number(G.field(o.counter, "absY"));
             var s = G.number(G.field(o.counter, "matA"), 1);
+            if (o.frames++ < 4) trace("[comix-mod] outline abs=" + x + "," + y + " local=" + G.field(o.counter, "x") + "," + G.field(o.counter, "y")
+                + " widget abs=" + G.field(o.widget, "absX") + "," + G.field(o.widget, "absY") + " widget local=" + G.field(o.widget, "x") + "," + G.field(o.widget, "y")
+                + " vis=" + G.field(o.counter, "visible") + " alpha=" + G.field(o.counter, "alpha") + " text=" + G.field(o.counter, "text") + " parent=" + Type.getClassName(Type.getClass(G.field(o.widget, "parent"))));
             var shown = G.field(o.counter, "visible") != false && (x != 0 || y != 0);
             var i = 0;
             for (d in SHIFTS) {

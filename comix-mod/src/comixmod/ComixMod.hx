@@ -95,7 +95,7 @@ class ComixMod {
         try {
             var bubblesOn = config.enabled && config.bubbleEnabled;
             bubbles.update(s2d, s3d, dt, bubblesOn, scale(s2d));
-            crit.update(dt, config.enabled && config.damageEnabled);
+            crit.update(dt, config.enabled && config.damageEnabled, s2d, s3d);
             outlines.update();
         } catch (error:Dynamic) report("update", error);
         return Continue;
@@ -133,7 +133,7 @@ class ComixMod {
                 // the number itself stays the game's own, red with a white outline
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
                 G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
-                outlines.add(G.field(app, "s2d"), counter);
+                outlines.add(G.field(app, "s2d"), counter, result);
                 // the same hit reported again right away is not a new crit; a new crit replaces the burst of the previous one
                 var amount = Math.round(G.number(G.field(damage, "_amount")));
                 var now = haxe.Timer.stamp();
@@ -152,7 +152,7 @@ class ComixMod {
                     + " s2d=" + width + "x" + height + " widget abs=" + G.field(result, "absX") + "," + G.field(result, "absY")
                     + " counter abs=" + G.field(counter, "absX") + "," + G.field(counter, "absY") + " scale=" + G.field(counter, "matA")
                     + " scene=" + (G.call("h2d.Object", "getScene", result) == s2d));
-                crit.show(s2d, G.number(G.field(screen, "x")), G.number(G.field(screen, "y")), scale(s2d));
+                crit.show(s2d, position, G.number(G.field(screen, "x")), G.number(G.field(screen, "y")), scale(s2d));
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
