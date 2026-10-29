@@ -670,9 +670,12 @@ class AutoDodge {
                     speed = dt < 0.05 ? before.speed : Math.sqrt((px - before.x) * (px - before.x) + (py - before.y) * (py - before.y)) / dt;
                 }
                 unitsAlive.set(unit, {x: px, y: py, t: now, speed: speed});
-                foes.push({x: px, y: py});
                 if (!far) bodies.push({x: px, y: py, r: bodyRadius(unit)});
                 var own = swingThreats(hero, unit, speed, far);
+                // An archer is not run away from: the dodge steps aside, the distance to it stays.
+                var shoots = false;
+                for (threat in own) if (threat.shot != null) shoots = true;
+                if (!shoots) foes.push({x: px, y: py});
                 for (threat in own) threats.push(threat);
             } catch (_:Dynamic) {}
         }
@@ -1360,7 +1363,7 @@ class AutoDodge {
         ensureMap(hx, hy, hz);
         var key = frame * 10 + relax;
         if (key != waysKey) { waysKey = key; straightWays = null; cornerWays = null; }
-        var away = DodgeMath.awayAngle(hx, hy, [for (t in threats) {x: t.fromX, y: t.fromY}]);
+        var away = DodgeMath.awayAngle(hx, hy, [for (t in threats) if (t.shot == null) {x: t.fromX, y: t.fromY}]);
         if (straightWays == null) straightWays = straightCandidates(hx, hy, hz, away);
         var best:Null<{spot:Spot, hits:Int}> = null;
         var start = {x: hx, y: hy};
