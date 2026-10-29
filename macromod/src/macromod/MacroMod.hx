@@ -97,8 +97,6 @@ class MacroMod {
         sequencer = new Sequencer(keys, skills);
         rotationSeq = new RotationSequencer(keys, skills);
         rotationWindow = new RotationWindow(ui, picker, keys);
-        rotations = Rotations.load();
-        rotationSeq.set(rotations);
         applyConfig();
 
         // The red X next to each activation key button ... (rows are found by their label, in
@@ -125,6 +123,7 @@ class MacroMod {
             "better-mod-settings/config-changed/" + HlxRuntime.moduleName(),
             (_:Dynamic) -> {
                 config = ModConfig.load(HlxRuntime.moduleName(), config);
+                if (characterKey != "") CharacterStore.save(characterKey, config);
                 applyConfig();
             }
         );
@@ -132,10 +131,36 @@ class MacroMod {
 
     static function stepField(m:Int, s:Int):String return "m" + m + "_s" + s + "_skill";
 
+    static var characterKey = "";
+
+    static function saveMacros():Void {
+        config.save();
+        if (characterKey != "") CharacterStore.save(characterKey, config);
+    }
+
+    /** The macros and rotations belong to the character in the world: another character gets its own (empty at first). */
+    static function useCharacter(app:Dynamic):Void {
+        var me = G.field(app, "me");
+        var key = CharacterStore.keyOf(G.text(G.field(me, "uid")), G.text(G.field(me, "name")));
+        if (key == "_" || key == characterKey) return;
+        if (characterKey != "") CharacterStore.save(characterKey, config);
+        // the first character takes over what was saved before the split
+        if (!CharacterStore.hasAnyMacros()) CharacterStore.save(key, config);
+        else CharacterStore.apply(key, config);
+        characterKey = key;
+        CharacterStore.adoptShared(key);
+        Rotations.path = CharacterStore.rotationsPath(key);
+        rotationWindow.hide();
+        rotations = Rotations.load();
+        rotationSeq.set(rotations);
+        config.save();
+        applyConfig();
+    }
+
     /** The "X" of an activation key: back to Not set (0), and the key button shows it at once. */
     static function clearKey(key:String, button:Dynamic):Void {
         Reflect.setField(config, key, 0);
-        config.save();
+        saveMacros();
         applyConfig();
         try new GameScene().setButtonText(button, "Not set") catch (_:Dynamic) {}
     }
@@ -146,7 +171,7 @@ class MacroMod {
     /** Writes a step's skill name, saves, and shows it in the open settings window at once. */
     static function setStep(field:String, name:String):Void {
         Reflect.setField(config, field, name);
-        config.save();
+        saveMacros();
         applyConfig();
         var box = stepBoxes.get(field);
         if (box != null)
@@ -208,6 +233,7 @@ class MacroMod {
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
         sceneRoot = HlxRuntime.resolveField(instance, "s2d");
+        try useCharacter(instance) catch (_:Dynamic) {}
         var hero = GameSkills.localHero();
         if (hero == null) hero = try HlxRuntime.resolveField(instance, "hero") catch (_:Dynamic) null;
         sequencer.hero = hero;

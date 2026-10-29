@@ -14,7 +14,7 @@ typedef RotationData = {
 class Rotations {
     public static inline var SLOTS = 10;
     static inline var DIR = "hlx/config/macromod";
-    static inline var PATH = DIR + "/rotations.json";
+    public static var path = DIR + "/rotations.json"; // the file of the character in the world (see CharacterStore)
 
     public static function create():RotationData
         return {hotkey: 0, hold: false, repeat: false, slots: [for (_ in 0...SLOTS) ""]};
@@ -55,13 +55,13 @@ class Rotations {
         return haxe.Json.stringify({rotations: list}, null, "  ");
 
     public static function load():Array<RotationData> {
-        try return parse(sys.io.File.getContent(PATH)) catch (_:Dynamic) return [];
+        try return parse(sys.io.File.getContent(path)) catch (_:Dynamic) return [];
     }
 
     public static function save(list:Array<RotationData>):Void {
         try {
             if (!sys.FileSystem.exists(DIR)) sys.FileSystem.createDirectory(DIR);
-            sys.io.File.saveContent(PATH, serialize(list));
+            sys.io.File.saveContent(path, serialize(list));
         } catch (_:Dynamic) {}
     }
 
