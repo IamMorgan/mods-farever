@@ -2048,10 +2048,6 @@ class Bot {
      * the combo goes on hit after hit (a held key asks for the next hit every frame; a tap per hit would lose the ones in between).
      */
     function attack(now:Float, tx:Float, ty:Float):Void {
-        if (underCC()) {
-            if (now - lastFightLog > 2) { lastFightLog = now; Log.t("fight", "hero is under crowd control: no attack"); }
-            return;
-        }
         var active = G.call("ent.GameObject", "getActiveSkill", hero);
         var combo = G.integer(G.field(hero, "attackComboCount"));
         if (active != null && isBasic(active)) lastBasicSeen = now;
@@ -2177,10 +2173,6 @@ class Bot {
     }
 
     /** The game's own check throws now and then (a skill without data while it changes): then the hero counts as free. */
-    function underCC():Bool {
-        try return G.call("ent.GameObject", "isUnderAnyCC", hero) == true catch (_:Dynamic) return false;
-    }
-
     static inline var LONG_CAST = 1.0;
     var crowdAt = -100.0;
     var crowdValue = false;
