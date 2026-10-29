@@ -11,7 +11,6 @@ class CritBurst {
 
     var tiles = new Map<String, Dynamic>();
     var burst:Dynamic;
-    var layer:Dynamic;
     var wx = 0.0;
     var wy = 0.0;
     var wz = 0.0;
@@ -31,23 +30,19 @@ class CritBurst {
         return tiles.get(name);
     }
 
-    /** The burst joins the damage numbers' own `layer` (same level as the numbers), at a random place around the hit's world point `position`. */
-    public function show(layer:Dynamic, position:Dynamic, sc:Float):Void {
+    /** The burst lives on the scene and stays at a fixed world point (the hit position); `dx`, `dy` is its random offset on the screen. */
+    public function show(s2d:Dynamic, position:Dynamic, sc:Float):Void {
         clear();
         var tile = tile(NAMES[Std.random(NAMES.length)]);
-        var box = G.create("h2d.Object", [layer]);
-        // the game's panels are flows: our child stays out of their layout, or the reflow never ends
-        try G.set(G.call("h2d.Flow", "getProperties", layer, [box]), "isAbsolute", true) catch (_:Dynamic) {}
-        G.call("h2d.Object", "addChildAt", layer, [box, 0]);
+        var box = G.create("h2d.Object", [s2d]);
         var picture = G.create("h2d.Bitmap", [tile, box]);
         var tw = G.number(G.field(tile, "width")), th = G.number(G.field(tile, "height"));
-        var ma = G.number(G.field(layer, "matA"), 1);
-        var k = SIZE * sc / ma / Math.max(tw, th);
+        var k = SIZE * sc / Math.max(tw, th);
         G.call("h2d.Object", "setScale", picture, [k]);
         G.set(picture, "x", -tw * k / 2);
         G.set(picture, "y", -th * k / 2);
         G.set(box, "rotation", (Math.random() - 0.5) * 0.3);
-        // from half the picture's width to two widths away from the target's centre
+        // random place around the target: from half the picture's width to two widths away from its centre
         var width = Math.max(tw, th) * k;
         var angle = Math.random() * Math.PI * 2;
         var radius = width * (0.5 + Math.random() * 1.5);
@@ -56,7 +51,6 @@ class CritBurst {
         wx = G.number(G.field(position, "x"));
         wy = G.number(G.field(position, "y"));
         wz = G.number(G.field(position, "z"));
-        this.layer = layer;
         G.set(box, "visible", false);
         burst = box;
         age = 0;
@@ -65,12 +59,11 @@ class CritBurst {
     public function update(s2d:Dynamic, s3d:Dynamic, dt:Float, on:Bool):Void {
         if (burst == null) return;
         age += dt;
-        if (!on || age >= LIFETIME || G.field(layer, "parent") == null) return clear();
-        var spot = G.call("h3d.Camera", "project", G.field(s3d, "camera"), [wx, wy, wz,
+        if (!on || age >= LIFETIME) return clear();
+        var point = G.call("h3d.Camera", "project", G.field(s3d, "camera"), [wx, wy, wz,
             G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
-        var ma = G.number(G.field(layer, "matA"), 1), md = G.number(G.field(layer, "matD"), 1);
-        G.set(burst, "x", (G.number(G.field(spot, "x")) - G.number(G.field(layer, "absX"))) / ma + dx);
-        G.set(burst, "y", (G.number(G.field(spot, "y")) - G.number(G.field(layer, "absY"))) / md + dy);
+        G.set(burst, "x", G.number(G.field(point, "x")) + dx);
+        G.set(burst, "y", G.number(G.field(point, "y")) + dy);
         G.set(burst, "visible", true);
         G.set(burst, "alpha", Math.min(1, (LIFETIME - age) / FADE));
     }
@@ -78,6 +71,5 @@ class CritBurst {
     public function clear():Void {
         if (burst != null) G.call("h2d.Object", "remove", burst, []);
         burst = null;
-        layer = null;
     }
 }

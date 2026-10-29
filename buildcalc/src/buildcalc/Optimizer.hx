@@ -71,6 +71,8 @@ class Optimizer {
     public var worn:Build;
     var poolSize = 0;
     public var infusions:Array<String> = [];
+    /** The hero's signature skills that have runes (not chosen, but their runes are). */
+    public var sigSkills:Array<String> = [];
     public var bonusStats:Array<String> = [];
     var infusionRaw = new Map<String, Dynamic>();
     public var tree:Array<TalentNode> = [];
@@ -264,6 +266,7 @@ class Optimizer {
         buf.add("|"); buf.add(talentKey(b.talents));
         buf.add("|");
         for (id in b.skills) { buf.add(id); if (b.runes.exists(id)) { buf.add("{"); buf.add(b.runes.get(id).join("+")); buf.add("}"); } buf.add(","); }
+        for (id in sigSkills) if (b.runes.exists(id)) { buf.add("|"); buf.add(id); buf.add("{"); buf.add(b.runes.get(id).join("+")); buf.add("}"); }
         buf.add("|"); if (b.arsenal != null) buf.add(b.arsenal.join(","));
         if (model.statsOnly) buf.add("|s");
         return buf.toString();
@@ -653,6 +656,14 @@ class Optimizer {
         var all = b.skills;
         b.skills = limitSkills(hero, all, slotSkills(hero, all));
         for (id in all) if (b.skills.indexOf(id) < 0) b.runes.remove(id);
+        // the signature skill (the priest's Judgment) is fixed, but its runes are chosen: the hero's own are the start
+        sigSkills = [];
+        for (i in 0...G.len(list)) {
+            var def = SkillData.get(G.str(G.field(G.field(G.at(list, i), "inf"), "id")));
+            if (def == null || def.type != "SignatureSkill" || def.masteries.length == 0 || sigSkills.indexOf(def.id) >= 0) continue;
+            sigSkills.push(def.id);
+            b.runes.set(def.id, GameData.skillMasteries(def.inf, active));
+        }
         DebugLog.line("worn build: " + describe(b));
         return b;
     }
@@ -955,7 +966,7 @@ class Optimizer {
         for (id in b.skills) if (classSkills.indexOf(id) < 0) bad.push("class skill " + id + " is not learnt");
         for (id => rs in b.runes) {
             var d = SkillData.get(id);
-            if (b.skills.indexOf(id) < 0 && rs.length > 0) bad.push("runes of " + id + ", a skill the build does not have");
+            if (b.skills.indexOf(id) < 0 && sigSkills.indexOf(id) < 0 && rs.length > 0) bad.push("runes of " + id + ", a skill the build does not have");
             if (rs.length > runesPerSkill) bad.push(id + ": " + rs.length + " runes, " + runesPerSkill + " allowed");
             for (i in 0...rs.length) {
                 if (rs.indexOf(rs[i]) != i) bad.push(id + ": rune " + rs[i] + " twice");
@@ -1015,12 +1026,12 @@ class Optimizer {
         trial.augs.set(s, chosen);
         var wornAugs = worn.augs.exists(s) ? worn.augs.get(s) : [];
         for (type => list in Augments.forItem(hero, c.inf)) {
-            // sigils (augments that give a talent) are not changed: the item gets the sigil the hero has in this slot,
-            // so the talents chosen work with the sigils the hero owns (a talent moved onto a sigil the hero does not
-            // have would be lost)
+            // a sigil (an augment that gives a talent) the hero wears in this slot stays; a slot without one gets the best
+            // obtainable sigil (valued like any augment, the talents it gives need no points), so a sigil not inserted yet is counted
             if (Lambda.exists(list, a -> isSigil(a))) {
-                for (w in wornAugs) if (isSigil(w) && Lambda.exists(list, a -> a.id == w.id)) chosen.push(w);
-                continue;
+                var keep = false;
+                for (w in wornAugs) if (isSigil(w) && Lambda.exists(list, a -> a.id == w.id)) { chosen.push(w); keep = true; }
+                if (keep) continue;
             }
             var best:Augment = null, bestV = -1e30, bestTie = -1.0;
             for (a in list) {
@@ -1135,6 +1146,8 @@ class Optimizer {
         for (r in refs) {
             if (talentKey(r) == found) return;
             if (!validTalents(r)) continue;
+            // talents that leave points unspent are no start to keep: the free points cost nothing, the talents found take them
+            if (talentSpent(r) < points) continue;
             var trial = copy(b);
             trial.talents = r.copy();
             var v = value(trial);
@@ -2210,6 +2223,13 @@ class SkillPass extends Pass {
             var runesOnly = Optimizer.copy(b);
             for (id in runesOnly.skills) runesOnly.runes.set(id, o.bestRunes(runesOnly, id));
             take(runesOnly, o.value(runesOnly));
+        }
+        // the signature skill's runes
+        if (o.sigSkills.length > 0) {
+            var sig = Optimizer.copy(b);
+            for (id in o.sigSkills) sig.runes.set(id, o.bestRunes(sig, id));
+            take(sig, o.value(sig));
+            for (id in o.sigSkills) if (!b.runes.exists(id)) b.runes.set(id, o.worn.runes.exists(id) ? o.worn.runes.get(id).copy() : []);
         }
         var arsenal = Optimizer.copy(b);
         o.bestArsenal(arsenal);
