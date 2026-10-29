@@ -116,8 +116,7 @@ class ComixMod {
                 var layer = G.field(result, "parent");
                 var ma = G.number(G.field(layer, "matA"), 1), md = G.number(G.field(layer, "matD"), 1);
                 var at = {x: (G.number(G.field(spot, "x")) - G.number(G.field(layer, "absX"))) / ma, y: (G.number(G.field(spot, "y")) - G.number(G.field(layer, "absY"))) / md};
-                crit.show(layer, at.x, at.y,
-                    Math.round(G.number(G.field(damage, "_amount"))), scale(s2d) / ma);
+                crit.show(layer, result, counter, at.x, at.y, scale(s2d) / ma);
                 G.set(result, "visible", false);
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
