@@ -41,11 +41,11 @@ class CritBurst {
         G.set(picture, "x", -tw * k / 2);
         G.set(picture, "y", -th * k / 2);
         G.set(box, "rotation", (Math.random() - 0.5) * 0.3);
-        // the layer's origin is the target; the burst is far enough from it not to cover the numbers around it
+        // the layer's origin is the target; the burst is a full burst size plus a margin away from it, so it does not cover the numbers around it
         var angle = Math.random() * Math.PI * 2;
         while (Math.abs(Math.atan2(Math.sin(angle - lastAngle), Math.cos(angle - lastAngle))) < 1.2) angle = Math.random() * Math.PI * 2;
         lastAngle = angle;
-        var radius = Math.max(tw, th) * k / 2 + 110 * sc;
+        var radius = Math.max(tw, th) * k + 60 * sc;
         G.set(box, "x", Math.cos(angle) * radius);
         G.set(box, "y", Math.sin(angle) * radius);
         burst = box;
@@ -62,6 +62,5 @@ class CritBurst {
     public function clear():Void {
         if (burst != null) G.call("h2d.Object", "remove", burst, []);
         burst = null;
-        widget = null;
     }
 }
