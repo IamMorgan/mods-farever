@@ -20,6 +20,7 @@ class ComixMod {
     static var config:ComixConfig = {enabled: true, bubbleEnabled: true, damageEnabled: true};
 
     static inline var MAGIC_COLOR = 0x66CCFF;
+    static inline var CRIT_COLOR = 0xFF2A1A;
     static var app:Dynamic;
     static var bubbles:Bubbles;
     static var crit:CritBurst;
@@ -107,7 +108,7 @@ class ComixMod {
             var counter = G.field(result, "counter");
             Fonts.remember(G.field(counter, "font"));
             if (G.call("st.skill.DamageResult", "get_critical", damage) == true) {
-                // The critical hit is drawn by the comic burst instead of the native number.
+                // A critical hit keeps the native number (red) and gets a comic burst beside it.
                 // `position` is a point of the world: the burst goes to the right of where it lands on the screen
                 var s2d = G.field(app, "s2d");
                 var spot = G.call("h3d.Camera", "project", G.field(G.field(app, "s3d"), "camera"), [G.number(G.field(position, "x")),
@@ -116,8 +117,10 @@ class ComixMod {
                 var layer = G.field(result, "parent");
                 var ma = G.number(G.field(layer, "matA"), 1), md = G.number(G.field(layer, "matD"), 1);
                 var at = {x: (G.number(G.field(spot, "x")) - G.number(G.field(layer, "absX"))) / ma, y: (G.number(G.field(spot, "y")) - G.number(G.field(layer, "absY"))) / md};
-                crit.show(layer, result, counter, at.x, at.y, scale(s2d) / ma);
-                G.set(result, "visible", false);
+                crit.show(layer, result, at.x, at.y, scale(s2d) / ma);
+                // the number itself stays the game's own, only red
+                G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
+                G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
