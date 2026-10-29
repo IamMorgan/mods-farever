@@ -55,6 +55,7 @@ class ComixMod {
         }
     }
 
+    static var outlines = new Outlines();
     static var nextConfigCheck = 0.0;
     static var lastCritAmount = -1;
     static var lastCritAt = -10.0;
@@ -95,6 +96,7 @@ class ComixMod {
             var bubblesOn = config.enabled && config.bubbleEnabled;
             bubbles.update(s2d, s3d, dt, bubblesOn, scale(s2d));
             crit.update(dt, config.enabled && config.damageEnabled);
+            outlines.update();
         } catch (error:Dynamic) report("update", error);
         return Continue;
     }
@@ -131,10 +133,7 @@ class ComixMod {
                 // the number itself stays the game's own, red with a white outline
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
                 G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
-                try {
-                    G.set(result, "filter", G.create("h2d.filter.Outline", [2, 0xFFFFFF]));
-                    report("outline set", G.field(result, "filter"));
-                } catch (error:Dynamic) report("outline", error);
+                outlines.add(result, counter);
                 // the same hit reported again right away is not a new crit; a new crit replaces the burst of the previous one
                 var amount = Math.round(G.number(G.field(damage, "_amount")));
                 var now = haxe.Timer.stamp();
@@ -143,13 +142,10 @@ class ComixMod {
                 lastCritAt = now;
                 if (same) return result;
                 var s2d = G.field(app, "s2d");
-                var spot = G.call("h3d.Camera", "project", G.field(G.field(app, "s3d"), "camera"), [G.number(G.field(position, "x")),
-                    G.number(G.field(position, "y")), G.number(G.field(position, "z")), G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
-                // it joins the damage numbers' own layer, so it is converted from the screen to that layer's coordinates
+                // it joins the damage numbers' own layer, whose origin is the target
                 var layer = G.field(result, "parent");
-                var ma = G.number(G.field(layer, "matA"), 1), md = G.number(G.field(layer, "matD"), 1);
-                var at = {x: (G.number(G.field(spot, "x")) - G.number(G.field(layer, "absX"))) / ma, y: (G.number(G.field(spot, "y")) - G.number(G.field(layer, "absY"))) / md};
-                crit.show(layer, result, at.x, at.y, scale(s2d) / ma);
+                var ma = G.number(G.field(layer, "matA"), 1);
+                crit.show(layer, scale(s2d) / ma);
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
