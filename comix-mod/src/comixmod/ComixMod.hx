@@ -56,6 +56,8 @@ class ComixMod {
     }
 
     static var nextConfigCheck = 0.0;
+    static var lastCritAmount = -1;
+    static var lastCritAt = -10.0;
 
     /** The settings window writes config.json while the game runs: take its values at once. */
     static function reloadConfig():Void {
@@ -130,8 +132,13 @@ class ComixMod {
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
                 G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
                 try G.set(counter, "filter", G.create("h2d.filter.Outline", [2, 0xFFFFFF])) catch (error:Dynamic) report("outline", error);
-                // one burst at a time: a crit that comes while it is on the screen gets none
-                if (!crit.canShow()) return result;
+                // the same hit reported again right away is not a new crit; a new crit replaces the burst of the previous one
+                var amount = Math.round(G.number(G.field(damage, "_amount")));
+                var now = haxe.Timer.stamp();
+                var same = amount == lastCritAmount && now - lastCritAt < 1.0;
+                lastCritAmount = amount;
+                lastCritAt = now;
+                if (same) return result;
                 var s2d = G.field(app, "s2d");
                 var spot = G.call("h3d.Camera", "project", G.field(G.field(app, "s3d"), "camera"), [G.number(G.field(position, "x")),
                     G.number(G.field(position, "y")), G.number(G.field(position, "z")), G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
