@@ -111,11 +111,12 @@ class ComixMod {
                 var s2d = G.field(app, "s2d");
                 var spot = G.call("h3d.Camera", "project", G.field(G.field(app, "s3d"), "camera"), [G.number(G.field(position, "x")),
                     G.number(G.field(position, "y")), G.number(G.field(position, "z")), G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
-// it joins the damage numbers' own layer, so it is converted from the screen to that layer's coordinates
+                // it joins the damage numbers' own layer, so it is converted from the screen to that layer's coordinates
                 var layer = G.field(result, "parent");
-                var at = G.call("h2d.Object", "globalToLocal", layer, [G.create("h2d.col.Point", [G.number(G.field(spot, "x")), G.number(G.field(spot, "y"))])]);
-                crit.show(layer, G.number(G.field(at, "x")), G.number(G.field(at, "y")),
-                    Math.round(G.number(G.field(damage, "_amount"))), scale(s2d));
+                var ma = G.number(G.field(layer, "matA"), 1), md = G.number(G.field(layer, "matD"), 1);
+                var at = {x: (G.number(G.field(spot, "x")) - G.number(G.field(layer, "absX"))) / ma, y: (G.number(G.field(spot, "y")) - G.number(G.field(layer, "absY"))) / md};
+                crit.show(layer, at.x, at.y,
+                    Math.round(G.number(G.field(damage, "_amount"))), scale(s2d) / ma);
                 G.set(result, "visible", false);
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
