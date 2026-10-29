@@ -41,6 +41,18 @@ class Shapes {
         return out;
     }
 
+    /** A comic speech cloud: an ellipse with `bumps` round lobes. */
+    public static function lobes(cx:Float, cy:Float, rx:Float, ry:Float, bumps:Int):Array<Float> {
+        var out:Array<Float> = [], steps = bumps * 8;
+        for (i in 0...steps) {
+            var a = Math.PI * 2 * i / steps;
+            var f = 0.88 + 0.12 * Math.abs(Math.sin(a * bumps / 2));
+            out.push(cx + Math.cos(a) * rx * f);
+            out.push(cy + Math.sin(a) * ry * f);
+        }
+        return out;
+    }
+
     /** An ellipse as a polygon. */
     public static function ellipse(cx:Float, cy:Float, rx:Float, ry:Float):Array<Float> {
         var out:Array<Float> = [];
