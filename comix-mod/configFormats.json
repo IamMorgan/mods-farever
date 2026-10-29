@@ -18,6 +18,14 @@
       "type": "checkbox",
       "label": "Enable damage effects (blue magic numbers, comic burst on a critical hit)",
       "key": "damageEnabled"
+    },
+    {
+      "type": "slider",
+      "label": "Image size, %",
+      "key": "sizePercent",
+      "min": 30,
+      "max": 200,
+      "step": 5
     }
   ]
 }

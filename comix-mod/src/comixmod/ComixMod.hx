@@ -7,6 +7,7 @@ typedef ComixConfig = {
     var enabled:Bool;
     var bubbleEnabled:Bool;
     var damageEnabled:Bool;
+    var sizePercent:Int;
 }
 
 /**
@@ -17,7 +18,7 @@ typedef ComixConfig = {
 @:build(hlx.runtime.Mod.build())
 class ComixMod {
     @:hlx.config
-    static var config:ComixConfig = {enabled: true, bubbleEnabled: true, damageEnabled: true};
+    static var config:ComixConfig = {enabled: true, bubbleEnabled: true, damageEnabled: true, sizePercent: 100};
 
     static inline var MAGIC_COLOR = 0x66CCFF;
     static inline var CRIT_COLOR = 0xFF2A1A;
@@ -60,10 +61,10 @@ class ComixMod {
         trace("[comix-mod] " + where + ": " + Std.string(error));
     }
 
-    /** Pixel scale of the effects: 1 at a 1080p game, proportional to the game's resolution. */
+    /** Pixel scale of the effects: 1 at a 1080p game and 100% size, proportional to the game's resolution and the size setting. */
     static function scale(s2d:Dynamic):Float {
         var height = G.number(G.field(s2d, "height"), 1080);
-        return Math.max(0.5, height / 1080);
+        return Math.max(0.5, height / 1080) * Math.max(30, Math.min(200, config.sizePercent)) / 100;
     }
 
     @:hlx.prefix(GameApp.update)
@@ -108,6 +109,8 @@ class ComixMod {
             var counter = G.field(result, "counter");
             Fonts.remember(G.field(counter, "font"));
             if (G.call("st.skill.DamageResult", "get_critical", damage) == true) {
+                // one critical hit may reach this hook more than once: the burst stays where it was placed
+                if (!crit.canShow()) return result;
                 // A critical hit keeps the native number (red) and gets a comic burst beside it.
                 // `position` is a point of the world: the burst goes to the right of where it lands on the screen
                 var s2d = G.field(app, "s2d");
