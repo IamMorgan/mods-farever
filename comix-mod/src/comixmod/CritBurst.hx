@@ -32,8 +32,6 @@ class CritBurst {
     var half = 0.0;
     var sc = 1.0;
     var lastAngle = -10.0;
-    /** False while a burst is still on the screen. */
-    public function canShow():Bool return burst == null;
 
     /** The burst stands at a random side of the damage number's `widget` (it is placed once the game has put the widget at the target), never at the side of the previous one. */
     public function show(parent:Dynamic, widget:Dynamic, x:Float, y:Float, sc:Float):Void {
