@@ -55,7 +55,6 @@ class ComixMod {
         }
     }
 
-    static var outlines = new Outlines();
     static var nextConfigCheck = 0.0;
     static var lastCritAmount = -1;
     static var lastCritAt = -10.0;
@@ -95,8 +94,7 @@ class ComixMod {
         try {
             var bubblesOn = config.enabled && config.bubbleEnabled;
             bubbles.update(s2d, s3d, dt, bubblesOn, scale(s2d));
-            crit.update(dt, config.enabled && config.damageEnabled, s2d, s3d);
-            outlines.update();
+            crit.update(dt, config.enabled && config.damageEnabled);
         } catch (error:Dynamic) report("update", error);
         return Continue;
     }
@@ -130,10 +128,9 @@ class ComixMod {
             var counter = G.field(result, "counter");
             Fonts.remember(G.field(counter, "font"));
             if (G.call("st.skill.DamageResult", "get_critical", damage) == true) {
-                // the number itself stays the game's own, red with a white outline
+                // the number itself stays the game's own, red
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
                 G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
-                outlines.add(G.field(app, "s2d"), counter, result);
                 // the same hit reported again right away is not a new crit; a new crit replaces the burst of the previous one
                 var amount = Math.round(G.number(G.field(damage, "_amount")));
                 var now = haxe.Timer.stamp();
@@ -143,16 +140,7 @@ class ComixMod {
                 if (same) return result;
                 var s2d = G.field(app, "s2d");
                 // it follows the damage numbers' layer, a widget of which stands at the target
-                var s3d = G.field(app, "s3d");
-                var camera = G.field(s3d, "camera");
-                var width = G.number(G.field(s2d, "width")), height = G.number(G.field(s2d, "height"));
-                var screen = G.call("h3d.Camera", "project", camera, [G.number(G.field(position, "x")), G.number(G.field(position, "y")),
-                    G.number(G.field(position, "z")), width, height, false, null]);
-                trace("[comix-mod] crit pos=" + Std.string(position) + " screen=" + G.number(G.field(screen, "x")) + "," + G.number(G.field(screen, "y"))
-                    + " s2d=" + width + "x" + height + " widget abs=" + G.field(result, "absX") + "," + G.field(result, "absY")
-                    + " counter abs=" + G.field(counter, "absX") + "," + G.field(counter, "absY") + " scale=" + G.field(counter, "matA")
-                    + " scene=" + (G.call("h2d.Object", "getScene", result) == s2d));
-                crit.show(s2d, position, result, scale(s2d));
+                crit.show(s2d, result, scale(s2d));
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
@@ -166,7 +154,6 @@ class ComixMod {
     static function beforeGameAppDispose(instance:Dynamic):HlxPrefixResult<Void> {
         bubbles.clear();
         crit.clear();
-        outlines.clear();
         app = null;
         return Continue;
     }
