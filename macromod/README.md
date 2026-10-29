@@ -14,7 +14,7 @@ For manual installation:
 
 - **Three independent macros:** Each macro has its own name, activation key, mode and up to ten steps. All three can run at the same time.
 - **Skills picked from a panel:** Click *Choose* under a step and pick the skill from a panel of your action-bar icons (weapon skills and class skills). The step shows the skill's name in your client's language; the small red X next to it clears the step.
-- **Steps with delays:** Every step is a skill plus the delay (60-5000 ms) before the next step. Empty steps are skipped. Skills are used the same way as pressing their key: the next step starts after its delay, once the previous skill has been used and finished casting. Skills still on cooldown are skipped. Mount, dash and block are not offered.
+- **Steps with delays:** Every step is a skill plus the delay (60-5000 ms) before the next step. Empty steps are skipped. Skills are used the same way as pressing their key: the next step starts after its delay, once the previous skill has been used and finished casting. Skills still on cooldown are skipped. Mount, the dash key and block are not offered (a rogue's shadow step and similar class skills are).
 - **AoE skills:** Ground-aimed skills are activated twice (aim, then confirm at the mouse), or, with *AoE skills aim at the nearest enemy* on, land straight on the nearest enemy within the skill's range.
 - **Press (Toggle) or Hold:** In Toggle mode press the activation key to start the macro and press it again to stop. In Hold mode the macro runs only while the key is held down.
 - **Active only in combat (optional):** With this setting on, the activation key still starts and stops a macro at any time, but a started macro plays only while your character is in combat. When the fight ends it waits (it is not stopped), and in the next fight it plays again from its first step.
@@ -48,6 +48,7 @@ For manual installation:
 
 #### 1.3.1
 
+- **Rogue skills:** class skills that move the hero (shadow step, leap from the shadow) were treated as the dash and hidden from the skill picker; they are offered now.
 - **Per character:** macros and rotations are saved separately for every character; a macro made on one character does not appear on another. The first character to log in takes over the macros and rotations saved before.
 
 #### 1.3.0
@@ -65,7 +66,7 @@ For manual installation:
 #### 1.2.1
 
 - **Steps are skills, not keys:** each step uses a skill instead of simulating a key press. Skills are requested through Farever's own skill input, so the game handles auto-target, checks and its short request queue exactly as for a real key press.
-- **Skill picker:** the new *Choose* button under every step opens a panel with the icons of your action-bar skills (weapon skills on the first row, class skills on the second). Hover an icon for the skill's name; click outside the panel, *Cancel* or Esc to close it. Mount, dash and block are not offered.
+- **Skill picker:** the new *Choose* button under every step opens a panel with the icons of your action-bar skills (weapon skills on the first row, class skills on the second). Hover an icon for the skill's name; click outside the panel, *Cancel* or Esc to close it. Mount, the dash key and block are not offered (a rogue's shadow step and similar class skills are).
 - **Skill names in your language:** a step shows the skill's name in the client's language. Steps saved by older versions as skill ids are switched to names automatically.
 - **Red X for steps:** a small red X next to every step's skill name clears the step.
 - **AoE skills:** ground-aimed skills are activated twice (aim, then confirm at the mouse position). With *AoE skills aim at the nearest enemy* on, they land straight on the nearest enemy (the same target a normal skill picks), within the skill's range.

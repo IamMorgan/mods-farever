@@ -70,12 +70,11 @@ class HotbarSkills {
         return {kind: kind != "" ? kind : id, id: id, name: displayName(skill)};
     }
 
-    /** Mount, dash and block are movement/defence keys, not rotation skills: never offered. */
+    /** Mount, the dash key and block are not rotation skills: never offered (class skills that move the hero, like a rogue's shadow step, are). */
     static function isExcluded(skill:Dynamic, input:String):Bool {
         if (input == "Mount" || input == "Dash") return true;
         if (G.isA(skill, "st.skill.Mount") || G.isA(skill, "st.skill.Block")) return true;
         try {
-            if (G.call("st.skill.BaseSkill", "isDash", skill) == true) return true;
             if (G.call("st.skill.BaseSkill", "isBlock", skill) == true) return true;
         } catch (_:Dynamic) {}
         return false;
