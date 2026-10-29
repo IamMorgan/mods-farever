@@ -87,8 +87,16 @@ class ComixMod {
             if (G.field(message, "notify") != null) return;
             var text = G.text(G.field(message, "text"));
             var sender = G.field(message, "sender");
-            if (text == "" || sender == null) return;
-            bubbles.say(G.text(G.field(sender, "uid")), G.field(sender, "hero"), text);
+            if (text == "") return;
+            var hero = sender == null ? null : G.field(sender, "hero");
+            var channel = G.field(message, "channel");
+            var spot:Dynamic = null;
+            // a local message carries the place it was said at
+            if (Type.enumConstructor(channel) == "Local") spot = Type.enumParameters(channel)[0];
+            if (hero == null && spot == null) return;
+            var uid = sender == null ? "" : G.text(G.field(sender, "uid"));
+            if (uid == "" && spot != null) uid = Math.round(G.number(G.field(spot, "x")) / 2) + "," + Math.round(G.number(G.field(spot, "y")) / 2);
+            bubbles.say(uid, hero, spot, text);
         } catch (error:Dynamic) report("chat", error);
     }
 
@@ -97,12 +105,13 @@ class ComixMod {
         if (!config.enabled || !config.damageEnabled || app == null || damage == null || result == null) return result;
         try {
             var counter = G.field(result, "counter");
-            Fonts.remember(G.field(counter, "font"));
             if (G.call("st.skill.DamageResult", "get_critical", damage) == true) {
                 // The critical hit is drawn by the comic burst instead of the native number.
-                var origin = G.call("h2d.Object", "localToGlobal", result, [null]);
+                // `position` is a point of the world: the burst goes to the right of where it lands on the screen
                 var s2d = G.field(app, "s2d");
-                crit.show(s2d, G.number(G.field(origin, "x")), G.number(G.field(origin, "y")),
+                var spot = G.call("h3d.Camera", "project", G.field(G.field(app, "s3d"), "camera"), [G.number(G.field(position, "x")),
+                    G.number(G.field(position, "y")), G.number(G.field(position, "z")), G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
+                crit.show(s2d, G.number(G.field(spot, "x")), G.number(G.field(spot, "y")),
                     Math.round(G.number(G.field(damage, "_amount"))), scale(s2d));
                 G.set(result, "visible", false);
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {

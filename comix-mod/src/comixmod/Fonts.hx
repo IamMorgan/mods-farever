@@ -2,13 +2,10 @@ package comixmod;
 
 import comixmod.GameAccess as G;
 
-/** The font of the effects: the game's own (taken from a damage number), else Heaps' default one. */
+/** The font of the effects: Heaps' bitmap default (the game's own fonts are distance fields that plain text cannot draw). */
 class Fonts {
     static var known:Dynamic;
 
-    public static function remember(font:Dynamic):Void {
-        if (font != null) known = font;
-    }
 
     public static function get():Dynamic {
         if (known != null) return known;
