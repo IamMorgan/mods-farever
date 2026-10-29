@@ -2,18 +2,18 @@ package comixmod;
 
 import comixmod.GameAccess as G;
 
-private typedef Bubble = {box:Dynamic, hero:Dynamic, left:Float};
+private typedef Bubble = {box:Dynamic, hero:Dynamic, spot:Dynamic, left:Float};
 
 /** Speech bubbles above the characters that wrote in the chat: one per character, a new message replaces the old one. */
 class Bubbles {
     static inline var HEAD = 2.2; // world units above the character's feet
     var bubbles = new Map<String, Bubble>();
-    var pending:Array<{uid:String, hero:Dynamic, text:String}> = [];
+    var pending:Array<{uid:String, hero:Dynamic, spot:Dynamic, text:String}> = [];
 
     public function new() {}
 
-    public function say(uid:String, hero:Dynamic, text:String):Void {
-        if (hero != null) pending.push({uid: uid, hero: hero, text: text});
+    public function say(uid:String, hero:Dynamic, spot:Dynamic, text:String):Void {
+        pending.push({uid: uid, hero: hero, spot: spot, text: text});
     }
 
     public function update(s2d:Dynamic, s3d:Dynamic, dt:Float, on:Bool, sc:Float):Void {
@@ -23,7 +23,7 @@ class Bubbles {
         }
         for (p in pending) {
             drop(p.uid);
-            bubbles.set(p.uid, {box: build(s2d, p.text, sc), hero: p.hero, left: Math.min(8, 3 + p.text.length * 0.06)});
+            bubbles.set(p.uid, {box: build(s2d, p.text, sc), hero: p.hero, spot: p.spot, left: Math.min(8, 3 + p.text.length * 0.06)});
         }
         pending = [];
         var camera = G.field(s3d, "camera");
@@ -31,12 +31,13 @@ class Bubbles {
         for (uid in [for (k in bubbles.keys()) k]) {
             var b = bubbles.get(uid);
             b.left -= dt;
-            if (b.left <= 0 || G.field(b.hero, "removed") == true) {
+            if (b.left <= 0 || (b.hero != null && G.field(b.hero, "removed") == true)) {
                 drop(uid);
                 continue;
             }
-            var point = G.call("h3d.Camera", "project", camera, [G.number(G.field(b.hero, "x")), G.number(G.field(b.hero, "y")),
-                G.number(G.field(b.hero, "z")) + HEAD, width, height, false, null]);
+            var at = b.hero != null ? b.hero : b.spot;
+            var point = G.call("h3d.Camera", "project", camera, [G.number(G.field(at, "x")), G.number(G.field(at, "y")),
+                G.number(G.field(at, "z")) + HEAD, width, height, false, null]);
             G.set(b.box, "x", G.number(G.field(point, "x")));
             G.set(b.box, "y", G.number(G.field(point, "y")));
         }
