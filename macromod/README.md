@@ -46,6 +46,10 @@ For manual installation:
 
 ### Changelog
 
+#### 1.3.1
+
+- **Per character:** macros and rotations are saved separately for every character; a macro made on one character does not appear on another. The first character to log in takes over the macros and rotations saved before.
+
 #### 1.3.0
 
 - **Rotations:** a new window (button *Rotations* in *General*) for skill rotations. Each rotation is ten cells; its skills are used in turn, each as soon as it is ready (no delays), and the next skill waits for a skill that is on cooldown. *Repeat* loops the rotation, otherwise it plays once. Own activation key (one rotation per key) and press type (Toggle / Hold) per rotation. The window is drawn by the mod itself and follows the client's language (English or Russian). Macros and rotations are saved per character: `hlx/config/macromod/macros_<uid>_<name>.json` and `rotations_<uid>_<name>.json` (the first character to log in takes over the older shared data).
