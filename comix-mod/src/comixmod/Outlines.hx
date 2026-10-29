@@ -11,12 +11,18 @@ class Outlines {
 
     public function new() {}
 
+    /** The game's panels are flows that lay out their children: a child of ours must stay out of that layout, or the reflow never ends. */
+    public static function pin(parent:Dynamic, child:Dynamic):Void {
+        try G.set(G.call("h2d.Flow", "getProperties", parent, [child]), "isAbsolute", true) catch (_:Dynamic) {}
+    }
+
     public function add(widget:Dynamic, counter:Dynamic):Void {
         var copies = [];
         var font = G.field(counter, "font"), value = G.text(G.field(counter, "text"));
         for (d in [[-1, -1], [1, -1], [-1, 1], [1, 1], [-1, 0], [1, 0], [0, -1], [0, 1]]) {
             var t = G.create("h2d.Text", [font, widget]);
             G.call("h2d.Object", "addChildAt", widget, [t, 0]);
+            pin(widget, t);
             G.call("h2d.Text", "set_text", t, [value]);
             G.call("h2d.Text", "set_textColor", t, [0xFFFFFF]);
             copies.push(t);
