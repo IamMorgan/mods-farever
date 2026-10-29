@@ -34,9 +34,7 @@ class CritBurst {
     public function show(s2d:Dynamic, target:Dynamic, sc:Float):Void {
         clear();
         var tile = tile(NAMES[Std.random(NAMES.length)]);
-        var box = G.create("h2d.Object", [null]);
-        // the scene's lowest layer, so the damage numbers stay above it
-        G.call("h2d.Layers", "add", s2d, [box, 0]);
+        var box = G.create("h2d.Object", [s2d]);
         var picture = G.create("h2d.Bitmap", [tile, box]);
         var tw = G.number(G.field(tile, "width")), th = G.number(G.field(tile, "height"));
         var k = SIZE * sc / Math.max(tw, th);
