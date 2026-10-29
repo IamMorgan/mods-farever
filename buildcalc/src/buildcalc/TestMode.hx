@@ -197,6 +197,7 @@ class TestMode {
         return {axes: e == null ? null : e.axes, dps: e == null ? 0 : e.dps, selfHeal: e == null ? 0 : e.selfHeal, allyHeal: e == null ? 0 : e.allyHeal,
             items: items, talents: [for (id => r in b.talents) if (r > 0) {id: id, rank: r}],
             skills: [for (id in b.skills) {id: id, runes: b.runes.exists(id) ? b.runes.get(id) : []}], arsenal: b.arsenal,
+            signature: [for (id => r in b.runes) if (b.skills.indexOf(id) < 0) {id: id, runes: r}],
             weaponSkills: e == null ? null : [for (s => ids in e.weaponSkills) {slot: s, skills: ids}],
             perSkill: e == null ? null : [for (id => o in e.perSkill) {id: id, dmg: o.dmg, selfHeal: o.selfHeal, allyHeal: o.allyHeal}]};
     }

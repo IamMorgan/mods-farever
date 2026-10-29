@@ -354,7 +354,8 @@ class Model {
             var d = SkillData.get(id);
             if (d != null) add({def: d, rank: heroSkillRank(d), runes: b.runes.exists(id) ? b.runes.get(id) : [], kind: "class", item: null, slot: -1});
         }
-        for (f in fixed) add(f);
+        // the signature skill's runes are the build's (when it has chosen them), the others stay the hero's
+        for (f in fixed) add(f.def.type == "SignatureSkill" && b.runes.exists(f.def.id) ? {def: f.def, rank: f.rank, runes: b.runes.get(f.def.id), kind: f.kind, item: f.item, slot: f.slot} : f);
         return out;
     }
 

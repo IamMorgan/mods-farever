@@ -139,7 +139,7 @@ class ComixMod {
                 lastCritAt = now;
                 if (same) return result;
                 var s2d = G.field(app, "s2d");
-                crit.show(G.field(result, "parent"), position, scale(s2d));
+                crit.show(s2d, position, scale(s2d));
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);

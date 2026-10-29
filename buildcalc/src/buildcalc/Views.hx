@@ -236,6 +236,28 @@ class Views {
                 icon(col, G.field(rune, "gfx"), 22, changed ? FRAME_NEW : (on ? FRAME_ON : FRAME), on ? 1.0 : 0.4, null, runeText(sk, rune, hero));
             }
         }
+        // the signature skill (the priest's Judgment) is fixed, its runes are the calculator's choice: shown after the class skills
+        if (result != null || shown.mine) {
+            var list = G.field(hero, "skills");
+            for (i in 0...G.len(list)) {
+                var d = SkillData.get(G.str(G.field(G.field(G.at(list, i), "inf"), "id")));
+                if (d == null || d.type != "SignatureSkill" || d.masteries.length == 0) continue;
+                var sk = GameData.skill(d.id);
+                if (sk == null || G.field(sk, "gfx") == null) continue;
+                var masteries = G.field(sk, "mastery");
+                var mine = result != null && result.build.runes.exists(d.id) ? result.build.runes.get(d.id) : GameData.skillMasteries(d.inf, active);
+                var col = Ui.flow(row, true, 3);
+                G.call("h2d.Flow", "set_horizontalAlign", [col, middle()]);
+                icon(col, G.field(sk, "gfx"), 30, FRAME_ON, 1.0, skillTip(sk, hero, 1, null, mine));
+                for (m in 0...G.len(masteries)) {
+                    var rune = G.at(masteries, m);
+                    var rid = G.str(G.field(rune, "id"));
+                    var on = mine.indexOf(rid) >= 0;
+                    var changed = !shown.mine && on && active.indexOf(rid) < 0;
+                    icon(col, G.field(rune, "gfx"), 22, changed ? FRAME_NEW : (on ? FRAME_ON : FRAME), on ? 1.0 : 0.4, null, runeText(sk, rune, hero));
+                }
+            }
+        }
         DebugLog.line("skills: shown " + shown.skills.join(",") + (shown.mine ? " (the hero's)" : ""));
         DebugLog.guard("weapon skills", () -> weaponSkills(outer, hero, font));
     }
