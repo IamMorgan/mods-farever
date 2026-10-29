@@ -105,6 +105,7 @@ class ComixMod {
         if (!config.enabled || !config.damageEnabled || app == null || damage == null || result == null) return result;
         try {
             var counter = G.field(result, "counter");
+            Fonts.remember(G.field(counter, "font"));
             if (G.call("st.skill.DamageResult", "get_critical", damage) == true) {
                 // The critical hit is drawn by the comic burst instead of the native number.
                 // `position` is a point of the world: the burst goes to the right of where it lands on the screen
