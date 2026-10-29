@@ -55,6 +55,22 @@ class ComixMod {
         }
     }
 
+    static var nextConfigCheck = 0.0;
+
+    /** The settings window writes config.json while the game runs: take its values at once. */
+    static function reloadConfig():Void {
+        var now = haxe.Timer.stamp();
+        if (now < nextConfigCheck) return;
+        nextConfigCheck = now + 0.5;
+        var path = "hlx/config/" + HlxRuntime.moduleName() + "/config.json";
+        if (!sys.FileSystem.exists(path)) return;
+        var saved:Dynamic = haxe.Json.parse(sys.io.File.getContent(path));
+        if (saved.enabled != null) config.enabled = saved.enabled;
+        if (saved.bubbleEnabled != null) config.bubbleEnabled = saved.bubbleEnabled;
+        if (saved.damageEnabled != null) config.damageEnabled = saved.damageEnabled;
+        if (saved.sizePercent != null) config.sizePercent = Std.int(saved.sizePercent);
+    }
+
     static function report(where:String, error:Dynamic):Void {
         if (reported.exists(where)) return;
         reported.set(where, true);
@@ -72,6 +88,7 @@ class ComixMod {
         app = instance;
         var s2d = G.field(instance, "s2d"), s3d = G.field(instance, "s3d");
         try localizeSettings() catch (error:Dynamic) report("language", error);
+        try reloadConfig() catch (error:Dynamic) report("config", error);
         try {
             var bubblesOn = config.enabled && config.bubbleEnabled;
             bubbles.update(s2d, s3d, dt, bubblesOn, scale(s2d));
@@ -109,10 +126,12 @@ class ComixMod {
             var counter = G.field(result, "counter");
             Fonts.remember(G.field(counter, "font"));
             if (G.call("st.skill.DamageResult", "get_critical", damage) == true) {
-                // one critical hit may reach this hook more than once: the burst stays where it was placed
+                // the number itself stays the game's own, red with a white outline
+                G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
+                G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
+                try G.set(counter, "filter", G.create("h2d.filter.Outline", [2, 0xFFFFFF])) catch (error:Dynamic) report("outline", error);
+                // one burst at a time: a crit that comes while it is on the screen gets none
                 if (!crit.canShow()) return result;
-                // A critical hit keeps the native number (red) and gets a comic burst beside it.
-                // `position` is a point of the world: the burst goes to the right of where it lands on the screen
                 var s2d = G.field(app, "s2d");
                 var spot = G.call("h3d.Camera", "project", G.field(G.field(app, "s3d"), "camera"), [G.number(G.field(position, "x")),
                     G.number(G.field(position, "y")), G.number(G.field(position, "z")), G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
@@ -121,9 +140,6 @@ class ComixMod {
                 var ma = G.number(G.field(layer, "matA"), 1), md = G.number(G.field(layer, "matD"), 1);
                 var at = {x: (G.number(G.field(spot, "x")) - G.number(G.field(layer, "absX"))) / ma, y: (G.number(G.field(spot, "y")) - G.number(G.field(layer, "absY"))) / md};
                 crit.show(layer, result, at.x, at.y, scale(s2d) / ma);
-                // the number itself stays the game's own, only red
-                G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
-                G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
