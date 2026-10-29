@@ -1,0 +1,23 @@
+{
+  "configs": [
+    {
+      "type": "title",
+      "label": "Comix"
+    },
+    {
+      "type": "checkbox",
+      "label": "Enable the mod",
+      "key": "enabled"
+    },
+    {
+      "type": "checkbox",
+      "label": "Enable speech bubbles (chat messages above the character's head)",
+      "key": "bubbleEnabled"
+    },
+    {
+      "type": "checkbox",
+      "label": "Enable damage effects (blue magic numbers, comic burst on a critical hit)",
+      "key": "damageEnabled"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+-lib hlx-runtime
+-D hl-ver=1.16.0
+-cp src
+-main comixmod.ComixMod
+-dce full
+-hl build/comix-mod/comix-mod.hl
