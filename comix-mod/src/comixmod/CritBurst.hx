@@ -32,10 +32,15 @@ class CritBurst {
     var half = 0.0;
     var sc = 1.0;
     var lastAngle = -10.0;
+    var shownAt = -10.0;
+
+    /** False for a second call right after a burst was made: that is the same hit. */
+    public function canShow():Bool return haxe.Timer.stamp() - shownAt > 0.3;
 
     /** The burst stands at a random side of the damage number's `widget` (it is placed once the game has put the widget at the target), never at the side of the previous one. */
     public function show(parent:Dynamic, widget:Dynamic, x:Float, y:Float, sc:Float):Void {
         clear();
+        shownAt = haxe.Timer.stamp();
         var tile = tile(NAMES[Std.random(NAMES.length)]);
         var box = G.create("h2d.Object", [parent]);
         G.set(box, "visible", false);
