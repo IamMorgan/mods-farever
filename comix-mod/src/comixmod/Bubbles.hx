@@ -43,13 +43,13 @@ class Bubbles {
         }
     }
 
-    static inline var MAX_LINES = 4;
+    static inline var MAX_LINES = 3;
 
     /** The bubble's origin is the tip of its tail; the cloud stands above it. */
     static function build(s2d:Dynamic, text:String, sc:Float):Dynamic {
         var box = G.create("h2d.Object", [s2d]);
         var shapes = G.create("h2d.Graphics", [box]);
-        var label = Fonts.text(box, text, 0x000000, sc, 220 * sc);
+        var label = Fonts.text(box, text, 0x000000, sc, 160 * sc);
         // too long: cut the end off and put "..." there
         G.call("h2d.Text", "set_text", label, ["A"]);
         var maxHeight = Fonts.height(label) * MAX_LINES + 1;

@@ -31,9 +31,9 @@ class CritBurst {
         var style = STYLES[Std.random(STYLES.length)];
         var box = G.create("h2d.Object", [parent]);
         var shapes = G.create("h2d.Graphics", [box]);
-        var shadow = 2 * sc;
-        var wordShadow = Fonts.text(box, style.word, 0x000000, 1.2 * sc), word = Fonts.text(box, style.word, style.ink, 1.2 * sc);
-        var valueShadow = Fonts.text(box, Std.string(amount), 0x000000, 1.9 * sc), value = Fonts.text(box, Std.string(amount), RED, 1.9 * sc);
+        var word = Fonts.text(box, style.word, style.ink, 1.2 * sc), value = Fonts.text(box, Std.string(amount), RED, 1.9 * sc);
+        // the word is bold: the same word again, a pixel to each side
+        var bold = [for (d in [[-1, 0], [1, 0], [0, -1], [0, 1]]) Fonts.text(box, style.word, style.ink, 1.2 * sc)];
         var ww = Fonts.width(word), wh = Fonts.height(word), vw = Fonts.width(value), vh = Fonts.height(value);
         var radius = Math.max(60 * sc, Math.max(ww, vw) * 0.75 + 24 * sc);
         var turn = Math.random() * Math.PI;
@@ -44,20 +44,20 @@ class CritBurst {
             style.inner, 0x000000, line * 0.6);
         // the word sits above the value
         var top = -(wh + vh) / 2;
-        place(word, wordShadow, -ww / 2, top, shadow);
-        place(value, valueShadow, -vw / 2, top + wh, shadow);
-        G.set(box, "x", x + 90 * sc);
+        G.set(word, "x", -ww / 2);
+        G.set(word, "y", top);
+        var offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+        for (k in 0...4) {
+            G.set(bold[k], "x", -ww / 2 + offsets[k][0] * sc);
+            G.set(bold[k], "y", top + offsets[k][1] * sc);
+        }
+        G.set(value, "x", -vw / 2);
+        G.set(value, "y", top + wh);
+        G.set(box, "x", x + radius + 40 * sc);
         G.set(box, "y", y);
         G.set(box, "rotation", (Math.random() - 0.5) * 0.3);
         burst = box;
         age = 0;
-    }
-
-    static function place(front:Dynamic, back:Dynamic, x:Float, y:Float, shadow:Float):Void {
-        G.set(back, "x", x + shadow);
-        G.set(back, "y", y + shadow);
-        G.set(front, "x", x);
-        G.set(front, "y", y);
     }
 
     public function update(dt:Float, on:Bool):Void {
