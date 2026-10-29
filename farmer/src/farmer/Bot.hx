@@ -41,6 +41,8 @@ class Bot {
     var targetSince = 0.0;
     var lockedFoe:Dynamic = null;
     var blacklist:Map<String, Float> = new Map();
+    /** Monsters the way-finder found no way to: not chosen for a while, not blacklisted (the hero may come to them later). */
+    var skipped:Map<String, Float> = new Map();
     /** Places no way led to (a plateau): the monsters standing there are not chosen for a while, one after another would each cost a try. */
     var deadAreas:Array<{x:Float, y:Float, until:Float}> = [];
     var lastInteract = 0.0;
@@ -1013,7 +1015,12 @@ class Bot {
             blacklist.set(key(target), now + 120);
             return false;
         }
-        if (nav.gaveUp && !nav.walkingToObelisk() && targetKind == "mob") nav.gaveUp = false; // (a monster is never given up: the way-finder tries again)
+        if (nav.gaveUp && !nav.walkingToObelisk() && targetKind == "mob") { // no way to the monster now: the next nearest is taken, this one stays a candidate for later
+            Log.t("bot", "no way to the target mob: the next nearest one is taken, this one is skipped for 2 min");
+            skipped.set(key(target), now + 120);
+            nav.gaveUp = false;
+            return false;
+        }
         if (nav.gaveUp && !nav.walkingToObelisk()) {
             var rise = G.number(G.field(target, "posz")) - G.number(G.field(hero, "posz"));
             Log.w("target " + targetKind + " given up by the way-finder (rise " + Math.round(rise) + " m, " + Math.round(dNow) + " m away): blacklisted for 2 min");
@@ -1183,6 +1190,7 @@ class Bot {
             if (Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) < 200) rawNear++;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             if (blacklisted(e, now) || isUntouchable(e, now)) { drop("blacklist"); continue; }
+            if (skipped.exists(curKey) && now < skipped.get(curKey)) { drop("no way"); continue; }
             if (unit != null && Catalog.isBoss(unit)) { drop("boss"); continue; }
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) { drop("water"); continue; } // in the water
             var foeLevel = G.integer(G.field(e, "_level"));
