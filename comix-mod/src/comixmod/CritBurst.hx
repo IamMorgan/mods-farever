@@ -49,7 +49,9 @@ class CritBurst {
         var radius = Math.max(tw, th) * k + 60 * sc;
         dx = Math.cos(angle) * radius;
         dy = Math.sin(angle) * radius;
-        G.set(box, "visible", false);
+        var origin = G.call("h2d.Object", "localToGlobal", widget, [null]);
+        G.set(box, "x", G.number(G.field(origin, "x")) + dx);
+        G.set(box, "y", G.number(G.field(origin, "y")) + dy);
         source = widget;
         burst = box;
         age = 0;
@@ -60,11 +62,10 @@ class CritBurst {
         age += dt;
         if (!on || age >= LIFETIME) return clear();
         // the burst follows the damage numbers' widget, which stands at the target; after the widget is gone it stays where it was
-        var wx = G.number(G.field(source, "absX")), wy = G.number(G.field(source, "absY"));
-        if (G.field(source, "parent") != null && (wx != 0 || wy != 0)) {
-            G.set(burst, "visible", true);
-            G.set(burst, "x", wx + dx);
-            G.set(burst, "y", wy + dy);
+        if (G.field(source, "parent") != null) {
+            var origin = G.call("h2d.Object", "localToGlobal", source, [null]);
+            G.set(burst, "x", G.number(G.field(origin, "x")) + dx);
+            G.set(burst, "y", G.number(G.field(origin, "y")) + dy);
         }
         G.set(burst, "alpha", Math.min(1, (LIFETIME - age) / FADE));
     }
