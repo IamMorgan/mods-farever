@@ -11,7 +11,9 @@ class CritBurst {
 
     var tiles = new Map<String, Dynamic>();
     var burst:Dynamic;
-    var source:Dynamic;
+    var wx = 0.0;
+    var wy = 0.0;
+    var wz = 0.0;
     var dx = 0.0;
     var dy = 0.0;
     var age = 0.0;
@@ -28,10 +30,8 @@ class CritBurst {
         return tiles.get(name);
     }
 
-    var lastAngle = -10.0;
-
-    /** The burst lives on the scene (not in the game's panels) and follows `target`, the damage numbers' layer whose origin is the target. */
-    public function show(s2d:Dynamic, widget:Dynamic, sc:Float):Void {
+    /** The burst lives on the scene and stays at a fixed world point (the hit position); `dx`, `dy` is its random offset on the screen. */
+    public function show(s2d:Dynamic, position:Dynamic, sc:Float):Void {
         clear();
         var tile = tile(NAMES[Std.random(NAMES.length)]);
         var box = G.create("h2d.Object", [s2d]);
@@ -42,31 +42,29 @@ class CritBurst {
         G.set(picture, "x", -tw * k / 2);
         G.set(picture, "y", -th * k / 2);
         G.set(box, "rotation", (Math.random() - 0.5) * 0.3);
-        // a full burst size plus a margin away from the target, so it does not cover the numbers around it
+        // random place around the target: from half the picture's width to two widths away from its centre
+        var width = Math.max(tw, th) * k;
         var angle = Math.random() * Math.PI * 2;
-        while (Math.abs(Math.atan2(Math.sin(angle - lastAngle), Math.cos(angle - lastAngle))) < 1.2) angle = Math.random() * Math.PI * 2;
-        lastAngle = angle;
-        var radius = Math.max(tw, th) * k + 60 * sc;
+        var radius = width * (0.5 + Math.random() * 1.5);
         dx = Math.cos(angle) * radius;
         dy = Math.sin(angle) * radius;
-        var origin = G.call("h2d.Object", "localToGlobal", widget, [null]);
-        G.set(box, "x", G.number(G.field(origin, "x")) + dx);
-        G.set(box, "y", G.number(G.field(origin, "y")) + dy);
-        source = widget;
+        wx = G.number(G.field(position, "x"));
+        wy = G.number(G.field(position, "y"));
+        wz = G.number(G.field(position, "z"));
+        G.set(box, "visible", false);
         burst = box;
         age = 0;
     }
 
-    public function update(dt:Float, on:Bool):Void {
+    public function update(s2d:Dynamic, s3d:Dynamic, dt:Float, on:Bool):Void {
         if (burst == null) return;
         age += dt;
         if (!on || age >= LIFETIME) return clear();
-        // the burst follows the damage numbers' widget, which stands at the target; after the widget is gone it stays where it was
-        if (G.field(source, "parent") != null) {
-            var origin = G.call("h2d.Object", "localToGlobal", source, [null]);
-            G.set(burst, "x", G.number(G.field(origin, "x")) + dx);
-            G.set(burst, "y", G.number(G.field(origin, "y")) + dy);
-        }
+        var point = G.call("h3d.Camera", "project", G.field(s3d, "camera"), [wx, wy, wz,
+            G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
+        G.set(burst, "x", G.number(G.field(point, "x")) + dx);
+        G.set(burst, "y", G.number(G.field(point, "y")) + dy);
+        G.set(burst, "visible", true);
         G.set(burst, "alpha", Math.min(1, (LIFETIME - age) / FADE));
     }
 
