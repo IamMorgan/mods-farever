@@ -1016,8 +1016,8 @@ class Bot {
             return false;
         }
         if (nav.gaveUp && !nav.walkingToObelisk() && targetKind == "mob") { // no way to the monster now: the next nearest is taken, this one stays a candidate for later
-            Log.t("bot", "no way to the target mob: the next nearest one is taken, this one is skipped for 2 min");
-            skipped.set(key(target), now + 120);
+            Log.t("bot", "no way to the target mob: the next nearest one is taken, this one is skipped for 10 min");
+            skipped.set(key(target), now + 600);
             nav.gaveUp = false;
             return false;
         }
