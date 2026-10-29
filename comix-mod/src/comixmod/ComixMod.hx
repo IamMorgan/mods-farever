@@ -85,6 +85,11 @@ class ComixMod {
         return Math.max(0.5, height / 1080) * Math.max(30, Math.min(200, config.sizePercent)) / 100;
     }
 
+    /** The speech bubbles ignore the size setting: only the game's resolution scales them. */
+    static function bubbleScale(s2d:Dynamic):Float {
+        return Math.max(0.5, G.number(G.field(s2d, "height"), 1080) / 1080);
+    }
+
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
         app = instance;
@@ -93,7 +98,7 @@ class ComixMod {
         try reloadConfig() catch (error:Dynamic) report("config", error);
         try {
             var bubblesOn = config.enabled && config.bubbleEnabled;
-            bubbles.update(s2d, s3d, dt, bubblesOn, scale(s2d));
+            bubbles.update(s2d, s3d, dt, bubblesOn, bubbleScale(s2d));
             crit.update(s2d, s3d, dt, config.enabled && config.damageEnabled);
         } catch (error:Dynamic) report("update", error);
         return Continue;
