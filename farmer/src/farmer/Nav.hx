@@ -200,6 +200,9 @@ class Nav {
     var cliffOverride = false;
     // circling / dithering detector: the hero's place once a second
     var trail:Array<{t:Float, x:Float, y:Float}> = [];
+    /** Places the hero has walked (one every 2 m, kept across goals): the way back out of a spot the planner finds no way from. */
+    var crumbs:Array<{x:Float, y:Float}> = [];
+    var retreating = false;
     var circleStrikes = 0;
     var lastCircleAt = -100.0;
     /** How often the direction flipped by more than 100 degrees in the last seconds (a jitter). */
@@ -221,6 +224,7 @@ class Nav {
             this.arrive = arrive;
             return;
         }
+        retreating = false;
         cliffRetried = false;
         cliffOverride = false;
         wadeGoal = false;
@@ -304,7 +308,19 @@ class Nav {
         if (!active) return;
         var hx = G.number(G.field(hero, "posx")), hy = G.number(G.field(hero, "posy")), hz = G.number(G.field(hero, "posz"));
         if (distance(hero, tx, ty) <= arrive) { stop(); return; }
+        if (!airborne(hero) && (crumbs.length == 0 || Math.abs(crumbs[crumbs.length - 1].x - hx) + Math.abs(crumbs[crumbs.length - 1].y - hy) >= 2)) {
+            crumbs.push({x: hx, y: hy});
+            if (crumbs.length > 80) crumbs.shift();
+        }
         planning(hero, hx, hy, hz, now);
+        if (retreating && route != null && routeIndex >= route.length - 1) {
+            // back on ground the planner knows: this goal is given up, the bot takes another
+            retreating = false;
+            Log.t("nav", "retreat done: goal " + Math.round(tx) + "," + Math.round(ty) + " given up");
+            stop();
+            gaveUp = true;
+            return;
+        }
         if (lastCheck == 0) { lastCheck = now; lastX = hx; lastY = hy; return; }
         if (now - lastCheck < STUCK_CHECK) return;
         var moved = Math.sqrt((hx - lastX) * (hx - lastX) + (hy - lastY) * (hy - lastY));
@@ -542,12 +558,36 @@ class Nav {
             grid.state = 0;
         } else if (grid.state == 3) {
             grid.state = 0;
+            if (retreat(hx, hy)) return;
             route = null;
             planBlock = now + 1.5;
             NavGrid.addDeadEnd(hx, hy);
             if (distance(hero, tx, ty) > 6 && ++deadTries > 4) { stop(); gaveUp = true; }
             else needPlan = true;
         }
+    }
+
+    /** No way from the hero's own cell (a one-cell path): back along its own footsteps, 15 m or as far as they go. False when there is no trail to go back by. */
+    function retreat(hx:Float, hy:Float):Bool {
+        var back:Array<NavGrid.Waypoint> = [];
+        var i = crumbs.length - 1;
+        while (i >= 0) {
+            var c = crumbs[i--];
+            back.push({x: c.x, y: c.y, jump: false, fly: false});
+            if (Math.abs(c.x - hx) + Math.abs(c.y - hy) >= 15) break;
+        }
+        var far = back.length > 0 ? back[back.length - 1] : null;
+        if (far == null || Math.abs(far.x - hx) + Math.abs(far.y - hy) < 5) return false;
+        route = back;
+        routeShort = 0;
+        routeIndex = 0;
+        atEnd = false;
+        goalHeading = false;
+        aimFrom = -1;
+        jumpedFor = -1;
+        retreating = true;
+        Log.t("nav", "no way from this spot: back along the own footsteps (" + back.length + " points)");
+        return true;
     }
 
     /** A throw is over (the hero is on the ground again): on the ledge aimed at, or a miss (the landing is closed and the way planned again). */

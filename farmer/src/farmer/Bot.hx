@@ -1206,8 +1206,7 @@ class Bot {
             // beyond the reach map the way is a guess: such a monster is the hunting grounds' business (they walk the hero there), not a target
             if (reach != 1) { // (no map yet, or the monster is beyond it: the old rules by height)
                 var lift = G.number(G.field(e, "posz")) > hz && padRise >= dzFoe - 1;
-                
-                
+                if (G.number(G.field(e, "posz")) - hz > 40) { drop("high, no full way"); continue; } // (a floating island: the way there is by trampolines only)
             }
             if (underground(e)) { drop("underground"); continue; }
             var score = cost(e);
