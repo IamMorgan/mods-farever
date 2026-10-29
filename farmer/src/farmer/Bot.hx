@@ -1830,12 +1830,14 @@ class Bot {
         if (crowdStep(now)) return;
         var d = Nav.distance(hero, x, y);
         var dz = z - G.number(G.field(hero, "posz"));
-        var range = combatRange();
+        var body = G.number(G.field(target, "hitRadius"), 0) * Math.max(1.0, G.number(G.field(target, "scaleX"), 1.0)); // (a big foe's body keeps the hero farther than the basic attack reaches from its centre)
+        var range = combatRange() + body;
         // the fight is held inside a zone of LEASH metres around the spot where it began: a hero the dodge has carried out of it walks back in, a foe that
         // stands outside it is not chased (it is waited for inside; one that never comes in is let go after a few seconds)
         // (the zone belongs to the whole fight: a new foe inside it, e.g. an attacker the hero turns to, does not move its centre)
         if (fightKey != key(target)) {
             fightKey = key(target);
+            Log.t("fight", "foe body radius " + Math.round(body * 10) / 10 + " m: fight range " + Math.round(range * 10) / 10 + " m");
             leashSince = -1;
             if (!Math.isNaN(fightAx) && (now - lastFightAt > 20 || Nav.distance(target, fightAx, fightAy) > LEASH - 4)) { fightAx = Math.NaN; fightAy = Math.NaN; }
         }
