@@ -6,9 +6,9 @@ import comixmod.GameAccess as G;
 class CritBurst {
     static inline var LIFETIME = 2.0;
     static inline var FADE = 0.3;
-    static inline var WIDTH = 230.0; // px at 1080p
+    static inline var SIZE = 240.0; // the longer side, px at 1080p
     static inline var RED = 0xFF2A1A;
-    static final NAMES = ["crush", "wham", "snap", "smash", "boom", "crack", "bam", "grrr", "pow"];
+    static final NAMES = ["wham", "crush", "boom", "smack", "pow", "ooops", "crack", "wow", "kaboom", "poof", "bam"];
 
     var tiles = new Map<String, Dynamic>();
     var burst:Dynamic;
@@ -20,7 +20,7 @@ class CritBurst {
     function tile(name:String):Dynamic {
         if (!tiles.exists(name)) {
             var path = "hlx/mods/" + HlxRuntime.moduleName() + "/bursts/" + name + ".png";
-            var any = G.staticCall("hxd.res.Any", "fromBytes", [path, sys.io.File.getBytes(path)]);
+            var any = G.staticCall("hxd.res.Any", "fromBytes", [path, G.staticCall("sys.io.File", "getBytes", [path])]);
             tiles.set(name, G.call("hxd.res.Any", "toTile", any));
         }
         return tiles.get(name);
@@ -33,7 +33,7 @@ class CritBurst {
         var box = G.create("h2d.Object", [parent]);
         var picture = G.create("h2d.Bitmap", [tile, box]);
         var tw = G.number(G.field(tile, "width")), th = G.number(G.field(tile, "height"));
-        var k = WIDTH * sc / tw;
+        var k = SIZE * sc / Math.max(tw, th);
         G.call("h2d.Object", "setScale", picture, [k]);
         G.set(picture, "x", -tw * k / 2);
         G.set(picture, "y", -th * k / 2);
