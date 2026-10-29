@@ -144,6 +144,8 @@ class AutoDodge {
     static inline var SKILL_HOLD = 0.3;        // the hero's own skills wait this long after an attack was last coming
     static inline var GROUND_LOG_TIME = 20.0;
     static inline var AWAY_COST = 2.0;         // score: running straight into the danger instead of away from it
+    static inline var AXIS_COST = 6.0;         // score: running along an archer's line of fire instead of across it
+    static var shotAxes:Array<Float> = [];
     static inline var TURN_COST = 2.0;         // score: turning right around from the way just run
     static inline var KEEP_HEADING_TIME = 0.6;
     static inline var HEIGHT_BUDGET = 300;     // new surface heights read per think, at most
@@ -1363,7 +1365,9 @@ class AutoDodge {
         ensureMap(hx, hy, hz);
         var key = frame * 10 + relax;
         if (key != waysKey) { waysKey = key; straightWays = null; cornerWays = null; }
-        var away = DodgeMath.awayAngle(hx, hy, [for (t in threats) if (t.shot == null) {x: t.fromX, y: t.fromY}]);
+        var awaySources = [for (t in threats) if (t.shot == null) {x: t.fromX, y: t.fromY}];
+        var away = awaySources.length > 0 ? DodgeMath.awayAngle(hx, hy, awaySources) : Math.NaN;
+        shotAxes = [for (t in threats) if (t.shot != null) Math.atan2(t.shot.oy - hy, t.shot.ox - hx)];
         if (straightWays == null) straightWays = straightCandidates(hx, hy, hz, away);
         var best:Null<{spot:Spot, hits:Int}> = null;
         var start = {x: hx, y: hy};
@@ -1485,7 +1489,9 @@ class AutoDodge {
     /** Ties between equally open ways are broken by heading: away from the dangers rather than
         into them, and on the way just run rather than turning around (which only loses time). */
     static function headingCost(angle:Float, away:Float):Float {
-        var cost = AWAY_COST * (1 - Math.cos(angle - away)) / 2;
+        var cost = Math.isNaN(away) ? 0.0 : AWAY_COST * (1 - Math.cos(angle - away)) / 2;
+        // Along an archer's line of fire (towards or away from it) is no dodge and only widens the gap: sideways.
+        for (axis in shotAxes) cost += AXIS_COST * Math.abs(Math.cos(angle - axis));
         if (haxe.Timer.stamp() - lastRunAt < KEEP_HEADING_TIME) cost += TURN_COST * (1 - Math.cos(angle - lastRunAngle)) / 2;
         return cost;
     }
