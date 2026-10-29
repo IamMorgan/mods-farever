@@ -11,9 +11,8 @@ class CritBurst {
 
     var tiles = new Map<String, Dynamic>();
     var burst:Dynamic;
-    var wx = 0.0;
-    var wy = 0.0;
-    var wz = 0.0;
+    var source:Dynamic;
+    var placed = false;
     var dx = 0.0;
     var dy = 0.0;
     var age = 0.0;
@@ -30,7 +29,7 @@ class CritBurst {
         return tiles.get(name);
     }
 
-    /** The burst lives on the scene and stays at a fixed world point (the hit position); `dx`, `dy` is its random offset on the screen. */
+    /** The burst lives on the scene and stays at a damage number `position` (the game's text object); `dx`, `dy` is its random offset on the screen. */
     public function show(s2d:Dynamic, position:Dynamic, sc:Float):Void {
         clear();
         var tile = tile(NAMES[Std.random(NAMES.length)]);
@@ -48,23 +47,28 @@ class CritBurst {
         var radius = width * (0.5 + Math.random() * 1.5);
         dx = Math.cos(angle) * radius;
         dy = Math.sin(angle) * radius;
-        wx = G.number(G.field(position, "x"));
-        wy = G.number(G.field(position, "y"));
-        wz = G.number(G.field(position, "z"));
+        source = position;
+        placed = false;
         G.set(box, "visible", false);
         burst = box;
         age = 0;
     }
 
-    public function update(s2d:Dynamic, s3d:Dynamic, dt:Float, on:Bool):Void {
+    public function update(dt:Float, on:Bool):Void {
         if (burst == null) return;
         age += dt;
         if (!on || age >= LIFETIME) return clear();
-        var point = G.call("h3d.Camera", "project", G.field(s3d, "camera"), [wx, wy, wz,
-            G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
-        G.set(burst, "x", G.number(G.field(point, "x")) + dx);
-        G.set(burst, "y", G.number(G.field(point, "y")) + dy);
-        G.set(burst, "visible", true);
+        // it follows the damage number itself, which the game moves with the camera; once the number is gone it stays where it was
+        if (G.call("h2d.Object", "getScene", source) != null) {
+            var origin = G.call("h2d.Object", "localToGlobal", source, [null]);
+            var x = G.number(G.field(origin, "x")), y = G.number(G.field(origin, "y"));
+            if (x != 0 || y != 0) {
+                G.set(burst, "x", x + dx);
+                G.set(burst, "y", y + dy);
+                placed = true;
+            }
+        }
+        G.set(burst, "visible", placed);
         G.set(burst, "alpha", Math.min(1, (LIFETIME - age) / FADE));
     }
 
