@@ -16,7 +16,7 @@ class Fonts {
     /** A text object on `parent` that is `color`, scaled by `size`; the text is wrapped at `maxWidth` when it is above 0. */
     public static function text(parent:Dynamic, value:String, color:Int, size:Float, maxWidth:Float = 0):Dynamic {
         var t = G.create("h2d.Text", [get(), parent]);
-        if (maxWidth > 0) G.set(t, "maxWidth", maxWidth);
+                if (maxWidth > 0) G.call("h2d.Text", "set_maxWidth", t, [maxWidth / size]);
         G.call("h2d.Text", "set_text", t, [value]);
         G.call("h2d.Text", "set_textColor", t, [color]);
         G.call("h2d.Object", "setScale", t, [size]);
