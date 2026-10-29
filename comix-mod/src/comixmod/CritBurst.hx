@@ -11,6 +11,7 @@ class CritBurst {
 
     var tiles = new Map<String, Dynamic>();
     var burst:Dynamic;
+    var world:Dynamic;
     var dx = 0.0;
     var dy = 0.0;
     var age = 0.0;
@@ -30,7 +31,7 @@ class CritBurst {
     var lastAngle = -10.0;
 
     /** The burst lives on the scene (not in the game's panels) and follows `target`, the damage numbers' layer whose origin is the target. */
-    public function show(s2d:Dynamic, x:Float, y:Float, sc:Float):Void {
+    public function show(s2d:Dynamic, position:Dynamic, x:Float, y:Float, sc:Float):Void {
         clear();
         var tile = tile(NAMES[Std.random(NAMES.length)]);
         var box = G.create("h2d.Object", [s2d]);
@@ -50,14 +51,20 @@ class CritBurst {
         dy = Math.sin(angle) * radius;
         G.set(box, "x", x + dx);
         G.set(box, "y", y + dy);
+        world = position;
         burst = box;
         age = 0;
     }
 
-    public function update(dt:Float, on:Bool):Void {
+    public function update(dt:Float, on:Bool, s2d:Dynamic, s3d:Dynamic):Void {
         if (burst == null) return;
         age += dt;
         if (!on || age >= LIFETIME) return clear();
+        // the burst follows the target on the screen
+        var point = G.call("h3d.Camera", "project", G.field(s3d, "camera"), [G.number(G.field(world, "x")), G.number(G.field(world, "y")),
+            G.number(G.field(world, "z")), G.number(G.field(s2d, "width")), G.number(G.field(s2d, "height")), false, null]);
+        G.set(burst, "x", G.number(G.field(point, "x")) + dx);
+        G.set(burst, "y", G.number(G.field(point, "y")) + dy);
         G.set(burst, "alpha", Math.min(1, (LIFETIME - age) / FADE));
     }
 
