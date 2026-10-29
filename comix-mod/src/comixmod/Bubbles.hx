@@ -49,7 +49,8 @@ class Bubbles {
     static function build(s2d:Dynamic, text:String, sc:Float):Dynamic {
         var box = G.create("h2d.Object", [s2d]);
         var shapes = G.create("h2d.Graphics", [box]);
-        var label = Fonts.text(box, text, 0x000000, sc, 160 * sc);
+        var font = Fonts.forText(s2d, text);
+        var label = Fonts.text(box, text, 0x000000, sc * G.number(G.field(Fonts.get(), "size"), 1) / G.number(G.field(font, "size"), 1), 160 * sc, font);
         // too long: cut the end off and put "..." there
         G.call("h2d.Text", "set_text", label, ["A"]);
         var maxHeight = Fonts.height(label) * MAX_LINES + 1;
