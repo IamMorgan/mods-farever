@@ -42,10 +42,14 @@ class Outlines {
             if (o.frames++ < 4) trace("[comix-mod] outline abs=" + x + "," + y + " local=" + G.field(o.counter, "x") + "," + G.field(o.counter, "y")
                 + " widget abs=" + G.field(o.widget, "absX") + "," + G.field(o.widget, "absY") + " widget local=" + G.field(o.widget, "x") + "," + G.field(o.widget, "y")
                 + " vis=" + G.field(o.counter, "visible") + " alpha=" + G.field(o.counter, "alpha") + " text=" + G.field(o.counter, "text") + " parent=" + Type.getClassName(Type.getClass(G.field(o.widget, "parent"))));
+            var font = G.field(o.counter, "font"), value = G.text(G.field(o.counter, "text"));
             var shown = G.field(o.counter, "visible") != false && (x != 0 || y != 0);
             var i = 0;
             for (d in SHIFTS) {
                 var t = o.copies[i++];
+                // the game restyles its text after it is shown: the copy keeps the same font and text
+                if (G.field(t, "font") != font) G.call("h2d.Text", "set_font", t, [font]);
+                if (G.text(G.field(t, "text")) != value) G.call("h2d.Text", "set_text", t, [value]);
                 G.set(t, "x", x + d[0] * WIDTH);
                 G.set(t, "y", y + d[1] * WIDTH);
                 G.set(t, "scaleX", s);
