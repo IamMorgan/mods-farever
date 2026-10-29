@@ -31,6 +31,28 @@ class ComixMod {
         crit = new CritBurst();
     }
 
+    static var localizedLanguage = "";
+    static var nextLanguageCheck = 0.0;
+
+    /** Better Mod Settings re-reads configFormats.json whenever its window opens: write it in the client's language. */
+    static function localizeSettings():Void {
+        var now = haxe.Timer.stamp();
+        if (now < nextLanguageCheck) return;
+        nextLanguageCheck = now + 1;
+        var language = G.text(G.current("Options", "language"));
+        if (language == "") language = G.text(G.staticCall("hxd.System", "get_lang", []));
+        if (language == "" || language == localizedLanguage) return;
+        localizedLanguage = language;
+        var path = "hlx/mods/" + HlxRuntime.moduleName() + "/configFormats.json";
+        var text = SettingsText.json(SettingsText.isRussian(language));
+        var current = try sys.io.File.getContent(path) catch (_:Dynamic) "";
+        if (current != text) {
+            // Vortex deploys a link to its own copy: replace the link, never write into that copy.
+            try sys.FileSystem.deleteFile(path) catch (_:Dynamic) {}
+            sys.io.File.saveContent(path, text);
+        }
+    }
+
     static function report(where:String, error:Dynamic):Void {
         if (reported.exists(where)) return;
         reported.set(where, true);
@@ -47,6 +69,7 @@ class ComixMod {
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
         app = instance;
         var s2d = G.field(instance, "s2d"), s3d = G.field(instance, "s3d");
+        try localizeSettings() catch (error:Dynamic) report("language", error);
         try {
             var bubblesOn = config.enabled && config.bubbleEnabled;
             bubbles.update(s2d, s3d, dt, bubblesOn, scale(s2d));
