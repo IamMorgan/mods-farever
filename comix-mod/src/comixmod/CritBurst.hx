@@ -34,6 +34,7 @@ class CritBurst {
         var box = G.create("h2d.Object", [parent]);
         // under the damage numbers, which are already on the layer
         G.call("h2d.Object", "addChildAt", parent, [box, 0]);
+        Outlines.pin(parent, box);
         var picture = G.create("h2d.Bitmap", [tile, box]);
         var tw = G.number(G.field(tile, "width")), th = G.number(G.field(tile, "height"));
         var k = SIZE * sc / Math.max(tw, th);
