@@ -152,7 +152,7 @@ class ComixMod {
                     + " s2d=" + width + "x" + height + " widget abs=" + G.field(result, "absX") + "," + G.field(result, "absY")
                     + " counter abs=" + G.field(counter, "absX") + "," + G.field(counter, "absY") + " scale=" + G.field(counter, "matA")
                     + " scene=" + (G.call("h2d.Object", "getScene", result) == s2d));
-                crit.show(s2d, position, G.number(G.field(screen, "x")), G.number(G.field(screen, "y")), scale(s2d));
+                crit.show(s2d, position, result, scale(s2d));
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
