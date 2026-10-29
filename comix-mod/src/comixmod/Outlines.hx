@@ -16,8 +16,8 @@ class Outlines {
         var copies = [];
         var font = G.field(counter, "font"), value = G.text(G.field(counter, "text"));
         for (_ in SHIFTS) {
-            var t = G.create("h2d.Text", [font, s2d]);
-            G.call("h2d.Object", "addChildAt", s2d, [t, 0]);
+            var t = G.create("h2d.Text", [font, null]);
+            G.call("h2d.Layers", "add", s2d, [t, 0]);
             G.call("h2d.Text", "set_text", t, [value]);
             G.call("h2d.Text", "set_textColor", t, [0xFFFFFF]);
             G.set(t, "visible", false);
