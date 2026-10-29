@@ -143,7 +143,16 @@ class ComixMod {
                 if (same) return result;
                 var s2d = G.field(app, "s2d");
                 // it follows the damage numbers' layer, a widget of which stands at the target
-                crit.show(s2d, result, scale(s2d));
+                var s3d = G.field(app, "s3d");
+                var camera = G.field(s3d, "camera");
+                var width = G.number(G.field(s2d, "width")), height = G.number(G.field(s2d, "height"));
+                var screen = G.call("h3d.Camera", "project", camera, [G.number(G.field(position, "x")), G.number(G.field(position, "y")),
+                    G.number(G.field(position, "z")), width, height, false, null]);
+                trace("[comix-mod] crit pos=" + Std.string(position) + " screen=" + G.number(G.field(screen, "x")) + "," + G.number(G.field(screen, "y"))
+                    + " s2d=" + width + "x" + height + " widget abs=" + G.field(result, "absX") + "," + G.field(result, "absY")
+                    + " counter abs=" + G.field(counter, "absX") + "," + G.field(counter, "absY") + " scale=" + G.field(counter, "matA")
+                    + " scene=" + (G.call("h2d.Object", "getScene", result) == s2d));
+                crit.show(s2d, G.number(G.field(screen, "x")), G.number(G.field(screen, "y")), scale(s2d));
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
