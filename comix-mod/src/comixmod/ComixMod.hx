@@ -133,7 +133,7 @@ class ComixMod {
                 // the number itself stays the game's own, red with a white outline
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
                 G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
-                outlines.add(result, counter);
+                outlines.add(G.field(app, "s2d"), counter);
                 // the same hit reported again right away is not a new crit; a new crit replaces the burst of the previous one
                 var amount = Math.round(G.number(G.field(damage, "_amount")));
                 var now = haxe.Timer.stamp();
@@ -142,10 +142,8 @@ class ComixMod {
                 lastCritAt = now;
                 if (same) return result;
                 var s2d = G.field(app, "s2d");
-                // it joins the damage numbers' own layer, whose origin is the target
-                var layer = G.field(result, "parent");
-                var ma = G.number(G.field(layer, "matA"), 1);
-                crit.show(layer, scale(s2d) / ma);
+                // it follows the damage numbers' layer, whose origin is the target
+                crit.show(s2d, G.field(result, "parent"), scale(s2d));
             } else if (G.call("st.skill.DamageResult", "get_isMagic", damage) == true) {
                 // Same way Fancy Damage Numbers does it: the inline style survives the native CSS refresh.
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", MAGIC_COLOR]);
@@ -159,6 +157,7 @@ class ComixMod {
     static function beforeGameAppDispose(instance:Dynamic):HlxPrefixResult<Void> {
         bubbles.clear();
         crit.clear();
+        outlines.clear();
         app = null;
         return Continue;
     }
