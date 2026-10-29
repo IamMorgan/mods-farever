@@ -43,18 +43,31 @@ class Bubbles {
         }
     }
 
-    /** The bubble's origin is the tip of its tail; the oval stands above it. */
+    static inline var MAX_LINES = 4;
+
+    /** The bubble's origin is the tip of its tail; the cloud stands above it. */
     static function build(s2d:Dynamic, text:String, sc:Float):Dynamic {
         var box = G.create("h2d.Object", [s2d]);
         var shapes = G.create("h2d.Graphics", [box]);
-        var label = Fonts.text(box, text, 0x000000, sc, 240 * sc);
+        var label = Fonts.text(box, text, 0x000000, sc, 220 * sc);
+        // too long: cut the end off and put "..." there
+        G.call("h2d.Text", "set_text", label, ["A"]);
+        var maxHeight = Fonts.height(label) * MAX_LINES + 1;
+        G.call("h2d.Text", "set_text", label, [text]);
+        var shown = text;
+        while (Fonts.height(label) > maxHeight && shown.length > 1) {
+            shown = StringTools.rtrim(shown.substr(0, shown.length - 2));
+            G.call("h2d.Text", "set_text", label, [shown + "..."]);
+        }
         var w = Fonts.width(label), h = Fonts.height(label);
-        var rx = w / 2 * 1.3 + 12 * sc, ry = h / 2 * 1.3 + 8 * sc, tail = 16 * sc;
-        var cy = -(tail + ry);
-        var line = Math.max(2, 2 * sc);
-        // the tail first: the oval's outline then covers where they meet
-        Shapes.polygon(shapes, [-10 * sc, cy + ry - 3 * sc, 0, 0, 10 * sc, cy + ry - 3 * sc], 0xFFFFFF, 0x000000, line);
-        Shapes.polygon(shapes, Shapes.ellipse(0, cy, rx, ry), 0xFFFFFF, 0x000000, line);
+        var rx = w / 2 * 1.6 + 14 * sc, ry = h / 2 * 1.6 + 10 * sc, tail = 18 * sc;
+        var cy = -(tail + ry * 0.9);
+        var line = Math.max(2, 2.5 * sc);
+        var bumps = Std.int(Math.max(8, Math.min(16, Math.round((rx + ry) / (16 * sc)))));
+        // the shadow, the tail (a curved horn), then the cloud: its outline covers where they meet
+        Shapes.polygon(shapes, Shapes.lobes(5 * sc, cy + 5 * sc, rx, ry, bumps), 0x000000, 0x000000, 1);
+        Shapes.polygon(shapes, [-rx * 0.45, cy + ry * 0.6, 0, 0, -rx * 0.1, cy + ry * 0.7], 0xFFFFFF, 0x000000, line);
+        Shapes.polygon(shapes, Shapes.lobes(0, cy, rx, ry, bumps), 0xFFFFFF, 0x000000, line);
         G.set(label, "x", -w / 2);
         G.set(label, "y", cy - h / 2);
         return box;
