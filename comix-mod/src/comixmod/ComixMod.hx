@@ -131,7 +131,10 @@ class ComixMod {
                 // the number itself stays the game's own, red with a white outline
                 G.call("domkit.Properties", "initStyle", G.field(counter, "dom"), ["color", CRIT_COLOR]);
                 G.call("h2d.Text", "set_textColor", counter, [CRIT_COLOR]);
-                try G.set(counter, "filter", G.create("h2d.filter.Outline", [2, 0xFFFFFF])) catch (error:Dynamic) report("outline", error);
+                try {
+                    G.set(result, "filter", G.create("h2d.filter.Outline", [2, 0xFFFFFF]));
+                    report("outline set", G.field(result, "filter"));
+                } catch (error:Dynamic) report("outline", error);
                 // the same hit reported again right away is not a new crit; a new crit replaces the burst of the previous one
                 var amount = Math.round(G.number(G.field(damage, "_amount")));
                 var now = haxe.Timer.stamp();
