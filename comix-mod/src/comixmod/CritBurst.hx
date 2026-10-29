@@ -25,20 +25,15 @@ class CritBurst {
         return tiles.get(name);
     }
 
-    var widget:Dynamic;
-    var frames = 0;
-    var fallbackX = 0.0;
-    var fallbackY = 0.0;
-    var half = 0.0;
-    var sc = 1.0;
     var lastAngle = -10.0;
 
-    /** The burst stands at a random side of the damage number's `widget` (it is placed once the game has put the widget at the target), never at the side of the previous one. */
-    public function show(parent:Dynamic, widget:Dynamic, x:Float, y:Float, sc:Float):Void {
+    /** The burst stands at a random side of the target, never at the side of the previous one. */
+    public function show(parent:Dynamic, sc:Float):Void {
         clear();
         var tile = tile(NAMES[Std.random(NAMES.length)]);
         var box = G.create("h2d.Object", [parent]);
-        G.set(box, "visible", false);
+        // under the damage numbers, which are already on the layer
+        G.call("h2d.Object", "addChildAt", parent, [box, 0]);
         var picture = G.create("h2d.Bitmap", [tile, box]);
         var tw = G.number(G.field(tile, "width")), th = G.number(G.field(tile, "height"));
         var k = SIZE * sc / Math.max(tw, th);
@@ -46,35 +41,19 @@ class CritBurst {
         G.set(picture, "x", -tw * k / 2);
         G.set(picture, "y", -th * k / 2);
         G.set(box, "rotation", (Math.random() - 0.5) * 0.3);
+        // the layer's origin is the target; the burst is far enough from it not to cover the numbers around it
+        var angle = Math.random() * Math.PI * 2;
+        while (Math.abs(Math.atan2(Math.sin(angle - lastAngle), Math.cos(angle - lastAngle))) < 1.2) angle = Math.random() * Math.PI * 2;
+        lastAngle = angle;
+        var radius = Math.max(tw, th) * k / 2 + 110 * sc;
+        G.set(box, "x", Math.cos(angle) * radius);
+        G.set(box, "y", Math.sin(angle) * radius);
         burst = box;
         age = 0;
-        this.widget = widget;
-        frames = 0;
-        fallbackX = x;
-        fallbackY = y;
-        half = Math.max(tw, th) * k / 2;
-        this.sc = sc;
     }
 
     public function update(dt:Float, on:Bool):Void {
         if (burst == null) return;
-        if (frames >= 0 && ++frames >= 3) {
-            // by now the game has put the damage number's widget at the target
-            var wx = G.number(G.field(widget, "x")), wy = G.number(G.field(widget, "y"));
-            if (wx == 0 && wy == 0) {
-                wx = fallbackX;
-                wy = fallbackY;
-            }
-            trace("[comix-mod] crit widget " + wx + "," + wy);
-            var angle = Math.random() * Math.PI * 2;
-            while (Math.abs(Math.atan2(Math.sin(angle - lastAngle), Math.cos(angle - lastAngle))) < 1.2) angle = Math.random() * Math.PI * 2;
-            lastAngle = angle;
-            var radius = half + 50 * sc;
-            G.set(burst, "x", wx + Math.cos(angle) * radius);
-            G.set(burst, "y", wy + Math.sin(angle) * radius);
-            G.set(burst, "visible", true);
-            frames = -1;
-        }
         age += dt;
         if (!on || age >= LIFETIME) return clear();
         G.set(burst, "alpha", Math.min(1, (LIFETIME - age) / FADE));
