@@ -9,3 +9,6 @@ buildcalc/simtest/scripts.json
 buildcalc/simtest/
 DESIGN.md
 **/DESIGN.md
+
+# comix-mod specification (local only)
+comix-mod/TZ.md
