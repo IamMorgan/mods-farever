@@ -987,6 +987,7 @@ class Bot {
         // no nearer after 35 s of trying (a way that does not lead there): another target
         var dNow = Nav.distance(hero, G.number(G.field(target, "posx")), G.number(G.field(target, "posy")));
         if (dNow < progressBest - 3 || progressKey != key(target)) { progressBest = dNow; progressAt = now; progressKey = key(target); }
+        if (nav.walkingToObelisk()) progressAt = now; // (the way to the obelisk leads away from the foe: the straight distance says nothing)
         if (targetKind == "mob") { // a fight that wears the foe down is progress, however far the dodge has carried the hero
             var thp = G.number(G.call("ent.Unit", "get_health", target), -1);
             if (thp >= 0 && thp < progressHp - 1) progressAt = now;
