@@ -635,6 +635,8 @@ class Bot {
     var deadGround:Map<Int, Float> = new Map();
     /** Foes that took no damage from the hero for a long time (under the ground, behind a wall, immune): left alone even when they have the hero as target. */
     var untouchable:Map<String, Float> = new Map();
+    /** Mobs the hero made no way towards for 22 s: not chosen again for a minute (the next nearest one is). */
+    var noWay:Map<String, Float> = new Map();
     var stoneTimes:Array<Float> = [];
 
     function minDiff():Int return haxe.Timer.stamp() < grindUntil ? GRIND_DIFF : MIN_DIFF;
@@ -1006,6 +1008,7 @@ class Bot {
         if (dNow > 12 && now - progressAt > 22) {
             Log.w("no progress towards the target for 22 s (still " + Math.round(dNow) + " m): another one");
             blacklist.set(key(target), now + 180);
+            noWay.set(key(target), now + 60);
             return false;
         }
         // (a foe the hero has hurt is never given up while it stands in reach: only one that took no damage at all for a long time, out of the hits' reach)
@@ -1190,6 +1193,7 @@ class Bot {
             if (Nav.distance(hero, G.number(G.field(e, "posx")), G.number(G.field(e, "posy"))) < 200) rawNear++;
             var unit = Catalog.unitRecord(G.s(G.field(inf, "id")));
             if (blacklisted(e, now) || isUntouchable(e, now)) { drop("blacklist"); continue; }
+            if (noWay.exists(key(e)) && now < noWay.get(key(e))) { drop("no way there"); continue; }
             if (skipped.exists(curKey) && now < skipped.get(curKey)) { drop("no way"); continue; }
             if (unit != null && Catalog.isBoss(unit)) { drop("boss"); continue; }
             if (Hazard.deadly(G.number(G.field(e, "posx")), G.number(G.field(e, "posy")), G.number(G.field(e, "posz")), 1.2)) { drop("water"); continue; } // in the water
