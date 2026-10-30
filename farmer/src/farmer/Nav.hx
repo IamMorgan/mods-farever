@@ -647,6 +647,16 @@ class Nav {
         return true;
     }
 
+    /** The ground 0.8..2.4 m ahead on the heading is there, no deeper than a step down and dry (a ford is dry enough when wading is on). */
+    function groundAhead(hero:Dynamic, hx:Float, hy:Float, ux:Float, uy:Float):Bool {
+        var gz = groundUnder(hero);
+        for (a in [0.8, 1.6, 2.4]) {
+            var z = NavGrid.fineZ(hx + ux * a, hy + uy * a, gz);
+            if (!Math.isFinite(z) || gz - z > NavGrid.safeDrop() || (!wade && Hazard.wetCell(hx + ux * a, hy + uy * a, z, 0.45))) return false;
+        }
+        return true;
+    }
+
     public static function jump(hero:Dynamic):Void {
         try {
             var ctl = G.current("client.PlayerController", "inst");
@@ -952,6 +962,8 @@ class Nav {
             d = Math.sqrt(dx * dx + dy * dy);
             if (d < 0.6) { why = "at aim"; return null; }
             goalHeading = true;
+            // the straight run to the spot is no walked way: no ground, a cliff or water ahead (the 27.10 fall into a bay at the route's end) is not run into
+            if (!airborne(hero) && !groundAhead(hero, hx, hy, dx / d, dy / d)) { why = "drop or water ahead"; needPlan = true; return null; }
             if (route != null && !needPlan && now - plannedAt > 0.6 && distance(hero, tx, ty) > 3) needPlan = true;
         }
         dx /= d;
@@ -1022,7 +1034,7 @@ class Nav {
         if (z > jumpMax) jumpMax = z;
         if (t < 2.0) { jumpProfile.push(Math.round(t * 100) / 100 + ":" + Math.round(z * 100) / 100); profT.push(t); profZ.push(z); }
         var grounded = G.number(G.field(hero, "posz")) - groundUnder(hero) < 0.1;
-        if (t > 0.25 && grounded || t > 3) {
+        if (t > 0.25 && grounded && (jumpMax > 0.1 || !jumpCalibrating) || t > 3) {
             jumpTrack = false;
             var fwd = Math.sqrt(Math.pow(G.number(G.field(hero, "posx")) - jumpX0, 2) + Math.pow(G.number(G.field(hero, "posy")) - jumpY0, 2));
             var level = Math.abs(G.number(G.field(hero, "posz")) - groundUnder(hero) - 0) < 0.5;

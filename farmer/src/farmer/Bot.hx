@@ -2262,8 +2262,8 @@ class Bot {
     }
 
     /**
-     * A self-buff the hero carries on its skill bar (data type 9, reach 0: the mage's Spark Shield and Mystic Empowerment, which cuts
-     * cooldowns). Steps (Blink, dash, leap, mount) are not buffs, and a learnt skill that is not on the bar is not cast.
+     * A class skill the hero carries on its skill bar (data type 9: the mage's Spark Shield, Mystic Empowerment and Static Nova, the
+     * rogue's Smoke Bomb; one with a reach is cast only when the foe is within it). Steps (Blink, dash, leap, mount) are not buffs, and a learnt skill that is not on the bar is not cast.
      */
     function isBuff(skill:Dynamic):Bool {
         try {
@@ -2271,7 +2271,6 @@ class Bot {
             if (G.integer(G.field(inf, "type"), -1) != 9) return false;
             var kind = G.s(G.field(skill, "kind"));
             if (~/Blink|Dash|Leap|Jump|Teleport|Charge|Mount|Dodge|Step/i.match(kind)) return false;
-            if (G.number(G.call("st.skill.BaseSkill", "getMaxRange", skill), 0) > 0.5) return false;
             for (slot in G.array(G.field(hero, "skillSlots"))) if (G.s(slot) == kind) return true;
             return false;
         } catch (_:Dynamic) return false;
