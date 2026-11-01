@@ -45,6 +45,24 @@ class Commands {
             case "static":
                 var result = G.staticCall(Std.string(Reflect.field(cmd, "type")), Std.string(Reflect.field(cmd, "method")), args(cmd));
                 return {id: id, ok: true, type: G.typeName(result), value: toJson(result, depth)};
+            case "net_events":
+                var since = Reflect.hasField(cmd, "since") ? Std.int(Reflect.field(cmd, "since")) : 0;
+                var limit = Reflect.hasField(cmd, "limit") ? Std.int(Reflect.field(cmd, "limit")) : 100;
+                var r = Net.events_since(since, limit);
+                return {id: id, ok: true, events: r.events, last: r.last};
+            case "net_rule":
+                return {id: id, ok: true, rule: Net.addRule(Reflect.field(cmd, "rule"))};
+            case "net_rules":
+                return {id: id, ok: true, rules: Net.allRules()};
+            case "net_unrule":
+                Net.removeRule(Std.int(Reflect.field(cmd, "rule")));
+                return {id: id, ok: true};
+            case "net_clear":
+                Net.clear();
+                return {id: id, ok: true};
+            case "net_log":
+                Net.logging = Reflect.field(cmd, "on") != false;
+                return {id: id, ok: true, on: Net.logging};
             default:
                 return {id: id, ok: false, error: "unknown command: " + name};
         }

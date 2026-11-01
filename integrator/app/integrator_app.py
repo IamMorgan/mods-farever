@@ -44,9 +44,24 @@ TOOLS = [
             "type": {"type": "string"}, "method": {"type": "string"},
             "args": {"type": "array", "items": {}}, "depth": {"type": "integer"}},
             "required": ["type", "method"]}}},
+    {"type": "function", "function": {
+        "name": "net_events",
+        "description": "Network messages the game sent (dir out), received (dir in) and server calls (dir rpc) after event number `since`.",
+        "parameters": {"type": "object", "properties": {
+            "since": {"type": "integer"}, "limit": {"type": "integer"}}}}},
+    {"type": "function", "function": {
+        "name": "net_rule",
+        "description": "Add a network rule: {dir: out|in|rpc, label?, type?, rpc?, prefix? (hex the bytes start with), "
+                       "action: block|patch, offset?, hex?, times?}. Returns the rule id.",
+        "parameters": {"type": "object", "properties": {"rule": {"type": "object"}}, "required": ["rule"]}}},
+    {"type": "function", "function": {
+        "name": "net_unrule",
+        "description": "Remove a network rule by id.",
+        "parameters": {"type": "object", "properties": {"rule": {"type": "integer"}}, "required": ["rule"]}}},
 ]
 
-TOOL_TO_COMMAND = {"game_get": "get", "game_set": "set", "game_call": "call", "game_static": "static"}
+TOOL_TO_COMMAND = {"game_get": "get", "game_set": "set", "game_call": "call", "game_static": "static",
+                   "net_events": "net_events", "net_rule": "net_rule", "net_unrule": "net_unrule"}
 
 
 class GameLink:
