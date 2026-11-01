@@ -39,9 +39,9 @@ class SearchControl {
         this.party = party;
     }
 
-    /** True while a search for this very dungeon runs: the window must not start it. */
+    /** True for a dungeon window: it has no "Start" button and must not start the dungeon. */
     public function blocks(screen:Dynamic):Bool
-        return session.mode() == Searching && session.activityId == DungeonScreens.activityOf(screen);
+        return DungeonScreens.isDungeon(DungeonScreens.activityOf(screen));
 
     function forget():Void {
         bound = null;
@@ -86,6 +86,7 @@ class SearchControl {
         bound = screen;
         if (!DungeonScreens.isDungeon(DungeonScreens.activityOf(screen))) return;
         actions = parent;
+        N.show(start, false);
         var dom = G.field(actions, "dom");
         var index = N.children(actions).indexOf(start);
         if (index < 0) { forget(); return; }
