@@ -51,12 +51,25 @@ class Net {
     /** Sends the bytes (hex) through the game's mpman.net.Client; needs one earlier send of the game to know the client. */
     public static function send(hexText:String):Int {
         if (client == null) throw "no mpman.net.Client seen yet: make the game send something first";
-        var data = [for (i in 0...Std.int(hexText.length / 2)) Std.parseInt("0x" + hexText.substr(i * 2, 2))];
-        // RPC_WITH_RESULT (6) carries a result id the client waits on; a replay would get a second reply for an id already consumed
-        // (null access in NetworkClient.processMessage), so it is sent as a plain RPC (5) without the id (1 byte, or 0x80 + 4 bytes).
+        var data:Array<Int> = [];
+        for (i in 0...Std.int(hexText.length / 2)) data.push(Std.int(Std.parseInt("0x" + hexText.substr(i * 2, 2))));
+        // RPC_WITH_RESULT (6) carries a result id the client waits on (host.rpcWaits); the server always answers it, so a replay
+        // with the old id would find no waiting callback (null access in NetworkClient.processMessage). The replay gets a fresh
+        // id and a callback that skips the result (1 byte: every apiRpc* result is a Bool).
         if (data[0] == 6) {
-            data.splice(1, data[1] == 0x80 ? 5 : 1);
-            data[0] = 5;
+            var host = G.field(Commands.app, "host");
+            var newId = G.integer(G.field(host, "rpcUID"));
+            G.set(host, "rpcUID", newId + 1);
+            G.call("haxe.ds.IntMap", "set", G.field(host, "rpcWaits"), [newId, function(ctx:Dynamic):Void {
+                G.set(ctx, "inPos", G.integer(G.field(ctx, "inPos")) + 1);
+            }]);
+            var from = data[1] == 0x80 ? 6 : 2;
+            var out:Array<Int> = [];
+            out.push(6);
+            out.push(0x80);
+            for (shift in [0, 8, 16, 24]) out.push((newId >> shift) & 0xff);
+            for (i in from...data.length) out.push(data[i]);
+            data = out;
         }
         var count = data.length;
         var bytes = G.staticCall("haxe.io.Bytes", "alloc", [count]);
