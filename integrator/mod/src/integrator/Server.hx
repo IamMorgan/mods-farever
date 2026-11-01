@@ -10,6 +10,7 @@ class Server {
     var listener:Socket;
     var client:Socket;
     var pending:Bytes = Bytes.alloc(0);
+    var acceptErrorLogged = false;
     var chunk:Bytes = Bytes.alloc(65536);
 
     public function new() {
@@ -30,11 +31,18 @@ class Server {
         if (listener == null) return;
         try {
             var c = listener.accept();
-            c.setBlocking(false);
-            drop();
-            client = c;
-            Log.t("server", "client connected");
-        } catch (_:Dynamic) {}
+            if (c != null) {
+                c.setBlocking(false);
+                drop();
+                client = c;
+                Log.t("server", "client connected");
+            }
+        } catch (e:Dynamic) {
+            if (Std.string(e) != "Blocked" && !acceptErrorLogged) {
+                acceptErrorLogged = true;
+                Log.t("server", "accept: " + Std.string(e));
+            }
+        }
         if (client == null) return;
         try {
             var n = client.input.readBytes(chunk, 0, chunk.length);

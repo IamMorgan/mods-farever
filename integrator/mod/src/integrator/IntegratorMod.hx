@@ -17,6 +17,7 @@ class IntegratorMod {
 
     @:hlx.prefix(GameApp.update)
     static function beforeGameAppUpdate(instance:Dynamic, dt:Float):HlxPrefixResult<Void> {
+        if (Commands.app == null) Log.t("mod", "first game update");
         Commands.app = instance;
         try server.poll(Commands.handle) catch (e:Dynamic) Log.t("err", "poll failed: " + Std.string(e));
         return Continue;

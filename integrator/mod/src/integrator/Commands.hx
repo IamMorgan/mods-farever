@@ -84,14 +84,22 @@ class Commands {
         return value;
     }
 
+    /** A game String as this module's own String, always rebuilt from its bytes (Json would print a game String as an object). */
+    static function text(value:Dynamic):String {
+        var bytes:hl.Bytes = Reflect.field(value, "bytes");
+        var length:Null<Int> = Reflect.field(value, "length");
+        if (bytes == null || length == null || length < 0) return Std.string(value);
+        return @:privateAccess String.__alloc__(bytes, length);
+    }
+
     static function isStringLike(value:Dynamic):Bool {
-        return Std.isOfType(value, String) || G.typeName(value) == "String";
+        return Std.isOfType(value, String) || G.typeName(value) == "String" || (Reflect.hasField(value, "bytes") && Reflect.hasField(value, "length") && Reflect.fields(value).length == 2);
     }
 
     public static function toJson(value:Dynamic, depth:Int, seen:Array<Dynamic> = null):Dynamic {
         if (value == null) return null;
         if (Std.isOfType(value, Bool) || Std.isOfType(value, Int) || Std.isOfType(value, Float)) return value;
-        if (isStringLike(value)) return G.str(value);
+        if (isStringLike(value)) return text(value);
         if (seen == null) seen = [];
         var type = G.typeName(value);
         if (depth <= 0) return "<" + type + ">";

@@ -6,10 +6,11 @@ import socket
 import threading
 import tkinter as tk
 import urllib.request
-from tkinter import scrolledtext
+from tkinter import scrolledtext, ttk
 
 MOD_ADDRESS = ("127.0.0.1", 47800)
 OLLAMA_URL = "http://localhost:11434/api/chat"
+OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 MAX_STEPS = 12
 
 SYSTEM_PROMPT = (
@@ -89,6 +90,11 @@ class GameLink:
             return json.loads(line)
 
 
+def ollama_models():
+    with urllib.request.urlopen(OLLAMA_TAGS_URL, timeout=10) as response:
+        return [m["name"] for m in json.loads(response.read().decode("utf-8"))["models"]]
+
+
 def ollama_chat(model, messages):
     body = json.dumps({"model": model, "messages": messages, "tools": TOOLS, "stream": False}).encode("utf-8")
     request = urllib.request.Request(OLLAMA_URL, data=body, headers={"Content-Type": "application/json"})
@@ -109,9 +115,10 @@ class App:
         top = tk.Frame(self.root)
         top.pack(fill="x", padx=6, pady=4)
         tk.Label(top, text="Model:").pack(side="left")
-        self.model = tk.Entry(top, width=24)
-        self.model.insert(0, "qwen3:8b")
+        self.model = ttk.Combobox(top, width=28, values=["qwen3:8b"])
+        self.model.set("qwen3:8b")
         self.model.pack(side="left", padx=4)
+        tk.Button(top, text="Refresh models", command=self.refresh_models).pack(side="left", padx=4)
         tk.Button(top, text="Check the mod", command=self.check_mod).pack(side="left", padx=4)
         self.log = scrolledtext.ScrolledText(self.root, state="disabled", wrap="word")
         self.log.pack(fill="both", expand=True, padx=6)
@@ -122,6 +129,7 @@ class App:
         self.entry.bind("<Return>", lambda _e: self.submit())
         tk.Button(bottom, text="Send", command=self.submit).pack(side="left", padx=4)
         self.root.after(100, self.drain)
+        self.refresh_models()
 
     def write(self, text):
         self.events.put(text)
@@ -137,6 +145,16 @@ class App:
         except queue.Empty:
             pass
         self.root.after(100, self.drain)
+
+    def refresh_models(self):
+        def work():
+            try:
+                names = ollama_models()
+                self.root.after(0, lambda: self.model.configure(values=names))
+                self.write("models: " + (", ".join(names) or "none installed"))
+            except Exception as error:
+                self.write("Ollama: no connection (%s)" % error)
+        threading.Thread(target=work, daemon=True).start()
 
     def check_mod(self):
         def work():
