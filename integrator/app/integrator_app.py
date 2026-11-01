@@ -8,19 +8,24 @@ import tkinter as tk
 import urllib.request
 from tkinter import scrolledtext, ttk
 
+from hl_index import HlIndex
+
 MOD_ADDRESS = ("127.0.0.1", 47800)
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 MAX_STEPS = 12
 
 SYSTEM_PROMPT = (
-    "You control the game Farever through tools. Do what the user asks by calling the tools, one step at a time; "
-    "look at the results before the next call. Game paths start at the GameApp (for example hero.player) or at a static "
-    "(@Data.item). World objects are in hero.layer.interactibles.N (Npc, CraftStation, Chest...) and hero.layer.units.N. "
-    "Server requests are apiRpc* methods (for example ent.Element.apiRpcBuyItem with args [itemId, \"@noop\"]); "
-    "the last argument of every apiRpc* method is a callback: pass the string \"@noop\" for it. "
-    "To buy: find_item for the item id, find_npc for the seller, then buy. "
-    "When the task is done, answer briefly what was done."
+    "You control the game Farever through tools and can do anything the user asks. Work step by step and read each result "
+    "before the next call. You know nothing about the game in advance, so discover it: "
+    "find_types / find_members / describe_type show the game's classes, fields, methods and their signatures (use them to "
+    "find the method and its argument types); game_fields lists the fields of an object; game_get reads a value; "
+    "search finds records in a data array by text (shown names are in the game language, which is the user's); "
+    "game_call / game_static call methods; game_set changes fields; net_* watch and change the network traffic. "
+    "Paths start at the game app (for example hero.player) or at a class static (for example @Data.item); names are fields, "
+    "numbers index an array. A callback argument of type (bool) -> void is passed as the string \"@noop\". "
+    "Never give up after one failure: look at the error, explore with the discovery tools, try again. "
+    "When done, answer the user briefly in the user's language."
 )
 
 TOOLS = [
@@ -49,19 +54,28 @@ TOOLS = [
             "args": {"type": "array", "items": {}}, "depth": {"type": "integer"}},
             "required": ["type", "method"]}}},
     {"type": "function", "function": {
-        "name": "find_item",
-        "description": "Find items by a part of the name (as shown in the game) or id. Returns [{id, name}].",
-        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+        "name": "game_fields",
+        "description": "Field names of the game object at the path.",
+        "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
     {"type": "function", "function": {
-        "name": "find_npc",
-        "description": "Find world objects (sellers, stations, chests) by a part of the shown name or kind. Returns [{npc, kind, name, type}].",
-        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
-    {"type": "function", "function": {
-        "name": "buy",
-        "description": "Buy `count` pieces of the item (id from find_item) from the seller (npc number from find_npc).",
+        "name": "search",
+        "description": "In the array at the path (for example @Data.item.all) find records that have a text field containing the query "
+                       "(case-insensitive). Returns [{index, matches: [\"field = text\"]}].",
         "parameters": {"type": "object", "properties": {
-            "npc": {"type": "integer"}, "item": {"type": "string"}, "count": {"type": "integer"}},
-            "required": ["npc", "item"]}}},
+            "path": {"type": "string"}, "query": {"type": "string"}}, "required": ["path", "query"]}}},
+    {"type": "function", "function": {
+        "name": "find_types",
+        "description": "Game classes whose full name matches the regex.",
+        "parameters": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}}},
+    {"type": "function", "function": {
+        "name": "find_members",
+        "description": "Methods and fields whose 'Class.member' matches the regex, with signatures.",
+        "parameters": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}}},
+    {"type": "function", "function": {
+        "name": "describe_type",
+        "description": "Fields, methods (with signatures, own and inherited) and statics of a class; `match` is an optional regex filter.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"}, "match": {"type": "string"}}, "required": ["name"]}}},
     {"type": "function", "function": {
         "name": "net_events",
         "description": "Network messages the game sent (dir out), received (dir in) and server calls (dir rpc) after event number `since`.",
@@ -78,8 +92,10 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"rule": {"type": "integer"}}, "required": ["rule"]}}},
 ]
 
-TOOL_TO_COMMAND = {"game_get": "get", "game_set": "set", "game_call": "call", "game_static": "static",
-                   "find_item": "find_item", "find_npc": "find_npc", "buy": "buy", "net_events": "net_events", "net_rule": "net_rule", "net_unrule": "net_unrule"}
+TOOL_TO_COMMAND = {"game_get": "get", "game_set": "set", "game_call": "call", "game_static": "static", "game_fields": "fields",
+                   "search": "search", "net_events": "net_events", "net_rule": "net_rule", "net_unrule": "net_unrule"}
+HLBOOT = r"D:\Steam\steamapps\common\Farever\hlboot.dat"
+INDEX_TOOLS = ("find_types", "find_members", "describe_type")
 
 
 class GameLink:
@@ -141,6 +157,8 @@ class App:
         self.history = [{"role": "system", "content": SYSTEM_PROMPT}]
         self.events = queue.Queue()
         self.busy = False
+        self.index = None
+        self.index_lock = threading.Lock()
 
         self.root = tk.Tk()
         self.root.title("Integrator")
@@ -211,17 +229,27 @@ class App:
         self.history.append({"role": "user", "content": text})
         threading.Thread(target=self.run_model, args=(self.model.get().strip(),), daemon=True).start()
 
+    def game_index(self):
+        with self.index_lock:
+            if self.index is None:
+                self.write("  (reading the game's type table, once)")
+                self.index = HlIndex(HLBOOT)
+            return self.index
+
     def run_tool(self, call):
         name = call["function"]["name"]
         arguments = call["function"].get("arguments") or {}
         if isinstance(arguments, str):
             arguments = json.loads(arguments)
         command = TOOL_TO_COMMAND.get(name)
-        if command is None:
+        if command is None and name not in INDEX_TOOLS:
             return {"ok": False, "error": "unknown tool " + name}
         self.write("  %s %s" % (name, json.dumps(arguments, ensure_ascii=False)))
         try:
-            result = self.link.send(command, arguments)
+            if command is None:
+                result = {"ok": True, "result": getattr(self.game_index(), name)(**arguments)}
+            else:
+                result = self.link.send(command, arguments)
         except Exception as error:
             result = {"ok": False, "error": str(error)}
         self.write("  -> " + json.dumps(result, ensure_ascii=False)[:600])

@@ -10,6 +10,8 @@ import integrator.GameAccess as G;
  *  - set {path, field, value}: sets a field of the object at the path.
  *  - call {path, type, method, args}: calls a method of the object at the path.
  *  - static {type, method, args}: calls a static method.
+ *  - fields {path}: field names of the object at the path.
+ *  - search {path, query}: records of the array at the path that have a text field containing the query.
  */
 class Commands {
     public static var app:Dynamic;
@@ -42,16 +44,16 @@ class Commands {
                 var target = resolvePath(Std.string(Reflect.field(cmd, "path")));
                 var result = G.call(Std.string(Reflect.field(cmd, "type")), Std.string(Reflect.field(cmd, "method")), target, args(cmd));
                 return {id: id, ok: true, type: G.typeName(result), value: toJson(result, depth)};
-            case "find_item":
-                return {id: id, ok: true, items: findItems(Std.string(Reflect.field(cmd, "query")))};
-            case "find_npc":
-                return {id: id, ok: true, npcs: findNpcs(Std.string(Reflect.field(cmd, "query")))};
-            case "buy":
-                var npc = G.at(G.field(G.field(G.field(app, "hero"), "layer"), "interactibles"),Std.int(Reflect.field(cmd, "npc")));
-                var item = Std.string(Reflect.field(cmd, "item"));
-                var count = Reflect.hasField(cmd, "count") ? Std.int(Reflect.field(cmd, "count")) : 1;
-                for (_ in 0...count) G.call("ent.Element", "apiRpcBuyItem", npc, [item, function(_:Bool):Void {}]);
-                return {id: id, ok: true, sent: count};
+            case "search":
+                var arr = resolvePath(Std.string(Reflect.field(cmd, "path")));
+                var hits:Array<Dynamic> = [];
+                var q = Std.string(Reflect.field(cmd, "query")).toLowerCase();
+                for (i in 0...G.len(arr)) {
+                    var found = matchIn(G.at(arr, i), q, 3, "");
+                    if (found.length > 0) hits.push({index: i, matches: found});
+                    if (hits.length >= 30) break;
+                }
+                return {id: id, ok: true, hits: hits};
             case "fields":
                 var o = resolvePath(Std.string(Reflect.field(cmd, "path")));
                 return {id: id, ok: true, fields: Reflect.fields(o)};
@@ -81,30 +83,22 @@ class Commands {
         }
     }
 
-    /** Items of Data.item whose id or name contains the query (case-insensitive): [{id, name}], at most 30. */
-    static function findItems(query:String):Array<Dynamic> {
-        var q = query.toLowerCase();
-        var out:Array<Dynamic> = [];
-        for (item in G.sheet("item")) {
-            var itemId = text(G.field(item, "id"));
-            var name = text(G.field(G.field(item, "texts"), "name"));
-            if (itemId.toLowerCase().indexOf(q) >= 0 || name.toLowerCase().indexOf(q) >= 0) out.push({id: itemId, name: name});
-            if (out.length >= 30) break;
+    /** Text fields (up to `depth` levels down) of a record that contain the query: ["field.path = text"]. */
+    static function matchIn(value:Dynamic, q:String, depth:Int, prefix:String):Array<String> {
+        var out:Array<String> = [];
+        if (value == null) return out;
+        if (isStringLike(value)) {
+            var t = text(value);
+            if (t.toLowerCase().indexOf(q) >= 0) out.push(prefix + " = " + t);
+            return out;
         }
-        return out;
-    }
-
-    /** World objects (hero.layer.interactibles) whose kind or shown name contains the query: [{npc, kind, name, type}]; npc is the index. */
-    static function findNpcs(query:String):Array<Dynamic> {
-        var q = query.toLowerCase();
-        var out:Array<Dynamic> = [];
-        var list = G.field(G.field(G.field(app, "hero"), "layer"), "interactibles");
-        for (i in 0...G.len(list)) {
-            var o = G.at(list, i);
-            var kind = text(G.field(o, "kind"));
-            var name = text(G.field(G.field(G.field(o, "widgetComp"), "npcName"), "text"));
-            if (kind.toLowerCase().indexOf(q) >= 0 || name.toLowerCase().indexOf(q) >= 0) out.push({npc: i, kind: kind, name: name, type: G.typeName(o)});
-            if (out.length >= 30) break;
+        if (depth <= 0 || Std.isOfType(value, Bool) || Std.isOfType(value, Int) || Std.isOfType(value, Float)) return out;
+        var names:Array<String> = [];
+        try names = Reflect.fields(value) catch (_:Dynamic) {}
+        for (n in names) {
+            if (StringTools.startsWith(n, "__")) continue;
+            var child:Dynamic = try G.field(value, n) catch (_:Dynamic) null;
+            out = out.concat(matchIn(child, q, depth - 1, prefix == "" ? n : prefix + "." + n));
         }
         return out;
     }
