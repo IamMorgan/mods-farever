@@ -49,6 +49,10 @@ Other players need the mod too: it finds only players who use it.
 
 ### Changelog
 
+#### 2026-11-01
+
+- The dungeon window no longer has the **Start** and **Ready** buttons: it cannot start the dungeon. Searching and group forming work as before.
+
 #### 2026-10-24 (1.1.0)
 
 - The dungeon list and the DPF button are the game's own widgets; the dungeon window is the game's own with a **Search** button under **Start**.
