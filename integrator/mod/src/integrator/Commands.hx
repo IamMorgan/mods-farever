@@ -70,7 +70,9 @@ class Commands {
 
     static function args(cmd:Dynamic):Array<Dynamic> {
         var a:Dynamic = Reflect.field(cmd, "args");
-        return a == null ? [] : a;
+        if (a == null) return [];
+        // "@noop" stands for a callback (Bool)->Void that does nothing: the last argument of every apiRpc* method
+        return [for (x in (a : Array<Dynamic>)) Std.isOfType(x, String) && x == "@noop" ? (function(_:Bool):Void {}) : x];
     }
 
     static function resolvePath(path:String):Dynamic {
