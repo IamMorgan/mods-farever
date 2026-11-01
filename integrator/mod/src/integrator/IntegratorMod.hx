@@ -31,7 +31,10 @@ class IntegratorMod {
     static function outClient(instance:Dynamic, bytes:Dynamic):HlxPrefixResult<Void> return Net.raw("out", "NetworkClient.send", bytes, 0) ? Skip : Continue;
 
     @:hlx.prefix(mpman.net.Client.send)
-    static function outMpClient(instance:Dynamic, bytes:Dynamic):HlxPrefixResult<Void> return Net.raw("out", "mpman.Client.send", bytes, 0) ? Skip : Continue;
+    static function outMpClient(instance:Dynamic, bytes:Dynamic):HlxPrefixResult<Void> {
+        Net.client = instance;
+        return Net.raw("out", "mpman.Client.send", bytes, 0) ? Skip : Continue;
+    }
 
     @:hlx.prefix(mpman.net.WSService.send)
     static function outWs(instance:Dynamic, bytes:Dynamic):HlxPrefixResult<Void> return Net.raw("out", "WSService.send", bytes, 0) ? Skip : Continue;

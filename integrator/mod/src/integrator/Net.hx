@@ -17,6 +17,7 @@ class Net {
     static inline var HEX_BYTES = 96;
 
     public static var logging = true;
+    public static var client:Dynamic;
     static var events:Array<Dynamic> = [];
     static var seq = 0;
     static var rules:Array<Dynamic> = [];
@@ -45,6 +46,16 @@ class Net {
         }
         if (logging) note({dir: "rpc", label: label, type: type, rpc: id, blocked: blocked});
         return blocked;
+    }
+
+    /** Sends the bytes (hex) through the game's mpman.net.Client; needs one earlier send of the game to know the client. */
+    public static function send(hexText:String):Int {
+        if (client == null) throw "no mpman.net.Client seen yet: make the game send something first";
+        var count = Std.int(hexText.length / 2);
+        var bytes = G.staticCall("haxe.io.Bytes", "alloc", [count]);
+        for (i in 0...count) G.call("haxe.io.Bytes", "set", bytes, [i, Std.parseInt("0x" + hexText.substr(i * 2, 2))]);
+        G.call("mpman.net.Client", "send", client, [bytes]);
+        return count;
     }
 
     public static function events_since(since:Int, limit:Int):Dynamic {

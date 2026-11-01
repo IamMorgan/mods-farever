@@ -65,6 +65,8 @@ class Commands {
                 var limit = Reflect.hasField(cmd, "limit") ? Std.int(Reflect.field(cmd, "limit")) : 100;
                 var r = Net.events_since(since, limit);
                 return {id: id, ok: true, events: r.events, last: r.last};
+            case "net_send":
+                return {id: id, ok: true, sent: Net.send(Std.string(Reflect.field(cmd, "hex")))};
             case "net_rule":
                 return {id: id, ok: true, rule: Net.addRule(Reflect.field(cmd, "rule"))};
             case "net_rules":
