@@ -136,6 +136,8 @@ class SearchControl {
         if (bound != screen || (button != null && G.field(button, "parent") == null)) bind(screen);
         keepPicture(screen);
         if (button == null) return;
+        // The game shows the button again whenever it updates the window ("Start" for the leader, "Ready" for the others).
+        N.show(G.field(screen, "startBtn"), false);
         stage = "update: mode";
         var mode = session.mode();
         var here = session.activityId == DungeonScreens.activityOf(screen);
