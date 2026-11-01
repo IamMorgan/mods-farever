@@ -42,6 +42,19 @@ class Commands {
                 var target = resolvePath(Std.string(Reflect.field(cmd, "path")));
                 var result = G.call(Std.string(Reflect.field(cmd, "type")), Std.string(Reflect.field(cmd, "method")), target, args(cmd));
                 return {id: id, ok: true, type: G.typeName(result), value: toJson(result, depth)};
+            case "find_item":
+                return {id: id, ok: true, items: findItems(Std.string(Reflect.field(cmd, "query")))};
+            case "find_npc":
+                return {id: id, ok: true, npcs: findNpcs(Std.string(Reflect.field(cmd, "query")))};
+            case "buy":
+                var npc = G.at(G.field(G.field(G.field(app, "hero"), "layer"), "interactibles"),Std.int(Reflect.field(cmd, "npc")));
+                var item = Std.string(Reflect.field(cmd, "item"));
+                var count = Reflect.hasField(cmd, "count") ? Std.int(Reflect.field(cmd, "count")) : 1;
+                for (_ in 0...count) G.call("ent.Element", "apiRpcBuyItem", npc, [item, function(_:Bool):Void {}]);
+                return {id: id, ok: true, sent: count};
+            case "fields":
+                var o = resolvePath(Std.string(Reflect.field(cmd, "path")));
+                return {id: id, ok: true, fields: Reflect.fields(o)};
             case "static":
                 var result = G.staticCall(Std.string(Reflect.field(cmd, "type")), Std.string(Reflect.field(cmd, "method")), args(cmd));
                 return {id: id, ok: true, type: G.typeName(result), value: toJson(result, depth)};
@@ -66,6 +79,34 @@ class Commands {
             default:
                 return {id: id, ok: false, error: "unknown command: " + name};
         }
+    }
+
+    /** Items of Data.item whose id or name contains the query (case-insensitive): [{id, name}], at most 30. */
+    static function findItems(query:String):Array<Dynamic> {
+        var q = query.toLowerCase();
+        var out:Array<Dynamic> = [];
+        for (item in G.sheet("item")) {
+            var itemId = text(G.field(item, "id"));
+            var name = text(G.field(G.field(item, "texts"), "name"));
+            if (itemId.toLowerCase().indexOf(q) >= 0 || name.toLowerCase().indexOf(q) >= 0) out.push({id: itemId, name: name});
+            if (out.length >= 30) break;
+        }
+        return out;
+    }
+
+    /** World objects (hero.layer.interactibles) whose kind or shown name contains the query: [{npc, kind, name, type}]; npc is the index. */
+    static function findNpcs(query:String):Array<Dynamic> {
+        var q = query.toLowerCase();
+        var out:Array<Dynamic> = [];
+        var list = G.field(G.field(G.field(app, "hero"), "layer"), "interactibles");
+        for (i in 0...G.len(list)) {
+            var o = G.at(list, i);
+            var kind = text(G.field(o, "kind"));
+            var name = text(G.field(G.field(G.field(o, "widgetComp"), "npcName"), "text"));
+            if (kind.toLowerCase().indexOf(q) >= 0 || name.toLowerCase().indexOf(q) >= 0) out.push({npc: i, kind: kind, name: name, type: G.typeName(o)});
+            if (out.length >= 30) break;
+        }
+        return out;
     }
 
     static function args(cmd:Dynamic):Array<Dynamic> {
@@ -106,6 +147,7 @@ class Commands {
 
     /** A game String as this module's own String, always rebuilt from its bytes (Json would print a game String as an object). */
     static function text(value:Dynamic):String {
+        if (value == null) return "";
         var bytes:hl.Bytes = Reflect.field(value, "bytes");
         var length:Null<Int> = Reflect.field(value, "length");
         if (bytes == null || length == null || length < 0) return Std.string(value);

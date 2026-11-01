@@ -19,6 +19,7 @@ SYSTEM_PROMPT = (
     "(@Data.item). World objects are in hero.layer.interactibles.N (Npc, CraftStation, Chest...) and hero.layer.units.N. "
     "Server requests are apiRpc* methods (for example ent.Element.apiRpcBuyItem with args [itemId, \"@noop\"]); "
     "the last argument of every apiRpc* method is a callback: pass the string \"@noop\" for it. "
+    "To buy: find_item for the item id, find_npc for the seller, then buy. "
     "When the task is done, answer briefly what was done."
 )
 
@@ -48,6 +49,20 @@ TOOLS = [
             "args": {"type": "array", "items": {}}, "depth": {"type": "integer"}},
             "required": ["type", "method"]}}},
     {"type": "function", "function": {
+        "name": "find_item",
+        "description": "Find items by a part of the name (as shown in the game) or id. Returns [{id, name}].",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "find_npc",
+        "description": "Find world objects (sellers, stations, chests) by a part of the shown name or kind. Returns [{npc, kind, name, type}].",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "buy",
+        "description": "Buy `count` pieces of the item (id from find_item) from the seller (npc number from find_npc).",
+        "parameters": {"type": "object", "properties": {
+            "npc": {"type": "integer"}, "item": {"type": "string"}, "count": {"type": "integer"}},
+            "required": ["npc", "item"]}}},
+    {"type": "function", "function": {
         "name": "net_events",
         "description": "Network messages the game sent (dir out), received (dir in) and server calls (dir rpc) after event number `since`.",
         "parameters": {"type": "object", "properties": {
@@ -64,7 +79,7 @@ TOOLS = [
 ]
 
 TOOL_TO_COMMAND = {"game_get": "get", "game_set": "set", "game_call": "call", "game_static": "static",
-                   "net_events": "net_events", "net_rule": "net_rule", "net_unrule": "net_unrule"}
+                   "find_item": "find_item", "find_npc": "find_npc", "buy": "buy", "net_events": "net_events", "net_rule": "net_rule", "net_unrule": "net_unrule"}
 
 
 class GameLink:
