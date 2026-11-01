@@ -51,9 +51,16 @@ class Net {
     /** Sends the bytes (hex) through the game's mpman.net.Client; needs one earlier send of the game to know the client. */
     public static function send(hexText:String):Int {
         if (client == null) throw "no mpman.net.Client seen yet: make the game send something first";
-        var count = Std.int(hexText.length / 2);
+        var data = [for (i in 0...Std.int(hexText.length / 2)) Std.parseInt("0x" + hexText.substr(i * 2, 2))];
+        // RPC_WITH_RESULT (6) carries a result id the client waits on; a replay would get a second reply for an id already consumed
+        // (null access in NetworkClient.processMessage), so it is sent as a plain RPC (5) without the id (1 byte, or 0x80 + 4 bytes).
+        if (data[0] == 6) {
+            data.splice(1, data[1] == 0x80 ? 5 : 1);
+            data[0] = 5;
+        }
+        var count = data.length;
         var bytes = G.staticCall("haxe.io.Bytes", "alloc", [count]);
-        for (i in 0...count) G.call("haxe.io.Bytes", "set", bytes, [i, Std.parseInt("0x" + hexText.substr(i * 2, 2))]);
+        for (i in 0...count) G.call("haxe.io.Bytes", "set", bytes, [i, data[i]]);
         G.call("mpman.net.Client", "send", client, [bytes]);
         return count;
     }
