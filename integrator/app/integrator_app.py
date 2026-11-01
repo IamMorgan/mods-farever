@@ -155,6 +155,10 @@ class App:
         tk.Button(top, text="Check the mod", command=self.check_mod).pack(side="left", padx=4)
         self.log = scrolledtext.ScrolledText(self.root, state="disabled", wrap="word")
         self.log.pack(fill="both", expand=True, padx=6)
+        # a disabled Text never gets the focus, so without this Ctrl+C copies nothing
+        self.log.bind("<Button-1>", lambda _e: self.log.focus_set())
+        for key in ("<Control-a>", "<Control-A>"):
+            self.log.bind(key, lambda _e: (self.log.tag_add("sel", "1.0", "end"), "break")[1])
         bottom = tk.Frame(self.root)
         bottom.pack(fill="x", padx=6, pady=6)
         self.entry = tk.Entry(bottom)
