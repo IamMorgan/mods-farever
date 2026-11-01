@@ -1,0 +1,6 @@
+-lib hlx-runtime
+-D hl-ver=1.16.0
+-cp src
+-main integrator.IntegratorMod
+-dce full
+-hl build/integrator/integrator.hl
