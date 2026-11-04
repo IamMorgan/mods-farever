@@ -10,12 +10,11 @@ class SpawnerLoot {
     static var byUnit = new Map<String, Array<String>>();
     /** unit group id -> override tables of its spawners. */
     static var byGroup = new Map<String, Array<String>>();
-    public static var count = 0;
 
     public static function clear():Void {
         byUnit = new Map();
         byGroup = new Map();
-        count = 0;
+        groupsOfUnit = null;
     }
 
     static function push(m:Map<String, Array<String>>, key:String, table:String):Void {
@@ -32,15 +31,15 @@ class SpawnerLoot {
         var table = G.str(G.field(G.field(spawner, "props"), "overrideLootTable"));
         push(byUnit, G.str(G.field(spawner, "unit")), table);
         push(byGroup, G.str(G.field(spawner, "unitGroup")), table);
-        count++;
     }
 
     static var groupsOfUnit:Map<String, Array<String>>;
 
     /** unit id -> the unit groups it belongs to (Data.unitGroup composition). */
     static function groups(unitId:String):Array<String> {
-        if (groupsOfUnit == null) {
-            groupsOfUnit = new Map();
+        var built = groupsOfUnit;
+        if (built == null) {
+            built = new Map();
             try {
                 var all = G.field(HlxRuntime.resolveStaticField(HlxRuntime.resolveType("Data"), "unitGroup"), "all");
                 for (i in 0...G.len(all)) {
@@ -49,12 +48,13 @@ class SpawnerLoot {
                     var comp = G.field(g, "composition");
                     for (j in 0...G.len(comp)) {
                         var members = G.field(G.at(comp, j), "group");
-                        for (k in 0...G.len(members)) push(groupsOfUnit, G.str(G.field(G.at(members, k), "unit")), gid);
+                        for (k in 0...G.len(members)) push(built, G.str(G.field(G.at(members, k), "unit")), gid);
                     }
                 }
             } catch (_:Dynamic) {}
+            if (built.keys().hasNext()) groupsOfUnit = built; // an empty result (data not loaded yet) is not kept
         }
-        var g = groupsOfUnit.get(unitId);
+        var g = built.get(unitId);
         return g == null ? [] : g;
     }
 

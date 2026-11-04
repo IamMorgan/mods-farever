@@ -15,8 +15,6 @@ class WorldLoot {
 
     public static function isPlaceholder(id:String):Bool return StringTools.startsWith(id, PLAIN);
 
-    static var itemTypes:Map<String, Dynamic>;
-
     static function itemsConst(name:String, i:Int, fallback:Float):Float {
         try {
             var arr = G.field(HlxRuntime.resolveStaticField(HlxRuntime.resolveType("Const"), "Items"), name);
@@ -34,15 +32,7 @@ class WorldLoot {
     }
 
     static function isRecipe(item:Dynamic):Bool {
-        if (itemTypes == null) {
-            itemTypes = new Map();
-            var all = G.field(HlxRuntime.resolveStaticField(HlxRuntime.resolveType("Data"), "itemType"), "all");
-            for (i in 0...G.len(all)) {
-                var t = G.at(all, i);
-                itemTypes.set(G.str(G.field(t, "id")), t);
-            }
-        }
-        var type = itemTypes.get(G.str(G.field(item, "type")));
+        var type = Sheets.get("itemType").get(G.str(G.field(item, "type")));
         if (type == null) return false;
         try return G.callStatic("HItem", "isSameType", [type, "Recipe"]) == true catch (_:Dynamic) return false;
     }

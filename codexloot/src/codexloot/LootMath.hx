@@ -89,7 +89,7 @@ class LootMath {
         return out;
     }
 
-    static function combine(m:Map<String, Float>, id:String, p:Float):Void {
+    public static function combine(m:Map<String, Float>, id:String, p:Float):Void {
         if (p <= 0) return;
         var old = m.exists(id) ? m.get(id) : 0.0;
         m.set(id, 1.0 - (1.0 - old) * (1.0 - Math.min(1.0, p)));

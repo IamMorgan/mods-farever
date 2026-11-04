@@ -120,7 +120,7 @@ class CodexLoot {
         if (!config.enabled || !config.lootSearch) return Continue;
         try {
             var name = G.str(G.field(node, "name")).toLowerCase();
-            var s = search == null ? "" : search.toLowerCase();
+            var s = search == null ? "" : StringTools.trim(search).toLowerCase();
             if (s == "" || name.indexOf(s) >= 0) return Continue;
             if (LootSearch.matches(G.field(node, "data"), s, config.levelFilter, hero)) return SkipWith(true);
         } catch (_:Dynamic) {}

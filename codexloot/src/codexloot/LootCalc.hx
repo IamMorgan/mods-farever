@@ -14,22 +14,11 @@ package codexloot;
  *  - the chances themselves (weighted picks, counts, sub-tables) are worked out by LootMath.
  */
 class LootCalc {
-    static var tables:Map<String, Dynamic>;
-    static var items:Map<String, Dynamic>;
-    static var types:Map<String, Dynamic>;
-    static var factions:Map<String, Dynamic>;
+    // the game's sheets come from Sheets: one shared cache, cleared with the language / game data, never kept empty
+    static inline function tables():Map<String, Dynamic> return Sheets.get("lootTable");
+    static inline function items():Map<String, Dynamic> return Sheets.get("item");
 
-    static function index(sheet:String):Map<String, Dynamic> {
-        var m = new Map<String, Dynamic>();
-        var idx:Dynamic = HlxRuntime.resolveStaticField(HlxRuntime.resolveType("Data"), sheet);
-        var all = G.field(idx, "all");
-        for (i in 0...G.len(all)) {
-            var rec = G.at(all, i);
-            var id = G.str(G.field(rec, "id"));
-            if (id != "") m.set(id, rec);
-        }
-        return m;
-    }
+    static function byChance(a:LootEntry, b:LootEntry):Int return a.chance > b.chance ? -1 : (a.chance < b.chance ? 1 : 0);
 
     static var result:Map<String, Float>;
     static var unitMin:Null<Float>;
@@ -53,7 +42,7 @@ class LootCalc {
         var minL = optional(entry, "minLvl");
         var maxL = optional(entry, "maxLvl");
         if (minL == null && (Std.int(G.num(G.field(entry, "flags"))) & 4) == 0) {
-            var it = items.get(G.str(G.field(entry, "item")));
+            var it = items().get(G.str(G.field(entry, "item")));
             if (it != null) minL = optional(it, "level");
         }
         if (minL != null && unitMax != null && minL > unitMax) return "minLvl " + minL + " > monster " + unitMax;
@@ -62,9 +51,7 @@ class LootCalc {
     }
 
     static function add(item:String, p:Float):Void {
-        if (p <= 0) return;
-        var old = result.exists(item) ? result.get(item) : 0.0;
-        result.set(item, 1.0 - (1.0 - old) * (1.0 - Math.min(1.0, p)));
+        LootMath.combine(result, item, p);
     }
 
     static function optInt(obj:Dynamic, name:String):Null<Int> {
@@ -117,8 +104,7 @@ class LootCalc {
     static function factionTable(unit:Dynamic):Dynamic {
         var id = G.str(G.field(unit, "faction"));
         if (id == "") return null;
-        if (factions == null) factions = index("faction");
-        var faction = factions.get(id);
+        var faction = Sheets.get("faction").get(id);
         if (faction == null) return null;
         try return G.callStatic("HItem", "getFactionLootTable", [faction, false]) catch (_:Dynamic) return null;
     }
@@ -141,11 +127,11 @@ class LootCalc {
     static function walkGains(gains:Dynamic):Void {
         if (gains == null) return;
         var own = G.str(G.field(gains, "lootTable"));
-        if (own != "") walk(tables.get(own), 1.0);
+        if (own != "") walk(tables().get(own), 1.0);
         var list = G.field(gains, "lootTables");
         for (i in 0...G.len(list)) {
             var ref = G.str(G.field(G.at(list, i), "ref"));
-            if (ref != "") walk(tables.get(ref), 1.0);
+            if (ref != "") walk(tables().get(ref), 1.0);
         }
         var given = G.field(gains, "items");
         for (i in 0...G.len(given)) {
@@ -154,26 +140,27 @@ class LootCalc {
         }
     }
 
-    public static function item(id:String):Dynamic {
-        if (items == null) items = index("item");
-        return items.get(id);
-    }
-
     static function collect(roots:Array<String>, ignore:Bool, ?extra:Void->Void):Array<LootEntry> {
         result = new Map<String, Float>();
         ignoreConds = ignore;
         converted = new Map();
-        for (r in roots) walk(tables.get(r), 1.0);
+        try {
+            for (r in roots) walk(tables().get(r), 1.0);
+        } catch (e:Dynamic) {
+            ignoreConds = false; // never leave the flag set for the next monster
+            throw e;
+        }
         if (extra != null) try extra() catch (_:Dynamic) {}
         ignoreConds = false;
         placeholders = new Map();
         for (id => p in result) if (WorldLoot.isPlaceholder(id)) placeholders.set(id, p);
         var out:Array<LootEntry> = [];
+        var all = items();
         for (id => chance in result) {
-            var rec = items.get(id);
+            var rec = all.get(id);
             if (rec != null && G.field(rec, "gfx") != null) out.push({item: rec, chance: chance});
         }
-        out.sort((a, b) -> a.chance > b.chance ? -1 : (a.chance < b.chance ? 1 : 0));
+        out.sort(byChance);
         return out;
     }
 
@@ -186,7 +173,7 @@ class LootCalc {
             if (old == null || old.chance < e.chance) m.set(id, e);
         }
         var out = [for (e in m) e];
-        out.sort((x, y) -> x.chance > y.chance ? -1 : (x.chance < y.chance ? 1 : 0));
+        out.sort(byChance);
         return out;
     }
 
@@ -200,8 +187,8 @@ class LootCalc {
         var lo = lvl != null ? lvl : maxLvl, hi = maxLvl != null ? maxLvl : lvl;
         var plain = placeholders.exists(WorldLoot.PLAIN) ? placeholders.get(WorldLoot.PLAIN) : 0.0;
         var mine = placeholders.exists(WorldLoot.AFFINITY) ? placeholders.get(WorldLoot.AFFINITY) : 0.0;
-        var classPool = WorldLoot.pool(items, lo, hi, hero);
-        var allPool = plain > 0 || hero == null ? WorldLoot.pool(items, lo, hi, null) : [];
+        var classPool = WorldLoot.pool(items(), lo, hi, hero);
+        var allPool = plain > 0 || hero == null ? WorldLoot.pool(items(), lo, hi, null) : [];
         var chance = new Map<String, Float>();
         var order:Array<Dynamic> = [];
         function share(pool:Array<Dynamic>, p:Float):Void {
@@ -218,7 +205,7 @@ class LootCalc {
         if (mine > 0) share(classPool, mine);
         if (plain > 0) share(allPool, plain);
         var out = [for (item in order) {item: item, chance: chance.get(G.str(G.field(item, "id")))}];
-        out.sort((a, b) -> a.chance > b.chance ? -1 : (a.chance < b.chance ? 1 : 0));
+        out.sort(byChance);
         return out;
     }
 
@@ -227,10 +214,6 @@ class LootCalc {
      * game uses for heroic mode) and `world` (equipment). Only items that have an icon are returned.
      */
     public static function compute(unit:Dynamic, filterByLevel:Bool, ?hero:Dynamic):{normal:Array<LootEntry>, heroic:Array<LootEntry>, world:Array<LootEntry>} {
-        if (tables == null) tables = index("lootTable");
-        if (items == null) items = index("item");
-        if (types == null) types = index("unitType");
-
         var flags = Std.int(G.num(G.field(unit, "flags")));
         unitConds = (flags & (UnitFlags.unique() | UnitFlags.elite() | UnitFlags.boss())) != 0 ? 2 : 1;
         unitMin = null;
@@ -244,13 +227,13 @@ class LootCalc {
 
         // level-scaled counts: a monster of one fixed level uses it, otherwise the counts' maximum
         var fixedLvl = optional(unit, "lvl"), topLvl = optional(unit, "maxLvl");
-        math = new LootMath(id -> toTable(tables.get(id)), fixedLvl != null && (topLvl == null || topLvl == fixedLvl) ? fixedLvl : null);
+        math = new LootMath(id -> toTable(tables().get(id)), fixedLvl != null && (topLvl == null || topLvl == fixedLvl) ? fixedLvl : null);
 
         var props = G.field(unit, "props");
         var roots:Array<String> = [];
         var own = G.str(G.field(props, "lootTable"));
         if (own != "") roots.push(own);
-        var type = types.get(G.str(G.field(unit, "type")));
+        var type = Sheets.get("unitType").get(G.str(G.field(unit, "type")));
         var typeTable = G.str(G.field(type, "lootTable"));
         if (typeTable != "") roots.push(typeTable);
         // the game adds these two tables by name for unique / elite monsters (Unit.getLootFromUnit)
@@ -284,11 +267,9 @@ class LootCalc {
         if (bossRoots.length > 0) {
             // boss tables: their entries may carry other `conds` values, so those are not used to filter here
             var boss = collect(bossRoots, true);
-            for (b in boss) {
-                var known = false;
-                for (n in normal) if (G.str(G.field(n.item, "id")) == G.str(G.field(b.item, "id"))) { known = true; break; }
-                if (!known) normal.push(b);
-            }
+            var known = new Map<String, Bool>();
+            for (n in normal) known.set(G.str(G.field(n.item, "id")), true);
+            for (b in boss) if (!known.exists(G.str(G.field(b.item, "id")))) normal.push(b);
         }
         var worldLoot = try world(unit, hero, worldAsks) catch (_:Dynamic) [];
         var heroic = heroicTable == "" ? [] : collect([heroicTable], true);

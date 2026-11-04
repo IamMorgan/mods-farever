@@ -13,7 +13,13 @@ class G {
 
     /** Number, or 0 for null. */
     public static function num(v:Dynamic):Float {
-        return v == null ? 0.0 : Std.parseFloat(Std.string(v));
+        if (v == null) return 0.0;
+        // numbers skip the string round trip
+        switch (Type.typeof(v)) {
+            case TInt: var i:Int = v; return i;
+            case TFloat: var f:Float = v; return f;
+            default: return Std.parseFloat(Std.string(v));
+        }
     }
 
     public static function typeName(v:Dynamic):String {

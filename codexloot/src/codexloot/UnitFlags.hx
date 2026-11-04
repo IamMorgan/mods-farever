@@ -28,9 +28,6 @@ class UnitFlags {
         return b;
     }
 
-    public static function has(unit:Dynamic, name:String, fallback:Int):Bool
-        return (Std.int(G.num(G.field(unit, "flags"))) & bit(name, fallback)) != 0;
-
     public static inline function elite():Int return bit("Elite", 3);
     public static inline function boss():Int return bit("Boss", 4);
     public static inline function unique():Int return bit("Unique", 6);

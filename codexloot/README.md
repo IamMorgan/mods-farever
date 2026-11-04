@@ -69,6 +69,12 @@ The mod follows the game's own loot rules:
 
 ### Changelog
 
+#### 1.2.6
+
+- **Fix: the mod could show no loot until the game was restarted** if the Codex asked for it before the game's data was loaded (the empty tables were kept for good); the item, loot table, unit type, faction, item type and unit group tables now come from one shared cache that is never kept empty and is cleared with the language and game data.
+- **Fix: the Codex search with a trailing space** (for example "sword ") found loot differently from the monster names; the search text is now trimmed for both.
+- Faster loot calculation (numbers are read without a text round trip, the boss table merge no longer scans the list for every item); less duplicated code.
+
 #### 1.2.5
 
 - **Fix: the icons of the contents list overlapped its scroll bar;** the grid now keeps clear of the scroll bar.
