@@ -54,8 +54,11 @@ class DungeonScreens {
         if (lobby == null) return;
         var open = find();
         if (open != null && lobbyOf(open) == lobby) return;
-        G.create(TYPE, [lobby, null, null]);
+        remote = G.create(TYPE, [lobby, null, null]);
     }
+
+    /** The window this mod opened (not the portal): its "Start" button stays hidden. */
+    public static var remote:Dynamic;
 
     /**
      * Asks the group for the dungeon's lobby (the leader makes it, the others join it) and shows the window once the game

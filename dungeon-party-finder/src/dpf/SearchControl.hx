@@ -39,9 +39,9 @@ class SearchControl {
         this.party = party;
     }
 
-    /** True for a dungeon window: it has no "Start" button and must not start the dungeon. */
+    /** True for a dungeon window opened by the mod (not by the portal): it has no "Start" button and must not start the dungeon. */
     public function blocks(screen:Dynamic):Bool
-        return DungeonScreens.isDungeon(DungeonScreens.activityOf(screen));
+        return screen == DungeonScreens.remote && DungeonScreens.isDungeon(DungeonScreens.activityOf(screen));
 
     function forget():Void {
         bound = null;
@@ -86,7 +86,7 @@ class SearchControl {
         bound = screen;
         if (!DungeonScreens.isDungeon(DungeonScreens.activityOf(screen))) return;
         actions = parent;
-        N.show(start, false);
+        if (blocks(screen)) N.show(start, false);
         var dom = G.field(actions, "dom");
         var index = N.children(actions).indexOf(start);
         if (index < 0) { forget(); return; }
@@ -137,7 +137,7 @@ class SearchControl {
         keepPicture(screen);
         if (button == null) return;
         // The game shows the button again whenever it updates the window ("Start" for the leader, "Ready" for the others).
-        N.show(G.field(screen, "startBtn"), false);
+        if (blocks(screen)) N.show(G.field(screen, "startBtn"), false);
         stage = "update: mode";
         var mode = session.mode();
         var here = session.activityId == DungeonScreens.activityOf(screen);
