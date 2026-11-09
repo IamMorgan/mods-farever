@@ -51,7 +51,7 @@ Other players need the mod too: it finds only players who use it.
 
 #### 2026-11-10
 
-- The **Start** / **Ready** buttons are back in the dungeon window opened through the dungeon's own portal; only the window opened by the DPF button has none.
+- Fixed: the **Start** / **Ready** button was missing in the dungeon window opened through the dungeon's own portal. It is hidden only in the window opened with the DPF button.
 
 #### 2026-11-01
 
